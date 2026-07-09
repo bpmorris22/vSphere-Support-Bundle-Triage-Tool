@@ -56,6 +56,11 @@
   .pill{display:inline-block;font-size:11px;color:#8b949e;border:1px solid #30363d;border-radius:20px;padding:2px 10px;margin-left:8px;vertical-align:middle}
   .pill.esxi{color:#7ee787;border-color:#2ea043}
   .pill.vcsa{color:#79c0ff;border-color:#1f6feb}
+  .pill.ok{color:#7ee787;border-color:#2ea043}
+  .pill.bad{color:#ff8b3d;border-color:#bd561d;cursor:pointer}
+  #appver{font-weight:700}
+  #appver.cur{color:#7ee787}
+  #appver.old{color:#ff8b3d;cursor:pointer;text-decoration:underline}
   .wrap{padding:12px 14px}
   .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
@@ -152,6 +157,9 @@
   <div class="card">
     <h3>Support bundle</h3>
     <div class="muted" id="exeline" style="font-size:11px;margin-bottom:6px"></div>
+    <div id="netwarn" class="hide" style="background:#241c12;border:1px solid #8a7a2a;border-left:4px solid #e3b341;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#e3b341">
+      &#9888; This app appears to be on a <b>network / OneDrive / redirected</b> location. Windows blocks the fast UTF-8 reader there, so it falls back to slower ANSI IO (large logs read only partially; a long read may trigger a Windows &ldquo;stop running this script?&rdquo; prompt &mdash; click <b>No</b>). For full speed &amp; fidelity, copy this app <b>and the bundle</b> to a local drive (<code style="background:#0d1117;padding:1px 4px;border-radius:3px">C:\</code>) and re-run.
+    </div>
     <label class="fld" title="Point at the nested archive that holds the tree (ESXi <host>.tar or VCSA <host>.tgz), the outer .tgz, or an already-extracted bundle folder. The tool auto-detects ESXi vs vCenter.">Bundle - nested archive (.tgz / .tar) or an already-extracted bundle folder</label>
     <input class="txt wide" id="inPath" value="">
     <input type="file" id="inPick" style="display:none">
@@ -330,24 +338,26 @@
   <div class="mcard">
     <span class="x" id="helpX">&times;</span>
     <h2>vSphere Support Bundle Triage <span class="muted" id="helpVer" style="font-size:13px"></span></h2>
-    <p>Triage an <b>ESXi</b> <code>vm-support</code> bundle or a <b>vCenter (VCSA)</b> <code>vc-support</code> bundle. Point at the nested archive that holds the hostname-rooted tree (ESXi <code>&lt;host&gt;.tar</code> / VCSA <code>&lt;host&gt;.tgz</code>), the outer <code>.tgz</code>, or an already-extracted folder. The tool auto-detects which type it is.</p>
-    <h3>What v1 does</h3>
+    <p>DFIR triage of an <b>ESXi</b> <code>vm-support</code> or <b>vCenter (VCSA)</b> <code>vc-support</code> bundle — auto-detected. Point at the nested archive that holds the tree (ESXi <code>&lt;host&gt;.tar</code> / VCSA <code>&lt;host&gt;.tgz</code>), the outer <code>.tgz</code>, or an extracted folder; or point at a <b>folder of bundles</b> for fleet mode. Log analysis runs automatically after Analyze. All times shown are UTC.</p>
+    <h3>Tabs</h3>
     <ul>
-      <li><b>Key Files</b> - a curated inventory of forensically high-value files: presence, size, category and description, with Open file / Open folder. Built from the archive index so it paints without unpacking gigabytes.</li>
-      <li><b>Node overview</b> - product / build / version, host, capture time, and key-file coverage. Absent key logs are flagged.</li>
+      <li><b>Overview</b> — node summary, key-file coverage, the ransomware/intrusion <b>indicator</b> panel and the <b>CVE-exposure</b> panel (links to NVD/VMSA). The stat bubbles are clickable.</li>
+      <li><b>Specification</b> — identity, networking, datastores + <b>vSAN &amp; disk layout</b>, security posture; for vCenter the SSO/AD identity sources and managed hosts. Exports a node-spec HTML.</li>
+      <li><b>VMs</b> (ESXi) — per-VM inventory (OS, vCPU, vRAM, vDisks, vSAN, running); click a VM to preview its <code>.vmx</code>. Guest IP is enriched from a vCenter in the fleet.</li>
+      <li><b>Key Files</b> — curated high-value artifacts. <b>Logons / Actions / Timeline</b> — scored, colour-coded, filterable events. <b>Persistence</b> — file-inspection findings. <b>IOC hits</b> — sweeps an <code>IOC.txt</code> placed next to the app.</li>
     </ul>
-    <h3>zstd</h3>
-    <p>VCSA bundles compress some logs with <b>zstd</b> (<code>.zst</code>), which Windows' built-in <code>tar.exe</code> cannot read. The tool looks for <code>zstd.exe</code> in <code>tools\</code> next to it and on PATH; if it is missing it offers to download the official Windows build from the facebook/zstd GitHub release. <code>.zst</code> files are still listed if you decline.</p>
-    <h3>Roadmap</h3>
-    <p>Analysis tabs - Authentication &amp; Logons, Actions / Audit, Persistence &amp; Tampering, IOC sweep, Timeline - are planned for later releases.</p>
-    <p class="mono" style="font-size:12px"><span class="lnk" id="ghLink">GitHub repository</span></p>
+    <h3>Fleet mode</h3>
+    <p>Point at a parent folder and click <b>Triage fleet folder…</b> for a risk roster, vSAN <b>cluster</b> grouping, and <b>cross-host correlation</b> (shared IPs/users/IOCs, coordinated indicators, and the <b>vCenter&rarr;ESXi task chain</b>).</p>
+    <h3>Requirements &amp; tips</h3>
+    <p>Windows 10/11 (ships bsdtar). <b>Run from a local drive</b> (<code>C:\</code>) — running from a network / OneDrive / redirected folder makes Windows fall back to a slower ANSI file reader. <code>.zst</code> vCenter logs need <code>zstd.exe</code> (the tool offers to fetch it). The version pill turns <span style="color:#7ee787">green</span> when current and <span style="color:#ff8b3d">orange</span> with an update link when a newer release exists; <b>Instructions</b> opens the latest Field Manual.</p>
+    <p class="mono" style="font-size:12px"><span class="lnk" id="ghLink">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</span> &middot; MIT</p>
   </div>
 </div>
 
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.3";
+var APP_VERSION = "0.9.4";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -395,7 +405,8 @@ function fmtSize(n){ if(!n) return (n===0?"0 B":"-"); var u=["B","KB","MB","GB",
 
 /* ---------- file IO via ActiveX (UTF-8 safe, network-zone fallback) - family ---------- */
 var FILE_IO="adodb";
-function zoneNote(){ appendLog("NOTE: running from a network location - Windows zone policy blocks the UTF-8 file reader (ADODB.Stream). Falling back to ANSI file IO. Copy this folder to a LOCAL path for full fidelity."); }
+function zoneNote(){ appendLog("NOTE: a network / OneDrive / redirected location was detected - Windows zone policy blocks the fast UTF-8 reader, so the app fell back to slower ANSI file IO (large logs are read only partially, and long reads can trigger a 'stop running this script?' prompt - just click No). Triage still works. For full speed & fidelity, copy the app AND the bundle to a LOCAL drive (C:\\) and re-run.");
+  try{ showEl("netwarn",true); }catch(e){} }
 function readUtf8(path){
   if(FILE_IO==="adodb"){
     try{ var st=new ActiveXObject("ADODB.Stream"); st.Type=2; st.Charset="utf-8"; st.Open(); st.LoadFromFile(path);
@@ -476,12 +487,13 @@ function resolveTar(){
   TAR=""; return false;
 }
 function checkTar(){
-  if(!TAR){ $("verpill").innerHTML="tar.exe: <span style='color:#f85149'>not found</span>"; return; }
+  var p=$("verpill");
+  if(!TAR){ p.className="pill bad"; p.innerHTML="bsdtar: not found"; p.title="C:\\Windows\\System32\\tar.exe is missing (needs Windows 10 1803+). Extraction will not work."; p.onclick=function(){ openUrl("https://learn.microsoft.com/windows-server/administration/windows-commands/tar"); }; return; }
   try{ var r=runBat(['"'+batEsc(TAR)+'" --version > "__LOG__" 2>&1']);
     var m=r.log.match(/bsdtar\s+([0-9.]+)/i); TAR_VER=m?m[1]:"";
-    $("verpill").innerHTML = TAR_VER ? ("bsdtar v"+esc(TAR_VER)) : "tar.exe present";
+    p.className="pill ok"; p.innerHTML = TAR_VER ? ("bsdtar v"+esc(TAR_VER)) : "bsdtar present"; p.title="Extraction engine present and working: "+TAR;
     $("exeline").innerHTML="Extractor: "+esc(TAR)+(TAR_VER?(" (bsdtar "+esc(TAR_VER)+")"):"");
-  }catch(e){ $("verpill").innerHTML="tar.exe: error"; }
+  }catch(e){ p.className="pill bad"; p.innerHTML="bsdtar: error"; }
 }
 
 /* ---------- zstd.exe (probe -> prompted download of official facebook/zstd build) ---------- */
@@ -911,7 +923,8 @@ function logLines(rel){
   if(!src){ appendLog("  log "+rel+" -> NOT extracted/found"); return []; }
   if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v){ appendLog("  log "+rel+" -> decompress failed"); return []; } src=v; }
   var sz=fileSize(src), txt;
-  if(sz>LOGCAP){ txt=readCappedText(src, Math.floor(LOGCAP)); LOG_TRUNC.push(baseName(rel)+" ("+fmtSize(sz)+", read first "+fmtSize(LOGCAP)+")"); }
+  var cap = (FILE_IO==="fso") ? 8388608 : LOGCAP;   // ANSI-fallback (network/redirected) reads are slow - cap harder to avoid the "stop script" dialog
+  if(sz>cap){ txt=readCappedText(src, Math.floor(cap)); LOG_TRUNC.push(baseName(rel)+" ("+fmtSize(sz)+", read first "+fmtSize(cap)+")"); }
   else { try{ txt=readUtf8(src); }catch(e){ appendLog("  log "+rel+" -> read error: "+e.message); return []; } }
   var a=String(txt).split("\n"); for(var i=0;i<a.length;i++){ if(a[i].charAt(a[i].length-1)==="\r") a[i]=a[i].substring(0,a[i].length-1); }
   appendLog("  log "+rel+" -> "+nf(a.length)+" lines");
@@ -2297,11 +2310,14 @@ function checkSelfUpdate(){
     try{ x.setRequestHeader("User-Agent",SELF_HTA); }catch(eh){}
     x.onreadystatechange=function(){ if(x.readyState!==4) return;
       try{ if(x.status!==200) return; var t=x.responseText+"";
-        var m=t.match(/"tag_name"\s*:\s*"v?([0-9.]+)"/i); if(!m) return; var latest=m[1]; if(!selfVerNewer(latest,APP_VERSION)) return;
+        var m=t.match(/"tag_name"\s*:\s*"v?([0-9.]+)"/i); if(!m) return; var latest=m[1];
+        var av=$("appver");
+        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.className="cur"; av.title="Up to date — v"+APP_VERSION+" is the latest release."; av.onclick=null; } return; }
         var url="", re=/"browser_download_url"\s*:\s*"([^"]+\.hta)"/ig, mm;
         while((mm=re.exec(t))){ if(mm[1].toLowerCase().indexOf(SELF_HTA.toLowerCase())>=0){ url=mm[1]; break; } if(!url) url=mm[1]; }
         if(!url) url="https://github.com/"+SELF_REPO+"/releases/download/v"+latest+"/"+SELF_HTA;
         SELF_LATEST=latest; SELF_ASSET_URL=url;
+        if(av){ av.className="old"; av.innerHTML="v"+APP_VERSION+" &rarr; v"+latest+" update"; av.title="A newer version (v"+latest+") is on GitHub — click to update"; av.onclick=doSelfUpdate; }
         var b=$("selfUpd"); if(b){ b.innerHTML="Update to v"+latest; b.className="btn primary"; b.title="A newer "+SELF_HTA+" (v"+latest+") is on GitHub"; }
       }catch(e){} };
     x.send();
@@ -2354,12 +2370,13 @@ function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output direct
 /* ---------- wiring ---------- */
 function init(){
   try{ window.resizeTo(1360,920); }catch(e){}
-  $("appver").innerHTML="&middot; v"+APP_VERSION;
+  $("appver").innerHTML="v"+APP_VERSION; $("appver").className="cur"; $("appver").title="You are on the latest known version (checking GitHub…)";
   try{ document.title="vSphere Support Bundle Triage Tool v"+APP_VERSION; }catch(e){}
   $("invScroll").onscroll=applyFreeze;
   $("tblScroll").onscroll=applyFreezeTbl;
   $("anMaxLbl").innerHTML=nf(ANMAXROWS);
   resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadToolkitIoc();
+  try{ var hf=htaFolder(); if(hf && isNetworkPath(hf)){ showEl("netwarn",true); } }catch(e){}
 
   $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };
   $("outDir").onkeyup=function(){ OUT_TOUCHED=true; };

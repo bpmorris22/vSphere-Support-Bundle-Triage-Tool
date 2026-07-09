@@ -1,0 +1,35 @@
+<svg viewBox="0 0 1000 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+  <rect width="1000" height="360" rx="10" fill="#0d1117"/>
+  <text x="20" y="30" fill="#e6edf3" font-size="13" font-weight="700">Cross-host correlation</text>
+  <text x="200" y="30" fill="#8b949e" font-size="11">1 cluster · 2 IP(s) on &gt;1 host · 1 shared account · 6 chain link(s)</text>
+  <!-- shared IPs panel -->
+  <rect x="14" y="42" width="480" height="150" rx="8" fill="#0f141b" stroke="#30363d"/>
+  <text x="28" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Source IPs across hosts <tspan fill="#8b949e" font-weight="400">— &gt;1 host = possible lateral movement</tspan></text>
+  <rect x="28" y="72" width="452" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="36" y="86">Source IP</text><text x="200" y="86"># hosts</text><text x="280" y="86">Hosts</text></g>
+  <g font-size="11" font-family="Consolas,monospace">
+    <rect x="28" y="92" width="452" height="22" fill="#2a1416"/><text x="36" y="107" fill="#ff6b6b">203.0.113.66</text><text x="200" y="107" fill="#e6edf3">3</text><text x="280" y="107" fill="#e6edf3">esxi-lab01, esxi-lab02, esxi-lab03</text>
+    <rect x="28" y="114" width="452" height="22" fill="#2a1416"/><text x="36" y="129" fill="#ff6b6b">198.51.100.24</text><text x="200" y="129" fill="#e6edf3">2</text><text x="280" y="129" fill="#e6edf3">esxi-lab01, vcsa-lab01</text>
+    <text x="36" y="151" fill="#8b949e">10.20.30.9</text><text x="200" y="151" fill="#e6edf3">1</text><text x="280" y="151" fill="#8b949e">esxi-lab03</text>
+  </g>
+  <!-- coordinated indicators -->
+  <rect x="506" y="42" width="480" height="150" rx="8" fill="#0f141b" stroke="#30363d"/>
+  <text x="520" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Coordinated indicators <tspan fill="#8b949e" font-weight="400">— same tell on N hosts</tspan></text>
+  <rect x="520" y="72" width="452" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="528" y="86">Indicator</text><text x="820" y="86"># hosts</text><text x="880" y="86">Hosts</text></g>
+  <g font-size="10.5">
+    <rect x="520" y="92" width="452" height="22" fill="#2a1416"/><text x="528" y="107" fill="#e6edf3">SSH / ESXi Shell used</text><text x="828" y="107" fill="#ff6b6b" font-family="Consolas,monospace">3</text><text x="880" y="107" fill="#8b949e" font-family="Consolas,monospace">lab01-03</text>
+    <rect x="520" y="114" width="452" height="22" fill="#2a1416"/><text x="528" y="129" fill="#e6edf3">Host-encryption change</text><text x="828" y="129" fill="#ff6b6b" font-family="Consolas,monospace">2</text><text x="880" y="129" fill="#8b949e" font-family="Consolas,monospace">lab01,03</text>
+    <text x="528" y="151" fill="#e6edf3" font-size="10.5">External source IP on login</text><text x="828" y="151" fill="#ff6b6b" font-family="Consolas,monospace">3</text><text x="880" y="151" fill="#8b949e" font-family="Consolas,monospace">lab01-03</text>
+  </g>
+  <!-- chain -->
+  <rect x="14" y="204" width="972" height="140" rx="8" fill="#0f141b" stroke="#30363d"/>
+  <text x="28" y="224" fill="#c9d1d9" font-size="11.5" font-weight="700">vCenter → ESXi task chain <tspan fill="#8b949e" font-weight="400">— opID shared between a vpxd task and the host vpxa that executed it</tspan></text>
+  <rect x="28" y="234" width="944" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="36" y="248">When (UTC)</text><text x="180" y="248">vCenter</text><text x="290" y="248">Task (vim method)</text><text x="560" y="248">opID</text><text x="760" y="248">Executed on host</text></g>
+  <g font-size="10.5" font-family="Consolas,monospace" fill="#e6edf3">
+    <text x="36" y="270">2026-05-12 09:41:10</text><text x="180" y="270">vcsa-lab01</text><text x="290" y="270">vim.VirtualMachine.PowerOffVM_Task</text><text x="560" y="270" fill="#8b949e">opID=5b4a8771-2f</text><text x="760" y="270">esxi-lab03</text>
+    <line x1="28" y1="278" x2="972" y2="278" stroke="#30363d"/>
+    <text x="36" y="294">2026-05-12 09:41:44</text><text x="180" y="294">vcsa-lab01</text><text x="290" y="294">vim.VirtualMachine.ReconfigVM_Task</text><text x="560" y="294" fill="#8b949e">opID=6e27d392-11</text><text x="760" y="294">esxi-lab03</text>
+    <line x1="28" y1="302" x2="972" y2="302" stroke="#30363d"/>
+    <text x="36" y="318">2026-05-12 09:42:02</text><text x="180" y="318">vcsa-lab01</text><text x="290" y="318">vim.Datastore.DeleteDatastoreFile_Task</text><text x="560" y="318" fill="#8b949e">opID=13449918-a7</text><text x="760" y="318">esxi-lab01</text>
+  </g>
+</svg>
+

@@ -6,6 +6,25 @@ No install, no runtime, no dependencies beyond what Windows ships. It reads the 
 
 > **Auto-detects** ESXi vs vCenter and adapts the tab set. Point it at a single bundle, or at a **folder of bundles** for fleet-wide triage with cross-host correlation and the vCenter&rarr;ESXi task chain.
 
+## Screenshots
+
+_Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NET IPs)._
+
+**Overview** — node summary, key-file coverage, ransomware indicators, CVE panel, clickable stat bubbles
+![Overview](screenshots/overview.svg)
+
+**VMs** — per-VM inventory with guest IP and click-to-preview `.vmx`
+![VMs](screenshots/vms.svg)
+
+**Timeline** — colour-coded Score/tags and Kind, with the multiselect score filter
+![Timeline](screenshots/timeline.svg)
+
+**Fleet roster** — hosts grouped by vSAN cluster, worst-first
+![Fleet roster](screenshots/fleet-roster.svg)
+
+**Correlation** — shared IPs, coordinated indicators, and the vCenter&rarr;ESXi task chain
+![Correlation](screenshots/correlation.svg)
+
 ## Features
 
 - **Overview** — node summary, key-file coverage, an ESXi **ransomware / intrusion indicator** panel, and a **CVE-exposure** panel (links to NVD + the VMSA).
