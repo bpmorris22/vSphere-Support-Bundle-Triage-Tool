@@ -120,6 +120,11 @@
   .modal p{font-size:13px;margin:6px 0}
   .modal code{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:2px 6px;font-family:Consolas,monospace;font-size:12px}
   .modal .x{float:right;cursor:pointer;color:#8b949e;font-size:22px;line-height:1}.modal .x:hover{color:#e6edf3}
+  .btn.sm{padding:2px 9px;font-size:11px;margin:0 2px}
+  .ioctbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+  .ioctbl th{text-align:left;color:#8b949e;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:3px 5px;border-bottom:1px solid #30363d}
+  .ioctbl td{padding:2px 5px;vertical-align:middle}
+  .ioctbl input.txt,.ioctbl select{width:100%;box-sizing:border-box;margin:0}
   .roadmap{font-size:11px;color:#8b949e;border:1px dashed #30363d;border-radius:6px;padding:6px 10px;margin-top:8px}
   .panel{border:1px solid #30363d;border-radius:8px;padding:10px 12px;background:#0f141b}
   .panel h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#c9d1d9}
@@ -171,6 +176,8 @@
     <input class="txt wide" id="outDir" value="">
     <button class="btn" id="openDirBtn">Open folder</button>
     <div style="margin-top:10px">
+      <button class="btn orange" id="iocBtn" title="Create or edit the shared IOC list (IOC.csv &rarr; IOC.txt) that the IOC sweep matches against. Read by every wrapper in the family at launch.">Create IOC list</button>
+      <span class="sep"></span>
       <button class="btn primary" id="procBtn" title="Read the bundle table of contents, detect the type, and build the file inventory + node-config summary.">Analyze bundle</button>
       <span class="sep"></span>
       <button class="btn" id="fleetBtn" title="Fleet mode: discover every ESXi/vCenter bundle under a folder (recursively) and triage them all into one roster. Point the Bundle field at a parent folder, or use Pick folder.">Triage fleet folder&hellip;</button>
@@ -355,10 +362,29 @@
   </div>
 </div>
 
+<!-- IOC LIST EDITOR MODAL -->
+<div id="iocModal" class="modal hide" onclick="if((event.srcElement||{}).id==='iocModal')closeIocEditor()">
+  <div class="mcard" style="max-width:920px">
+    <span class="x" onclick="closeIocEditor()" title="Close">&times;</span>
+    <h2>IOC list editor <span class="muted" style="font-size:13px;font-weight:400">- IOC.csv &rarr; IOC.txt</span></h2>
+    <p><b>IOC.csv</b> (Value / Type / Note / Case) is the editable source of truth. On <b>Save</b> it is flattened to <b>IOC.txt</b> - one term per line - which this tool (and every wrapper in the family) auto-loads at launch and sweeps the key logs for. Type / Note / Case are analyst-side metadata; only <b>Value</b> is matched.</p>
+    <div id="iocTblWrap"></div>
+    <div style="margin-top:10px">
+      <span class="btn sm" onclick="iocAddRow()">+ Add row</span>
+      <span class="lnk" style="margin-left:14px" onclick="iocOpenNotepad()" title="Open the generated IOC.txt in Notepad (raw view - regenerated on the next Save)">Open IOC.txt in Notepad</span>
+    </div>
+    <div style="margin-top:14px">
+      <span class="btn primary" onclick="iocSave()">Save</span>
+      <span class="btn" onclick="closeIocEditor()">Cancel</span>
+      <span class="muted" id="iocStatus" style="margin-left:12px;font-size:12px"></span>
+    </div>
+  </div>
+</div>
+
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.7";
+var APP_VERSION = "0.9.8";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -920,6 +946,42 @@ function betterHost(cur, alt){ cur=sanitHost(cur||""); alt=sanitHost(alt||"");
   if(ad && !cd) return alt; if(!ad && cd) return cur;
   if(ad && cd) return alt.length>cur.length?alt:cur;
   return cur.length>=alt.length?cur:alt; }
+/* physical server serial / service tag (ESXi) from SMBIOS System Info (Type 1),
+   falling back to Chassis Info (Type 3). Block-scoped so we never grab a memory-module
+   or baseboard serial. e.g. Dell service tag. */
+function esxiSerial(){
+  var t=readMember("commands/smbiosDump.txt"); if(!trimStr(t)) return "";
+  var lines=String(t).split("\n"), blk="", sys="", chas="";
+  for(var i=0;i<lines.length;i++){ var ln=lines[i];
+    var h=ln.match(/^\s{1,3}(.+?)\s+Info\s*\(Type\s*(\d+)\)/i);
+    if(h){ blk=(h[2]==="1")?"sys":((h[2]==="3")?"chas":"other"); continue; }
+    var m=ln.match(/^\s+Serial:\s*"([^"]*)"/i);
+    if(m){ var v=trimStr(m[1]); if(!v) continue;
+      if(blk==="sys" && !sys) sys=v; else if(blk==="chas" && !chas) chas=v; } }
+  return sys||chas;
+}
+/* ESXi management IP = the non-loopback IPv4 that etc/hosts maps the host's own name to
+   (this is the IP the ESXi Host Client / API answers on). */
+function firstHostsIp(txt){
+  var lines=String(txt).split("\n");
+  for(var i=0;i<lines.length;i++){ var ln=trimStr(lines[i]); if(!ln||ln.charAt(0)==="#") continue;
+    var m=ln.match(/^((?:\d{1,3}\.){3}\d{1,3})\s+(.+)$/); if(!m) continue;
+    var ip=m[1]; if(/^127\.|^0\.0\.0\.0\b/.test(ip)) continue;
+    if(/[A-Za-z]/.test(m[2]) && !/^localhost/i.test(trimStr(m[2]))) return ip; }
+  return "";
+}
+/* VCSA appliance IP = first non-loopback inet from ifconfig */
+function vcsaPrimaryIp(){
+  var ifc=readMember("commands/ifconfig_-a.txt"), m, re=/inet (?:addr:)?(\d{1,3}(?:\.\d{1,3}){3})/ig;
+  while((m=re.exec(ifc))){ if(!/^127\./.test(m[1])) return m[1]; }
+  return "";
+}
+/* iDRAC / BMC IP from in-band IPMI (only present when BMC-over-LAN is exposed to the host) */
+function idracIp(){
+  var t=readMember("commands/localcli_hardware-ipmi-bmc-get.txt");
+  var m=String(t).match(/IPv4 Address:\s*(\d{1,3}(?:\.\d{1,3}){3})/i);
+  return (m && !/^0\.0\.0\.0$/.test(m[1])) ? m[1] : "";
+}
 function parseNode(){
   NODE={}; NODE.type=typeLabel();
   var readme=readMember("README");
@@ -934,11 +996,16 @@ function parseNode(){
     var mb=v.match(/Build:\s*(.+)/i); if(mb) NODE.build=trimStr(mb[1]);
     var mu=v.match(/Update:\s*(.+)/i); if(mu) NODE.update=trimStr(mu[1]);
     var acc=readMember("commands/localcli_software-acceptance-get.txt"); if(trimStr(acc)) NODE.acceptance=trimStr(acc);
+    NODE.serial=esxiSerial(); NODE.mgmtIp=firstHostsIp(readMember("etc/hosts")); NODE.idrac=idracIp();
   } else if(BTYPE==="vcsa"){
     NODE.product="VMware vCenter Server (VCSA)";
     var b=trimStr(readMember("etc/vmware-analytics/build.txt")); if(b) NODE.build=b;
+    NODE.mgmtIp=vcsaPrimaryIp();
   }
   var fq=parseNodeFqdn(); if(fq){ NODE.fqdn=sanitHost(fq); NODE.host=betterHost(NODE.host, NODE.fqdn); }
+  // web-management URLs (built after the FQDN is resolved)
+  if(BTYPE==="esxi"){ var e4=NODE.mgmtIp||NODE.host; if(e4) NODE.webUi="https://"+e4+"/ui"; }
+  else if(BTYPE==="vcsa"){ var v5=NODE.host||NODE.mgmtIp; if(v5){ NODE.webUi="https://"+v5+"/ui"; NODE.vami="https://"+v5+":5480"; } }
 }
 
 /* ============================================================
@@ -977,6 +1044,129 @@ function inWin(ep){ if(!(DFROM||DTO)) return true; var d=epDay(ep); if(DFROM&&d<
 /* IOC list (shared toolkit IOC.txt, family) */
 function parseTerms(t){ var p=String(t).split(/[\r\n,;]+/), o=[]; for(var i=0;i<p.length;i++){ var s=trimStr(p[i]).toLowerCase(); if(s&&s.charAt(0)!=="#") o.push(s); } return o; }
 function loadToolkitIoc(){ try{ var base=htaFolder(); if(!base) return; var p=base+"\\IOC.txt"; if(!fileExists(p)) return; IOCS=parseTerms(readUtf8(p)); if(IOCS.length) appendLog("Loaded "+IOCS.length+" IOC term(s) from "+p); }catch(e){} }
+
+/* ---------- IOC list editor: IOC.csv (editable source) -> IOC.txt (wire format the sweep reads) ----------
+   Ported from the DFIR Windows Artifact Finder so the whole family shares one IOC list. IOC.csv holds
+   Value/Type/Note/Case; Save flattens it to IOC.txt (one term per line) which loadToolkitIoc() reads. */
+var IOC_ROWS=[];
+var IOC_TYPES=["hash","ip","domain","filename","path","keyword"];
+function iocCsvPath(){ var b=htaFolder(); return b?(b+"\\IOC.csv"):""; }
+function iocTxtPath(){ var b=htaFolder(); return b?(b+"\\IOC.txt"):""; }
+function iocCountQuotes(s){ var c=0, idx=-1; while((idx=s.indexOf('"',idx+1))>=0) c++; return c; }
+function iocParseCSVLine(line){
+  if(line.indexOf('"')<0) return line.split(",");
+  var out=[], field="", q=false, i=0, n=line.length;
+  while(i<n){ var c=line.charAt(i);
+    if(q){ if(c==='"'){ if(line.charAt(i+1)==='"'){ field+='"'; i+=2; continue; } q=false; i++; continue; } field+=c; i++; continue; }
+    if(c==='"'){ q=true; i++; continue; }
+    if(c===','){ out.push(field); field=""; i++; continue; }
+    field+=c; i++; }
+  out.push(field); return out;
+}
+function iocParseCSV(text){
+  if(text.charCodeAt(0)===0xFEFF) text=text.substring(1);
+  var lines=text.split("\n"), rows=[], i=0, n=lines.length;
+  while(i<n){ var line=lines[i]; i++;
+    var qc=iocCountQuotes(line);
+    while((qc%2)===1 && i<n){ line+="\n"+lines[i]; qc+=iocCountQuotes(lines[i]); i++; }
+    if(line.charAt(line.length-1)==='\r') line=line.substring(0,line.length-1);
+    if(line==="") continue;
+    rows.push(iocParseCSVLine(line)); }
+  return rows;
+}
+function iocIsIpv4(v){ if(!/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) return false;
+  var p=v.split("."); for(var i=0;i<4;i++){ if(parseInt(p[i],10)>255) return false; } return true; }
+function iocNormType(t){ t=trimStr(String(t==null?"":t)).toLowerCase();
+  for(var i=0;i<IOC_TYPES.length;i++){ if(IOC_TYPES[i]===t) return t; } return "keyword"; }
+function iocLoadCsv(){
+  var arr=[], p=iocCsvPath(); if(!p||!fileExists(p)) return arr;
+  var raw; try{ raw=iocParseCSV(readUtf8(p)); }catch(e){ return arr; }
+  if(!raw||!raw.length) return arr;
+  var start=0, h=raw[0]; if(h&&h.length&&trimStr(h[0]).toLowerCase()==="value") start=1;
+  for(var i=start;i<raw.length;i++){ var rw=raw[i]; var v=trimStr(rw[0]!=null?rw[0]:""); if(v==="") continue;
+    arr.push({ v:v, t:iocNormType(rw[1]), n:(rw[2]!=null?rw[2]:""), c:(rw[3]!=null?rw[3]:"") }); }
+  return arr;
+}
+function iocImportLegacy(arr){
+  var p=iocTxtPath(); if(!p||!fileExists(p)) return 0;
+  var have={}; for(var i=0;i<arr.length;i++) have[arr[i].v.toLowerCase()]=1;
+  var ls; try{ ls=readUtf8(p).split(/\r?\n/); }catch(e){ return 0; }
+  var added=0;
+  for(var x=0;x<ls.length;x++){ var L=trimStr(ls[x]); if(!L||L.charAt(0)==="#") continue;
+    if(have[L.toLowerCase()]) continue;
+    arr.push({ v:L, t:"keyword", n:"imported from IOC.txt", c:"" }); have[L.toLowerCase()]=1; added++; }
+  return added;
+}
+function iocSaveCsv(arr){ var lines=["Value,Type,Note,Case"];
+  for(var i=0;i<arr.length;i++){ var r=arr[i]; lines.push(cq(r.v)+","+cq(r.t)+","+cq(r.n)+","+cq(r.c)); }
+  writeUtf8(iocCsvPath(), lines.join("\r\n")+"\r\n"); }
+function iocFlatten(arr){
+  var out=["# GENERATED from IOC.csv - edit via the tool's Create/Edit IOC list button.",
+           "# One term per line; this tool (and every family wrapper) auto-loads it at launch."];
+  var seen={};
+  for(var i=0;i<arr.length;i++){ var v=trimStr(arr[i].v); if(!v) continue; var k=v.toLowerCase(); if(seen[k]) continue; seen[k]=1; out.push(v); }
+  writeUtf8(iocTxtPath(), out.join("\r\n")+"\r\n"); return out.length-2;
+}
+function iocCount(){
+  if(fileExists(iocCsvPath())){ var arr=iocLoadCsv(), seen={}, n=0;
+    for(var i=0;i<arr.length;i++){ var k=arr[i].v.toLowerCase(); if(k&&!seen[k]){ seen[k]=1; n++; } } return n; }
+  if(fileExists(iocTxtPath())){ var c=0; try{ var ls=readUtf8(iocTxtPath()).split(/\r?\n/);
+      for(var x=0;x<ls.length;x++){ var L=trimStr(ls[x]); if(L&&L.charAt(0)!=="#") c++; } }catch(e){} return c; }
+  return -1;
+}
+function iocBtnLabel(){ var b=$("iocBtn"); if(!b) return; var n=iocCount();
+  b.innerHTML = (n>0) ? ("Edit IOC list ("+n+")") : "Create IOC list"; }
+function openIocEditor(){
+  if(!htaFolder()){ setStatus("Can't locate the app folder to store the IOC list.","err"); return; }
+  IOC_ROWS=iocLoadCsv();
+  var imp=iocImportLegacy(IOC_ROWS); if(imp>0) appendLog("Imported "+imp+" term(s) from the existing IOC.txt");
+  if(!IOC_ROWS.length) IOC_ROWS.push({ v:"", t:"keyword", n:"", c:"" });
+  renderIocTable();
+  $("iocStatus").innerHTML = imp>0 ? ("Imported "+imp+" term(s) from the existing IOC.txt") : "";
+  showEl("iocModal",true);
+}
+function closeIocEditor(){ showEl("iocModal",false); }
+function renderIocTable(){
+  var h='<table id="iocTbl" class="ioctbl"><tr><th>Value</th><th style="width:110px">Type</th><th>Note</th><th style="width:150px">Case</th><th style="width:34px"></th></tr>';
+  for(var i=0;i<IOC_ROWS.length;i++){ var r=IOC_ROWS[i];
+    h+='<tr><td><input class="txt" id="ioc_v_'+i+'" value="'+esc(r.v)+'" onchange="iocAutoType(this)"></td>';
+    h+='<td><select id="ioc_t_'+i+'">';
+    for(var j=0;j<IOC_TYPES.length;j++){ h+='<option value="'+IOC_TYPES[j]+'"'+(IOC_TYPES[j]===r.t?' selected':'')+'>'+IOC_TYPES[j]+'</option>'; }
+    h+='</select></td>';
+    h+='<td><input class="txt" id="ioc_n_'+i+'" value="'+esc(r.n)+'"></td>';
+    h+='<td><input class="txt" id="ioc_c_'+i+'" value="'+esc(r.c)+'"></td>';
+    h+='<td style="text-align:center"><span class="lnk" onclick="iocDelRow('+i+')" title="Remove this row">del</span></td></tr>'; }
+  h+='</table>'; $("iocTblWrap").innerHTML=h;
+}
+function iocSyncFromDom(){
+  for(var i=0;i<IOC_ROWS.length;i++){ var v=$("ioc_v_"+i), t=$("ioc_t_"+i), n=$("ioc_n_"+i), c=$("ioc_c_"+i);
+    if(v) IOC_ROWS[i].v=trimStr(v.value); if(t) IOC_ROWS[i].t=iocNormType(t.value);
+    if(n) IOC_ROWS[i].n=n.value; if(c) IOC_ROWS[i].c=c.value; }
+}
+function iocAutoType(el){ var id=el.id+""; var i=id.substring(id.lastIndexOf("_")+1);
+  var sel=$("ioc_t_"+i); if(!sel||sel.value!=="keyword") return; var v=trimStr(el.value);
+  if(/^[0-9a-fA-F]{40}$/.test(v)) sel.value="hash"; else if(iocIsIpv4(v)) sel.value="ip"; }
+function iocAddRow(){ iocSyncFromDom(); IOC_ROWS.push({ v:"", t:"keyword", n:"", c:"" }); renderIocTable();
+  try{ var f=$("ioc_v_"+(IOC_ROWS.length-1)); if(f) f.focus(); }catch(e){} }
+function iocDelRow(i){ iocSyncFromDom(); if(i>=0&&i<IOC_ROWS.length) IOC_ROWS.splice(i,1);
+  if(!IOC_ROWS.length) IOC_ROWS.push({ v:"", t:"keyword", n:"", c:"" }); renderIocTable(); }
+function iocSave(){
+  iocSyncFromDom(); var clean=[], seen={}, dups=0;
+  for(var i=0;i<IOC_ROWS.length;i++){ var r=IOC_ROWS[i]; var v=trimStr(r.v); if(!v) continue;
+    var k=v.toLowerCase(); if(seen[k]){ dups++; continue; } seen[k]=1; clean.push({ v:v, t:iocNormType(r.t), n:r.n, c:r.c }); }
+  var n; try{ iocSaveCsv(clean); n=iocFlatten(clean); }
+  catch(e){ $("iocStatus").innerHTML=esc("Save failed: "+e.message); setStatus("IOC save failed: "+e.message,"err"); return; }
+  IOC_ROWS = clean.length ? clean : [{ v:"", t:"keyword", n:"", c:"" }];
+  renderIocTable(); loadToolkitIoc(); iocBtnLabel();
+  var msg="Saved "+n+" IOC"+(n===1?"":"s")+" - the sweep now uses them (re-run analysis to apply)"+(dups?(" ("+dups+" duplicate"+(dups===1?"":"s")+" dropped)"):"");
+  $("iocStatus").innerHTML=esc(msg); setStatus(msg,"ok");
+  appendLog("IOC editor: wrote IOC.csv ("+clean.length+" rows) + IOC.txt ("+n+" terms)");
+}
+function iocOpenNotepad(){
+  var p=iocTxtPath(); if(!p||!fileExists(p)){ setStatus("No IOC.txt yet - add a term and Save first.","err"); return; }
+  try{ new ActiveXObject("WScript.Shell").Run('notepad.exe "'+p+'"',1,false); }
+  catch(e){ setStatus("Could not open Notepad: "+e.message,"err"); }
+}
 function iocHit(blob){ for(var i=0;i<IOCS.length;i++){ if(blob.indexOf(IOCS[i])>=0) return IOCS[i]; } return ""; }
 
 /* scoring helpers */
@@ -1315,7 +1505,8 @@ function buildSpecEsxi(){
   var id=specSec("Identity");
   kvAdd(id,"Hostname / FQDN", hn); kvAdd(id,"Domain", hn.indexOf(".")>0?hn.substring(hn.indexOf(".")+1):"");
   kvAdd(id,"Product", NODE.product); kvAdd(id,"Version", NODE.version); kvAdd(id,"Build", NODE.build); kvAdd(id,"Update", NODE.update);
-  kvAdd(id,"System UUID", uuid); kvAdd(id,"Model (DCUI banner)", model); kvAdd(id,"PSNT / chassis", psnt);
+  kvAdd(id,"System UUID", uuid); kvAdd(id,"Service tag / serial", NODE.serial); kvAdd(id,"Model (DCUI banner)", model); kvAdd(id,"PSNT / chassis", psnt);
+  kvAdd(id,"Management IP", NODE.mgmtIp); kvAdd(id,"Web client (ESXi Host Client)", NODE.webUi); kvAdd(id,"iDRAC / BMC IP", NODE.idrac);
   // networking kv
   var net=specSec("Networking");
   var rt=readMember("commands/esxcfg-route_-l.txt"); var gw=(rt.match(/default\s+([\d.]+)/i)||rt.match(/0\.0\.0\.0\s+([\d.]+)/)||[])[1]; kvAdd(net,"Default gateway", gw);
@@ -1381,6 +1572,7 @@ function buildSpecVcsa(){
   var hn=NODE.host||""; var hosts=readMember("etc/hosts"); if(!hn){ var hm=hosts.match(/^\s*[\d.]+\s+(\S+\.\S+)/m); if(hm) hn=hm[1]; }
   kvAdd(id,"Hostname / PNID", hn); kvAdd(id,"Domain", hn.indexOf(".")>0?hn.substring(hn.indexOf(".")+1):"");
   kvAdd(id,"Product", "VMware vCenter Server (VCSA)"); kvAdd(id,"Build", NODE.build);
+  kvAdd(id,"Management IP", NODE.mgmtIp); kvAdd(id,"vSphere Client (web)", NODE.webUi); kvAdd(id,"Appliance mgmt (VAMI)", NODE.vami);
   // SSO identity sources / AD integration (vCenter-level, from sso-config.txt)
   var sso=readMember("commands/sso-config.txt");
   if(trimStr(sso)){ var blocks=sso.split(/IDENTITY SOURCE INFORMATION/), srcs=[], ad=false, ssoDom="";
@@ -1516,7 +1708,7 @@ function buildReportHtml(){
   h.push('<div class="muted">Host <b>'+rEsc(NODE.host||"?")+'</b> &middot; '+rEsc(NODE.type||"")+' &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>');
   // node config
   h.push('<h2>Node configuration</h2><table>');
-  var nf2=[["Bundle type",NODE.type],["Host",NODE.host],["Product",NODE.product],["Version",NODE.version],["Build",NODE.build],["Update",NODE.update],["VIB acceptance",NODE.acceptance],["Captured on",NODE.captured],["vm-support version",NODE.vmsupport],["Capture command",NODE.cmdline]];
+  var nf2=[["Bundle type",NODE.type],["Host",NODE.host],["Product",NODE.product],["Version",NODE.version],["Build",NODE.build],["Serial / service tag",NODE.serial],["Management IP",NODE.mgmtIp],["Web client",NODE.webUi],["Appliance mgmt (VAMI)",NODE.vami],["iDRAC / BMC IP",NODE.idrac],["Update",NODE.update],["VIB acceptance",NODE.acceptance],["Captured on",NODE.captured],["vm-support version",NODE.vmsupport],["Capture command",NODE.cmdline]];
   for(var i=0;i<nf2.length;i++){ if(nf2[i][1]) h.push('<tr><td class="k">'+rEsc(nf2[i][0])+'</td><td class="mono">'+rEsc(nf2[i][1])+'</td></tr>'); }
   h.push('</table>');
   // specification
@@ -1760,7 +1952,7 @@ function snapshotHost(host, path){
   var risk = indHits()*3 + persistHits()*2 + lf + af + IOCHITS.length*2 + ext.n;
   var vmRun=0; for(i=0;i<VMS.length;i++) if(VMS[i].running) vmRun++;
   var cl=extractCluster(); var mh=collectManagedHosts();
-  return { host:host, type:typeLabel(), btype:BTYPE, version:NODE.version||"", build:NODE.build||"",
+  return { host:host, type:typeLabel(), btype:BTYPE, version:NODE.version||"", build:NODE.build||"", serial:NODE.serial||"",
     vmCount:VMS.length, vmRunning:vmRun, managedHosts:mh.hosts, guestIp:mh.guestIp,
     keyPresent:present, keyTotal:INVENTORY.length, keyMiss:missN,
     logons:LOGON.length, logonFlagged:lf, logonExt:ext.n, extIps:ext.ips,
@@ -1847,13 +2039,14 @@ function fmtAnalyzed(r){ var t=r.analyzedAt?isoShort(r.analyzedAt):"-";
   return esc(t)+tag; }
 function renderRoster(){
   var q=lc(trimStr($("fq").value||"")); var rows=[];
-  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; if(q && (r.host+" "+r.type+" "+r.build).toLowerCase().indexOf(q)<0) continue; rows.push(r); }
-  var h='<thead><tr><th>Host</th><th>Cluster</th><th>Type</th><th>Version / build</th><th>VMs</th><th>Key files</th><th>Logons (flagged)</th><th>Actions (flagged)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>Risk</th><th>Analyzed</th></tr></thead><tbody>';
-  if(!rows.length) h+='<tr><td colspan="13" class="muted">No hosts yet.</td></tr>';
+  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; if(q && (r.host+" "+r.type+" "+r.build+" "+(r.serial||"")).toLowerCase().indexOf(q)<0) continue; rows.push(r); }
+  var h='<thead><tr><th>Host</th><th>Cluster</th><th>Type</th><th>Version / build</th><th>Serial / service tag</th><th>VMs</th><th>Key files</th><th>Logons (flagged)</th><th>Actions (flagged)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>Risk</th><th>Analyzed</th></tr></thead><tbody>';
+  if(!rows.length) h+='<tr><td colspan="14" class="muted">No hosts yet.</td></tr>';
   for(i=0;i<rows.length;i++){ var r=rows[i]; var rc=r.risk>=8?"row-flag":(r.risk>=3?"row-warn":"");
     var clCls = (r.clusterLabel&&r.clusterLabel.indexOf("Cluster")===0)?"tag cfg":(r.clusterLabel==="standalone"?"muted":"tag info");
     h+='<tr class="'+rc+'" data-h="'+i+'" style="cursor:pointer" title="Open full triage for '+esc(r.host)+'">'
       +'<td><b>'+esc(r.host)+'</b></td><td class="mono"><span class="'+clCls+'">'+esc(r.clusterLabel||"-")+'</span></td><td>'+esc(r.type)+'</td><td class="mono muted">'+esc((r.version?r.version+" ":"")+r.build)+'</td>'
+      +'<td class="mono">'+(r.serial?esc(r.serial):'<span class="muted">-</span>')+'</td>'
       +'<td class="mono">'+(r.vmCount!=null?(r.vmCount+(r.vmRunning?(' <span class="muted">('+r.vmRunning+' run)</span>'):'')):'-')+'</td>'
       +'<td class="mono">'+r.keyPresent+'/'+r.keyTotal+(r.keyMiss?(' <span class="pkey">'+r.keyMiss+' miss</span>'):'')+'</td>'
       +'<td class="mono">'+nf(r.logons)+(r.logonFlagged?(' <span class="hl-ioc">('+r.logonFlagged+')</span>'):'')+(r.logonExt?(' <span class="tag sus">ext '+r.logonExt+'</span>'):'')+'</td>'
@@ -1873,8 +2066,8 @@ function drillHost(rec){ if(!rec) return; FLEETMODE=false; showEl("fleetCard",fa
   setStatus("Opening "+rec.host+"…","muted"); window.setTimeout(analyze, 30);
 }
 function fleetExport(){ if(!FLEET.length){ setStatus("No fleet to export.","err"); return; }
-  var out=["Host,Type,Version,Build,KeyPresent,KeyTotal,KeyMissing,Logons,LogonFlagged,LogonExternal,Actions,ActionFlagged,PersistFlagged,Indicators,CVEFlagged,IOCHits,Risk,Analyzed,Reused"];
-  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; out.push([cq(r.host),cq(r.type),cq(r.version),cq(r.build),r.keyPresent,r.keyTotal,r.keyMiss,r.logons,r.logonFlagged,r.logonExt,r.actions,r.actFlagged,r.persistFlagged,r.indicHits,r.cveFlag,r.iocHits,r.risk,cq(r.analyzedAt||""),(r.reused?1:0)].join(",")); }
+  var out=["Host,Type,Version,Build,Serial,KeyPresent,KeyTotal,KeyMissing,Logons,LogonFlagged,LogonExternal,Actions,ActionFlagged,PersistFlagged,Indicators,CVEFlagged,IOCHits,Risk,Analyzed,Reused"];
+  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; out.push([cq(r.host),cq(r.type),cq(r.version),cq(r.build),cq(r.serial||""),r.keyPresent,r.keyTotal,r.keyMiss,r.logons,r.logonFlagged,r.logonExt,r.actions,r.actFlagged,r.persistFlagged,r.indicHits,r.cveFlag,r.iocHits,r.risk,cq(r.analyzedAt||""),(r.reused?1:0)].join(",")); }
   var p=fleetBase()+"\\roster_"+nowStamp()+".csv"; try{ writeUtf8(p,out.join("\r\n")); setStatus("Roster → "+p,"ok"); }catch(e){ setStatus("Export failed: "+e.message,"err"); }
 }
 function fleetReport(){ if(!FLEET.length){ setStatus("No fleet to report.","err"); return; }
@@ -1882,8 +2075,8 @@ function fleetReport(){ if(!FLEET.length){ setStatus("No fleet to report.","err"
   var h=['<!doctype html><html><head><meta charset="utf-8"><title>vSphere Fleet Triage</title>',
     '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0}h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:18px 0 8px;color:#0b2a5b}table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left}th{background:#eef2f7}.hit{color:#b00020;font-weight:700}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}</style></head><body>',
     '<h1>vSphere Fleet Triage - Case Notes</h1><div class="muted">'+FLEET.length+' host(s) &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>',
-    '<h2>Roster (by risk)</h2><table><tr><th>Host</th><th>Type</th><th>Version/Build</th><th>KeyFiles</th><th>Logons(flag)</th><th>Actions(flag)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>IOC</th><th>Risk</th></tr>'];
-  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; h.push('<tr><td><b>'+esc(r.host)+'</b></td><td>'+esc(r.type)+'</td><td class="mono">'+esc((r.version?r.version+" ":"")+r.build)+'</td><td>'+r.keyPresent+'/'+r.keyTotal+'</td><td'+(r.logonFlagged?' class="hit"':'')+'>'+r.logons+' ('+r.logonFlagged+')'+(r.logonExt?(' ext '+r.logonExt):'')+'</td><td'+(r.actFlagged?' class="hit"':'')+'>'+r.actions+' ('+r.actFlagged+')</td><td'+(r.persistFlagged?' class="hit"':'')+'>'+r.persistFlagged+'</td><td'+(r.indicHits?' class="hit"':'')+'>'+r.indicHits+'</td><td>'+r.cveFlag+'</td><td>'+r.iocHits+'</td><td><b>'+r.risk+'</b></td></tr>'); }
+    '<h2>Roster (by risk)</h2><table><tr><th>Host</th><th>Type</th><th>Version/Build</th><th>Serial</th><th>KeyFiles</th><th>Logons(flag)</th><th>Actions(flag)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>IOC</th><th>Risk</th></tr>'];
+  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; h.push('<tr><td><b>'+esc(r.host)+'</b></td><td>'+esc(r.type)+'</td><td class="mono">'+esc((r.version?r.version+" ":"")+r.build)+'</td><td class="mono">'+esc(r.serial||"-")+'</td><td>'+r.keyPresent+'/'+r.keyTotal+'</td><td'+(r.logonFlagged?' class="hit"':'')+'>'+r.logons+' ('+r.logonFlagged+')'+(r.logonExt?(' ext '+r.logonExt):'')+'</td><td'+(r.actFlagged?' class="hit"':'')+'>'+r.actions+' ('+r.actFlagged+')</td><td'+(r.persistFlagged?' class="hit"':'')+'>'+r.persistFlagged+'</td><td'+(r.indicHits?' class="hit"':'')+'>'+r.indicHits+'</td><td>'+r.cveFlag+'</td><td>'+r.iocHits+'</td><td><b>'+r.risk+'</b></td></tr>'); }
   h.push('</table>');
   var groups=clusterGroups();
   h.push('<h2>Clusters (vSAN sub-cluster grouping)</h2><table><tr><th>Cluster</th><th>vSAN UUID</th><th>Hosts present</th><th>vCenter</th></tr>');
@@ -2057,6 +2250,11 @@ function renderOverview(){
   h+=kvRow("Product", NODE.product);
   h+=kvRow("Version", NODE.version);
   h+=kvRow("Build", NODE.build);
+  h+=kvRow("Serial / service tag", NODE.serial);
+  h+=kvRow("Management IP", NODE.mgmtIp);
+  h+=kvRow(BTYPE==="vcsa"?"vSphere Client (web)":"Web client (ESXi)", NODE.webUi);
+  h+=kvRow("Appliance mgmt (VAMI)", NODE.vami);
+  h+=kvRow("iDRAC / BMC IP", NODE.idrac);
   h+=kvRow("Update", NODE.update);
   h+=kvRow("VIB acceptance", NODE.acceptance);
   h+=kvRow("Captured on", NODE.captured);
@@ -2498,7 +2696,7 @@ function init(){
   $("invScroll").onscroll=applyFreeze;
   $("tblScroll").onscroll=applyFreezeTbl;
   $("anMaxLbl").innerHTML=nf(ANMAXROWS);
-  resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadToolkitIoc();
+  resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadToolkitIoc(); iocBtnLabel();
   try{ var hf=htaFolder(); if(hf && isNetworkPath(hf)){ showEl("netwarn",true); } }catch(e){}
 
   $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };
@@ -2510,6 +2708,7 @@ function init(){
   $("fup").onclick=function(){ zoom=Math.min(zoom+0.15,2.5); applyZoom(); };
   $("fdown").onclick=function(){ zoom=Math.max(zoom-0.15,0.6); applyZoom(); };
 
+  $("iocBtn").onclick=openIocEditor;
   $("procBtn").onclick=analyze;
   $("openDirBtn").onclick=openDir;
   $("inPath").onkeyup=function(){ if(inTimer) window.clearTimeout(inTimer); inTimer=window.setTimeout(updateActionBtns,300); };

@@ -84,7 +84,7 @@
 <header class="top">
   <h1>vSphere Support Bundle Triage Tool</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles — one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.7</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.8</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -122,7 +122,7 @@
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
   <!-- header -->
   <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
-  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.7</tspan></text>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.8</tspan></text>
   <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
   <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
   <!-- tabs -->
@@ -174,7 +174,7 @@
 </figure>
 
 <h3 id="spec-tab">Specification</h3>
-<p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, model/PSNT), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>port groups &amp; VLANs</b> (standard vSwitch port groups plus distributed port groups with their VLANs, parsed from <code>esxcfg-vswitch -l</code> and <code>net-dvs -l</code>), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage — for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document.</p>
+<p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, <b>serial / service tag</b>, model/PSNT, <b>management IP + ESXi Host Client URL</b>, and the <b>iDRAC / BMC IP</b> when in-band IPMI exposes it), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>port groups &amp; VLANs</b> (standard vSwitch port groups plus distributed port groups with their VLANs, parsed from <code>esxcfg-vswitch -l</code> and <code>net-dvs -l</code>), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage — for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, <b>management IP + vSphere Client &amp; VAMI (:5480) URLs</b>, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document. (The same identity fields — serial, management IP, web URLs, iDRAC — also appear on the <b>Overview → Node configuration</b> pane.)</p>
 
 <h3 id="vms-tab">VMs</h3>
 <p>(ESXi) Every registered VM parsed from its <code>.vmx</code>: name, guest OS, vCPU, vRAM, vDisk count/names, datastore/vSAN, and running status. Click a VM to preview its <code>.vmx</code> (full disk paths for recovery). A <b>Guest IP</b> column appears only when a vCenter in the fleet supplied it (ESXi bundles do not carry guest IPs). Green <b>Export VMs &rarr; CSV</b>.</p>
@@ -266,7 +266,7 @@
 <p>File-inspection findings (verdict: suspect / review / clean / n-a). <b>ESXi:</b> DCUI welcome banner (ransom-note check), <code>rc.local.d/local.sh</code>, remote-syslog state, VIB acceptance, SSH keys, key-log integrity. <b>vCenter:</b> <code>ld.so.preload</code>, rsyslog forwarding, admin systemd units, cron, log integrity. Bundles are <em>targeted</em> — items the bundle does not capture are marked "not captured", not "clean".</p>
 
 <h3 id="ioc-tab">IOC hits</h3>
-<p>Put an <code>IOC.txt</code> (one term per line — IPs, users, hashes, filenames) next to the app; on analysis it is swept across the key logs and hits are listed here with file, line, and excerpt.</p>
+<p>An <code>IOC.txt</code> (one term per line — IPs, users, hashes, filenames) placed next to the app is swept across the key logs on analysis; hits are listed here with file, line, and excerpt. Use the orange <b>Create IOC list</b> button (left of <b>Analyze bundle</b>) to build or edit it in a structured editor: <code>IOC.csv</code> holds <b>Value / Type / Note / Case</b> and is the editable source; on <b>Save</b> it is flattened to <code>IOC.txt</code> — the file this tool (and every wrapper in the family) auto-loads at launch. Hash/IPv4 values are auto-typed, and any existing plain <code>IOC.txt</code> is imported on first edit so nothing is lost.</p>
 
 <h2 id="indicators">5. Ransomware / intrusion indicators (Overview)</h2>
 <p>ESXi kill-chain checklist derived from the parsed data — each is <b>TRIGGERED</b>, <b>clear</b>, or <b>n/a</b> with evidence:</p>
@@ -409,7 +409,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Triage Tool — Field Manual for v0.9.7. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Triage Tool — Field Manual for v0.9.8. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>
