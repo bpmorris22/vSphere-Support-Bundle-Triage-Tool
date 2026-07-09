@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# tool runtime output (created next to the HTA when it runs)
+_Processed/
+_extracted/
+_view/
+_fleet/
+tools/
+toc.tsv
+runinfo.json
+inventory.json
+logons.json
+actions.json
+IOC.txt
+*.colw.txt
+*_export_*.csv
+report_*.html
+specification_*.html
+fleet_report_*.html

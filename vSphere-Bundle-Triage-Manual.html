@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vSphere Support Bundle Triage Tool — Field Manual</title>
+<style>
+  :root{--blue:#58a6ff;--ink:#e6edf3;--mut:#8b949e;--line:#30363d;--bg:#0d1117;--card:#161b22;--code:#1c2330}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:Segoe UI,-apple-system,Arial,sans-serif;color:var(--ink);background:var(--bg);font-size:15px;line-height:1.55}
+  a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+  .wrap{max-width:1200px;margin:0 auto;display:flex;gap:28px;padding:0 20px}
+  nav{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;height:100vh;overflow:auto;padding:22px 0 40px;border-right:1px solid var(--line)}
+  nav h4{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin:16px 0 6px}
+  nav a{display:block;color:#c9d1d9;padding:3px 10px;border-radius:6px;font-size:13.5px;cursor:pointer}
+  nav a:hover{background:#1c2330;text-decoration:none;color:#fff}
+  nav a.on{background:#132a4d;color:#79c0ff}
+  main{flex:1;min-width:0;padding:26px 0 80px}
+  header.top{background:linear-gradient(120deg,#0b2a5b,#1f6feb);color:#fff;border-radius:12px;padding:26px 30px;margin-bottom:26px}
+  header.top h1{margin:0 0 4px;font-size:26px}
+  header.top .sub{opacity:.92;font-size:15px}
+  header.top .pills{margin-top:12px}
+  .pill{display:inline-block;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 12px;font-size:12px;margin-right:6px}
+  h2{font-size:21px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--blue);color:#79c0ff;scroll-margin-top:14px}
+  h3{font-size:16.5px;margin:20px 0 6px;color:#adc8ff;scroll-margin-top:14px}
+  p{margin:8px 0}
+  code{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;font-size:13px;color:#c9d1d9}
+  pre{background:#010409;color:#e6edf3;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px;line-height:1.5}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin:12px 0}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#1c2330;font-weight:600;color:#c9d1d9}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px;border:1px solid}
+  .t-red{background:#3a1416;color:#ff6b6b;border-color:#b83030}
+  .t-grn{background:#0f2a1a;color:#7ee787;border-color:#2ea043}
+  .t-amb{background:#2a2410;color:#e3b341;border-color:#8a7a2a}
+  .t-blu{background:#10233a;color:#79c0ff;border-color:#1f6feb}
+  .t-pur{background:#241033;color:#c297ff;border-color:#6a3aa0}
+  .note{border-left:4px solid var(--blue);background:#10233a;padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0}
+  .warn{border-left:4px solid #e3b341;background:#241c12;padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0}
+  .caveat{border-left:4px solid #f85149;background:#2a1416;padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0}
+  ul,ol{margin:8px 0;padding-left:22px}li{margin:4px 0}
+  .muted{color:var(--mut)}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--mut);font-size:12.5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  figure{margin:16px 0}
+  figure svg{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.45)}
+  figcaption{color:var(--mut);font-size:12.5px;margin-top:6px;text-align:center}
+  @media(max-width:860px){nav{display:none}.wrap{padding:0 14px}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <h4>Field Manual</h4>
+  <a href="#intro">1. Overview</a>
+  <a href="#how">2. How it works</a>
+  <a href="#start">3. Getting started</a>
+  <a href="#tabs">4. The tabs</a>
+  <a href="#overview-tab">&nbsp;&nbsp;Overview</a>
+  <a href="#spec-tab">&nbsp;&nbsp;Specification</a>
+  <a href="#vms-tab">&nbsp;&nbsp;VMs</a>
+  <a href="#keyfiles-tab">&nbsp;&nbsp;Key Files</a>
+  <a href="#logons-tab">&nbsp;&nbsp;Logons</a>
+  <a href="#actions-tab">&nbsp;&nbsp;Actions</a>
+  <a href="#timeline-tab">&nbsp;&nbsp;Timeline</a>
+  <a href="#persist-tab">&nbsp;&nbsp;Persistence</a>
+  <a href="#ioc-tab">&nbsp;&nbsp;IOC hits</a>
+  <h4>Detection</h4>
+  <a href="#indicators">5. Ransomware indicators</a>
+  <a href="#cve">6. CVE exposure</a>
+  <a href="#scoring">7. Scoring &amp; tags</a>
+  <h4>Fleet</h4>
+  <a href="#fleet">8. Fleet mode</a>
+  <a href="#clusters">9. Clusters</a>
+  <a href="#correlation">10. Correlation &amp; chain</a>
+  <h4>Output</h4>
+  <a href="#exports">11. Exports &amp; reports</a>
+  <a href="#caveats">12. Caveats &amp; limits</a>
+  <a href="#workflow">13. DFIR workflow</a>
+</nav>
+<main>
+<header class="top">
+  <h1>vSphere Support Bundle Triage Tool</h1>
+  <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles — one HTA, no dependencies, never touches the source host.</div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.3</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span></div>
+</header>
+
+<h2 id="intro">1. Overview</h2>
+<p>This tool ingests a VMware <b>ESXi</b> or <b>vCenter (VCSA)</b> support bundle and turns it into a fast, scored investigation surface for two questions: <b>what is this node</b> (configuration, VMs, storage) and <b>what happened on it</b> (logins, actions, persistence, ransomware/intrusion indicators). It runs as a single Windows HTA — no install, no runtime — and reads the bundle read-only. It never runs <code>vm-support</code>/<code>vc-support</code> and never contacts the source host.</p>
+<div class="grid2">
+<div class="card"><b>Auto-detects the bundle type</b><br><span class="muted">ESXi vs vCenter is decided from the tree (<code>etc/vmware/esx.conf</code> vs <code>var/log/vmware/vpxd/</code>) with README / name-prefix fallbacks. The tab set adapts.</span></div>
+<div class="card"><b>Single node or a whole fleet</b><br><span class="muted">Triage one bundle, or point at a folder of bundles (a cluster) and get a roster + cross-host correlation and the vCenter&rarr;ESXi task chain.</span></div>
+</div>
+
+<h2 id="how">2. How it works</h2>
+<ul>
+  <li><b>Extraction engine:</b> Windows' built-in <code>C:\Windows\System32\tar.exe</code> (bsdtar). No 7-Zip needed for <code>.tgz</code>/<code>.tar</code>.</li>
+  <li><b>Table-of-contents first:</b> the bundle index is read once (<code>bsdtar -tvf</code>, cached to <code>toc.tsv</code>) so the Key Files board and node summary paint <em>without</em> unpacking gigabytes. Individual files are extracted on demand.</li>
+  <li><b>Compressed logs:</b> <code>.gz</code> inner logs decompress automatically; <code>.zst</code> (vCenter) needs <code>zstd.exe</code> — the tool probes <code>tools\</code> and PATH and, if missing, offers to fetch the official build from the facebook/zstd GitHub release.</li>
+  <li><b>Deep vSAN paths:</b> vSAN datastore paths contain <code>:</code> (illegal on NTFS); the tool handles bsdtar's <code>:</code>&rarr;<code>_</code> rewrite and reads deep files via stdout to stay under the 260-char path limit.</li>
+  <li><b>Output:</b> everything lands under <code>_Processed\&lt;host&gt;\vSphere\</code> next to the app — TOC cache, extracted files, <code>runinfo.json</code>, <code>inventory.json</code>, CSVs and reports.</li>
+</ul>
+<div class="note"><b>Requirements:</b> Windows 10/11 (ships bsdtar), run the <code>.hta</code> from a <b>local</b> path (network paths trigger Windows zone restrictions on the UTF-8 reader). Analysis runs read-only against a copy of the bundle.</div>
+
+<h2 id="start">3. Getting started</h2>
+<ol>
+  <li>Put the <code>.hta</code> in a working folder (e.g. <code>Documents\Claude\Artifacts\vSphere-Bundle-Triage\</code>) and double-click it.</li>
+  <li><b>Bundle field:</b> point at the nested archive that holds the tree (ESXi <code>&lt;host&gt;.tar</code> / vCenter <code>&lt;host&gt;.tgz</code>), the outer <code>.tgz</code>, or an already-extracted folder. <b>Browse…</b> or <b>Pick folder…</b> help.</li>
+  <li><b>Target hostname</b> is required — it names the output folder. It is guessed from the bundle name; correct it if needed.</li>
+  <li>Click <b>Analyze bundle</b>. The button turns blue when the field points at a single bundle; <b>Triage fleet folder…</b> turns blue when it points at a folder holding two or more bundles.</li>
+</ol>
+<p>Log analysis (Logons / Actions / Timeline / Persistence / IOC) runs automatically after Analyze. Use <b>Show log</b> to see extraction and per-log line counts.</p>
+
+<h2 id="tabs">4. The tabs</h2>
+
+<h3 id="overview-tab">Overview</h3>
+<p>Node configuration summary + key-file coverage, the <b>intrusion / ransomware indicator</b> panel, and the <b>CVE exposure</b> panel. The stat bubbles at the bottom (Logons, Actions, Timeline, IOC hits) are <b>clickable</b> — they jump to the matching tab. Buttons: <b>Re-run log analysis</b> and <b>Case-note report</b> (green).</p>
+<figure>
+<svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+  <rect width="1000" height="640" rx="10" fill="#0d1117"/>
+  <!-- header -->
+  <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.3</tspan></text>
+  <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
+  <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
+  <!-- tabs -->
+  <g font-size="11.5">
+    <rect x="14" y="46" width="64" height="22" rx="6" fill="#1f6feb"/><text x="24" y="61" fill="#fff">Overview</text>
+    <text x="90" y="61" fill="#c9d1d9">Specification</text><text x="176" y="61" fill="#c9d1d9">VMs</text>
+    <text x="212" y="61" fill="#c9d1d9">Key Files</text><text x="272" y="61" fill="#c9d1d9">Logons</text>
+    <text x="324" y="61" fill="#c9d1d9">Actions</text><text x="378" y="61" fill="#c9d1d9">Timeline</text>
+    <text x="438" y="61" fill="#c9d1d9">Persistence</text><text x="516" y="61" fill="#c9d1d9">IOC hits</text>
+  </g>
+  <!-- node config card -->
+  <rect x="14" y="80" width="480" height="228" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="28" y="102" fill="#8b949e" font-size="10.5" letter-spacing="0.5">NODE CONFIGURATION</text>
+  <g font-size="11.5" fill="#e6edf3"><g fill="#8b949e">
+    <text x="28" y="124">Host</text><text x="28" y="144">Product</text><text x="28" y="164">Version</text><text x="28" y="184">Build</text><text x="28" y="204">VIB acceptance</text><text x="28" y="224">Cluster</text><text x="28" y="244">Captured on</text></g>
+    <text x="150" y="124" fill="#e6edf3">esxi-lab03.corp.local</text><text x="150" y="144">VMware ESXi</text><text x="150" y="164">7.0.3</text>
+    <text x="150" y="184">Releasebuild-21930508</text><text x="150" y="204">PartnerSupported</text>
+    <text x="150" y="224" fill="#79c0ff">Cluster A · vSAN 7a1c9f2e</text><text x="150" y="244">2026-05-12 12:02 UTC</text>
+  </g>
+  <!-- coverage -->
+  <rect x="506" y="80" width="480" height="228" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="520" y="102" fill="#8b949e" font-size="10.5" letter-spacing="0.5">KEY-FILE COVERAGE</text>
+  <rect x="520" y="112" width="104" height="46" rx="8" fill="#1c2330" stroke="#2ea043"/><text x="534" y="138" fill="#7ee787" font-size="18" font-weight="700">22/22</text><text x="534" y="152" fill="#8b949e" font-size="9">KEY FILES PRESENT</text>
+  <rect x="634" y="112" width="104" height="46" rx="8" fill="#1c2330" stroke="#2ea043"/><text x="648" y="138" fill="#7ee787" font-size="18" font-weight="700">7/7</text><text x="648" y="152" fill="#8b949e" font-size="9">CRITICAL PRESENT</text>
+  <text x="520" y="178" fill="#8b949e" font-size="10.5" letter-spacing="0.5">INTRUSION / RANSOMWARE INDICATORS</text>
+  <g font-size="11">
+    <circle cx="526" cy="194" r="4" fill="#f85149"/><text x="538" y="198" fill="#e6edf3">SSH / ESXi Shell used</text><text x="700" y="198" fill="#ff6b6b" font-weight="700">TRIGGERED</text>
+    <circle cx="526" cy="214" r="4" fill="#f85149"/><text x="538" y="218" fill="#e6edf3">Host-encryption change / recovery-key</text><text x="700" y="218" fill="#ff6b6b" font-weight="700">TRIGGERED</text>
+    <circle cx="526" cy="234" r="4" fill="#3fb950"/><text x="538" y="238" fill="#e6edf3">Ransom notes / encrypted files</text><text x="700" y="238" fill="#3fb950">clear</text>
+    <circle cx="526" cy="254" r="4" fill="#3fb950"/><text x="538" y="258" fill="#e6edf3">External source IP on login</text><text x="700" y="258" fill="#3fb950">clear</text>
+  </g>
+  <text x="520" y="282" fill="#8b949e" font-size="10.5" letter-spacing="0.5">CVE EXPOSURE — advisory</text>
+  <g font-size="10.5"><text x="520" y="300" fill="#79c0ff">CVE-2021-21974</text><text x="612" y="300" fill="#8b949e">VMSA-2021-0002</text><text x="920" y="300" fill="#3fb950" font-weight="700">PATCHED</text></g>
+  <!-- analysis + bubbles -->
+  <rect x="14" y="322" width="972" height="1" fill="#30363d"/>
+  <rect x="14" y="334" width="128" height="26" rx="6" fill="#1c2330" stroke="#30363d"/><text x="28" y="351" fill="#e6edf3" font-size="11">Re-run log analysis</text>
+  <rect x="150" y="334" width="120" height="26" rx="6" fill="#238636"/><text x="164" y="351" fill="#fff" font-size="11">Case-note report</text>
+  <text x="284" y="351" fill="#8b949e" font-size="11">58 logons, 35 actions, 93 timeline, 0 IOC hits.</text>
+  <g font-size="9">
+    <rect x="14" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#30363d"/><text x="26" y="400" fill="#e6edf3" font-size="17" font-weight="700">58</text><text x="26" y="414" fill="#8b949e">LOGONS</text>
+    <rect x="108" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#8b3a3a"/><text x="120" y="400" fill="#ff6b6b" font-size="17" font-weight="700">35</text><text x="120" y="414" fill="#8b949e">ACTIONS</text>
+    <rect x="202" y="376" width="104" height="46" rx="8" fill="#1c2330" stroke="#8b3a3a"/><text x="214" y="400" fill="#ff6b6b" font-size="17" font-weight="700">3</text><text x="214" y="414" fill="#8b949e">FLAGGED ACTION</text>
+    <rect x="314" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#30363d"/><text x="326" y="400" fill="#e6edf3" font-size="17" font-weight="700">93</text><text x="326" y="414" fill="#8b949e">TIMELINE</text>
+    <rect x="408" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#30363d"/><text x="420" y="400" fill="#e6edf3" font-size="17" font-weight="700">0</text><text x="420" y="414" fill="#8b949e">IOC HITS</text>
+  </g>
+  <text x="14" y="446" fill="#8b949e" font-size="10">Bubbles are clickable — jump to the matching tab.</text>
+</svg>
+<figcaption>Overview — node summary, key-file coverage, ransomware indicators, CVE panel, clickable stat bubbles (synthetic data).</figcaption>
+</figure>
+
+<h3 id="spec-tab">Specification</h3>
+<p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, model/PSNT), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage — for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document.</p>
+
+<h3 id="vms-tab">VMs</h3>
+<p>(ESXi) Every registered VM parsed from its <code>.vmx</code>: name, guest OS, vCPU, vRAM, vDisk count/names, datastore/vSAN, and running status. Click a VM to preview its <code>.vmx</code> (full disk paths for recovery). A <b>Guest IP</b> column appears only when a vCenter in the fleet supplied it (ESXi bundles do not carry guest IPs). Green <b>Export VMs &rarr; CSV</b>.</p>
+<figure>
+<svg viewBox="0 0 1000 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+  <rect width="1000" height="340" rx="10" fill="#0d1117"/>
+  <rect x="14" y="14" width="972" height="312" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="28" y="38" fill="#e6edf3" font-size="13" font-weight="700">Hosted VMs</text>
+  <text x="120" y="38" fill="#8b949e" font-size="11">18 VMs · 16 running · 148 vCPU · 612 GB vRAM · 18 on vSAN · 12 guest IP (from vCenter)</text>
+  <rect x="770" y="24" width="126" height="22" rx="6" fill="#238636"/><text x="784" y="39" fill="#fff" font-size="11">Export VMs → CSV</text>
+  <!-- header row -->
+  <rect x="24" y="52" width="952" height="24" fill="#1c2330"/>
+  <g font-size="11" fill="#c9d1d9"><text x="34" y="68">VM</text><text x="196" y="68">Guest OS</text><text x="384" y="68">Guest IP</text><text x="486" y="68">vCPU</text><text x="546" y="68">vRAM</text><text x="616" y="68">vDisks</text><text x="756" y="68">Storage</text><text x="880" y="68">Status</text></g>
+  <g font-size="11" font-family="Consolas,monospace">
+    <!-- rows -->
+    <g><text x="34" y="94" fill="#e6edf3" font-weight="700">vm-dc01</text><text x="196" y="94" fill="#8b949e">Windows Server 2022</text><text x="384" y="94" fill="#e6edf3">10.20.30.11</text><text x="486" y="94" fill="#e6edf3">4</text><text x="546" y="94" fill="#e6edf3">16 GB</text><text x="616" y="94" fill="#8b949e">2 (vm-dc01.vmdk…)</text><rect x="756" y="84" width="42" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="762" y="95" fill="#79c0ff" font-size="9.5">vSAN</text><text x="880" y="94" fill="#3fb950">running</text></g>
+    <line x1="24" y1="104" x2="976" y2="104" stroke="#30363d"/>
+    <g><text x="34" y="122" fill="#e6edf3" font-weight="700">vm-app01</text><text x="196" y="122" fill="#8b949e">Ubuntu 22.04.3 LTS</text><text x="384" y="122" fill="#e6edf3">10.20.30.24</text><text x="486" y="122" fill="#e6edf3">2</text><text x="546" y="122" fill="#e6edf3">8 GB</text><text x="616" y="122" fill="#8b949e">1 (vm-app01.vmdk)</text><rect x="756" y="112" width="42" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="762" y="123" fill="#79c0ff" font-size="9.5">vSAN</text><text x="880" y="122" fill="#3fb950">running</text></g>
+    <line x1="24" y1="132" x2="976" y2="132" stroke="#30363d"/>
+    <g><text x="34" y="150" fill="#e6edf3" font-weight="700">vm-sql01</text><text x="196" y="150" fill="#8b949e">Windows Server 2019</text><text x="384" y="150" fill="#e6edf3">10.20.30.31</text><text x="486" y="150" fill="#e6edf3">8</text><text x="546" y="150" fill="#e6edf3">64 GB</text><text x="616" y="150" fill="#8b949e">3 (vm-sql01.vmdk…)</text><rect x="756" y="140" width="42" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="762" y="151" fill="#79c0ff" font-size="9.5">vSAN</text><text x="880" y="150" fill="#3fb950">running</text></g>
+    <line x1="24" y1="160" x2="976" y2="160" stroke="#30363d"/>
+    <g><text x="34" y="178" fill="#e6edf3" font-weight="700">vm-fs02</text><text x="196" y="178" fill="#8b949e">Debian GNU/Linux 12</text><text x="384" y="178" fill="#8b949e">-</text><text x="486" y="178" fill="#e6edf3">4</text><text x="546" y="178" fill="#e6edf3">12 GB</text><text x="616" y="178" fill="#8b949e">2 (vm-fs02.vmdk…)</text><rect x="756" y="168" width="42" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="762" y="179" fill="#79c0ff" font-size="9.5">vSAN</text><text x="880" y="178" fill="#8b949e">registered</text></g>
+    <line x1="24" y1="188" x2="976" y2="188" stroke="#30363d"/>
+    <g><text x="34" y="206" fill="#e6edf3" font-weight="700">vm-bkp01</text><text x="196" y="206" fill="#8b949e">Oracle Linux 8</text><text x="384" y="206" fill="#e6edf3">10.20.30.60</text><text x="486" y="206" fill="#e6edf3">2</text><text x="546" y="206" fill="#e6edf3">8 GB</text><text x="616" y="206" fill="#8b949e">4 (vm-bkp01.vmdk…)</text><rect x="756" y="196" width="42" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="762" y="207" fill="#79c0ff" font-size="9.5">vSAN</text><text x="880" y="206" fill="#3fb950">running</text></g>
+  </g>
+  <text x="28" y="248" fill="#8b949e" font-size="10.5">Click a VM to preview its .vmx (full disk paths for recovery). Guest IP is sourced from a vCenter in the loaded fleet.</text>
+  <text x="28" y="300" fill="#79c0ff" font-size="11" font-family="Consolas,monospace">scsi0:0.fileName = "vm-dc01.vmdk"    scsi0:1.fileName = "vm-dc01_1.vmdk"</text>
+  <text x="28" y="268" fill="#c9d1d9" font-size="11" font-weight="700">▸ vm-dc01.vmx preview</text>
+</svg>
+<figcaption>VMs — per-VM inventory with guest IP (from a fleet vCenter) and click-to-preview .vmx disk paths (synthetic data).</figcaption>
+</figure>
+
+<h3 id="keyfiles-tab">Key Files</h3>
+<p>A curated inventory of forensically high-value files (per bundle type): category, description, presence, size, and Open folder / Open file. Blue left-border = critical artifact; an <b>absent</b> critical artifact is itself a finding. Green <b>Export inventory &rarr; CSV</b>.</p>
+
+<h3 id="logons-tab">Logons</h3>
+<p>Authentication events. <b>ESXi:</b> <code>auth.log</code> SSH, <code>hostd</code> SOAP logins, <code>shell.log</code> shell-enable. <b>vCenter:</b> <code>websso</code> SSO logins (user + client IP), appliance SSH, and <b>vpxd SAML human logins</b>. Scored for external source IPs, failures, and privileged accounts. Case-window (<code>from</code>/<code>to</code>) filters this tab.</p>
+
+<h3 id="actions-tab">Actions</h3>
+<p>Privileged operations. <b>ESXi:</b> <code>shell.log</code> command history (attacker-typed commands). <b>vCenter:</b> meaningful <code>vpxd</code> tasks (VM lifecycle, permission/role changes, sessions) <b>attributed to a user</b> (nearest-preceding human login — labelled <em>user approx</em>), plus appliance <code>sudo</code> commands.</p>
+
+<h3 id="timeline-tab">Timeline</h3>
+<p>Merged logons + actions, time-ordered. The <b>Score / tags</b> column is colour-coded, and the <b>Kind</b> column colours <span class="tag t-red">shell command</span> red, sudo orange, vpxd/task blue. A multiselect <b>Score</b> filter (<span class="tag t-red">&ge;5</span> <span class="tag t-amb">3-4</span> <span class="tag t-grn">1-2</span> <span class="muted">0</span>) narrows to the bands you tick. Case-window filters this tab.</p>
+<figure>
+<svg viewBox="0 0 1000 320" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+  <rect width="1000" height="320" rx="10" fill="#0d1117"/>
+  <rect x="14" y="14" width="972" height="292" rx="8" fill="#161b22" stroke="#30363d"/>
+  <!-- toolbar -->
+  <rect x="28" y="28" width="200" height="22" rx="6" fill="#1c2330" stroke="#30363d"/><text x="38" y="43" fill="#8b949e" font-size="11">filter this view</text>
+  <text x="244" y="43" fill="#8b949e" font-size="11">from</text><rect x="272" y="28" width="90" height="22" rx="6" fill="#1c2330" stroke="#30363d"/><text x="372" y="43" fill="#8b949e" font-size="11">→</text><rect x="388" y="28" width="90" height="22" rx="6" fill="#1c2330" stroke="#30363d"/>
+  <text x="496" y="43" font-size="11">Score:</text>
+  <rect x="536" y="31" width="12" height="12" rx="2" fill="#ff6b6b"/><text x="552" y="43" fill="#ff6b6b" font-size="11">≥5</text>
+  <rect x="584" y="31" width="12" height="12" rx="2" fill="#f0883e"/><text x="600" y="43" fill="#f0883e" font-size="11">3-4</text>
+  <rect x="636" y="31" width="12" height="12" rx="2" fill="#7ee787"/><text x="652" y="43" fill="#7ee787" font-size="11">1-2</text>
+  <rect x="686" y="31" width="12" height="12" rx="2" fill="#8b949e"/><text x="702" y="43" fill="#8b949e" font-size="11">0</text>
+  <rect x="820" y="28" width="150" height="22" rx="6" fill="#238636"/><text x="834" y="43" fill="#fff" font-size="11">Export view → CSV</text>
+  <!-- header -->
+  <rect x="24" y="58" width="952" height="22" fill="#1c2330"/>
+  <g font-size="11" fill="#c9d1d9"><text x="34" y="73">Score / tags</text><text x="230" y="73">When (UTC)</text><text x="380" y="73">Kind</text><text x="520" y="73">Detail</text></g>
+  <!-- rows -->
+  <g font-size="11" font-family="Consolas,monospace">
+    <rect x="24" y="80" width="952" height="26" fill="#2a1416"/>
+    <rect x="34" y="86" width="20" height="14" rx="4" fill="#3a1416"/><text x="40" y="97" fill="#ff6b6b" font-weight="700">6</text>
+    <rect x="60" y="86" width="30" height="14" rx="7" fill="#3a1416" stroke="#b83030"/><text x="65" y="97" fill="#ff6b6b" font-size="9">IOC</text>
+    <rect x="94" y="86" width="58" height="14" rx="7" fill="#3a1416" stroke="#b83030"/><text x="99" y="97" fill="#ff6b6b" font-size="9">SUSPECT</text>
+    <text x="230" y="97" fill="#e6edf3">2026-05-12 10:04:20</text><text x="380" y="97" fill="#ff6b6b" font-weight="700">shell command</text><text x="520" y="97" fill="#e6edf3">root: esxcli system settings encryption set --mode=TPM</text>
+    <rect x="24" y="106" width="952" height="26" fill="#241c12"/>
+    <rect x="34" y="112" width="20" height="14" rx="4" fill="#3a2a10"/><text x="40" y="123" fill="#f0883e" font-weight="700">3</text>
+    <rect x="60" y="112" width="58" height="14" rx="7" fill="#3a1416" stroke="#b83030"/><text x="65" y="123" fill="#ff6b6b" font-size="9">SUSPECT</text>
+    <text x="230" y="123" fill="#e6edf3">2026-05-12 10:31:50</text><text x="380" y="123" fill="#ff6b6b" font-weight="700">shell command</text><text x="520" y="123" fill="#e6edf3">root: vim-cmd hostsvc/enable_ssh</text>
+    <line x1="24" y1="132" x2="976" y2="132" stroke="#30363d"/>
+    <rect x="34" y="138" width="20" height="14" rx="4" fill="#3a2a10"/><text x="40" y="149" fill="#f0883e" font-weight="700">3</text>
+    <rect x="60" y="138" width="54" height="14" rx="7" fill="#241033" stroke="#6a3aa0"/><text x="65" y="149" fill="#c297ff" font-size="9">EXTERNAL</text>
+    <text x="230" y="149" fill="#e6edf3">2026-05-12 09:22:42</text><text x="380" y="149" fill="#8b949e">logon</text><text x="520" y="149" fill="#e6edf3">OK root from 203.0.113.66 (ssh)</text>
+    <line x1="24" y1="158" x2="976" y2="158" stroke="#30363d"/>
+    <rect x="34" y="164" width="20" height="14" rx="4" fill="#20301f"/><text x="40" y="175" fill="#7ee787" font-weight="700">1</text>
+    <rect x="60" y="164" width="34" height="14" rx="7" fill="#0f2a1a" stroke="#2ea043"/><text x="65" y="175" fill="#7ee787" font-size="9">PRIV</text>
+    <text x="230" y="175" fill="#e6edf3">2026-05-12 09:22:42</text><text x="380" y="175" fill="#79c0ff">vpxd task</text><text x="520" y="175" fill="#e6edf3">administrator@vsphere.local: ReconfigVM_Task</text>
+    <line x1="24" y1="184" x2="976" y2="184" stroke="#30363d"/>
+    <rect x="34" y="190" width="20" height="14" rx="4" fill="#20301f"/><text x="40" y="201" fill="#7ee787" font-weight="700">1</text>
+    <text x="230" y="201" fill="#e6edf3">2026-05-12 09:41:10</text><text x="380" y="201" fill="#f0883e">sudo command</text><text x="520" y="201" fill="#e6edf3">svc-backup: /usr/bin/backup.sh --full</text>
+  </g>
+  <text x="28" y="228" fill="#8b949e" font-size="10">Row tint = score (red ≥5, amber 3-4); red left-border = IOC hit. Kind: shell command in red = attacker-typed.</text>
+</svg>
+<figcaption>Timeline — colour-coded Score/tags and Kind, with the multiselect Score-band filter (synthetic data).</figcaption>
+</figure>
+
+<h3 id="persist-tab">Persistence &amp; tampering</h3>
+<p>File-inspection findings (verdict: suspect / review / clean / n-a). <b>ESXi:</b> DCUI welcome banner (ransom-note check), <code>rc.local.d/local.sh</code>, remote-syslog state, VIB acceptance, SSH keys, key-log integrity. <b>vCenter:</b> <code>ld.so.preload</code>, rsyslog forwarding, admin systemd units, cron, log integrity. Bundles are <em>targeted</em> — items the bundle does not capture are marked "not captured", not "clean".</p>
+
+<h3 id="ioc-tab">IOC hits</h3>
+<p>Put an <code>IOC.txt</code> (one term per line — IPs, users, hashes, filenames) next to the app; on analysis it is swept across the key logs and hits are listed here with file, line, and excerpt.</p>
+
+<h2 id="indicators">5. Ransomware / intrusion indicators (Overview)</h2>
+<p>ESXi kill-chain checklist derived from the parsed data — each is <b>TRIGGERED</b>, <b>clear</b>, or <b>n/a</b> with evidence:</p>
+<ul>
+  <li>SSH / ESXi Shell used &middot; external source IP on login &middot; failed-login burst</li>
+  <li>Host-encryption change / recovery-key access &middot; mass VM power-off / process kill &middot; firewall disabled</li>
+  <li>Payload staged in <code>/tmp</code> or <code>/scratch</code> &middot; download / decoder / reverse-shell &middot; bulk VMDK/VMX manipulation</li>
+  <li>VIB acceptance downgraded (allows unsigned VIBs)</li>
+  <li><b>Ransom notes / encrypted files on datastore</b> — scans <code>vmfs/volumes</code> for ransom-note files and known ransomware extensions (low false-positive; legitimate appliance disks are not flagged)</li>
+</ul>
+
+<h2 id="cve">6. CVE exposure (Overview)</h2>
+<p>Advisory panel mapping the parsed build to high-impact vSphere CVEs, with clickable links to <b>NVD</b> and the <b>VMSA</b> advisory. Cross-checks: ESXi SLP running state (OpenSLP/ESXiArgs), AD integration (AD auth-bypass).</p>
+<div class="caveat"><b>vCenter CVEs are conservative advisories.</b> vCenter exposes only a build number, and 7.0/8.0 build ranges overlap, so the verdict is: <b>patched</b> only if the build is at/above the highest known fix, <b>review</b> if below the lowest, else <b>verify</b>. Always confirm against the linked VMSA and your exact release. Fix builds are dated to the manual's build (2026-07) and should be spot-checked over time.</div>
+
+<h2 id="scoring">7. Scoring &amp; tags</h2>
+<p>Rows are scored 0-9; the row tint and Score badge follow it (red &ge;5, amber 3-4). Tags carry colours:</p>
+<p>
+<span class="tag t-red">IOC</span>
+<span class="tag t-red">SUSPECT</span>
+<span class="tag t-red">DESTRUCTIVE</span>
+<span class="tag t-pur">EXTERNAL</span>
+<span class="tag t-amb">FAILED</span>
+<span class="tag t-grn">PRIV</span>
+</p>
+<table>
+<tr><th>Dataset</th><th>Adds score</th></tr>
+<tr><td>Logon</td><td>IOC +3 &middot; external public IP +2 &middot; failed +1 &middot; root/administrator +1</td></tr>
+<tr><td>Action</td><td>IOC +3 &middot; attacker/ransomware command pattern +3 &middot; destructive vCenter task +2</td></tr>
+</table>
+
+<h2 id="fleet">8. Fleet mode</h2>
+<p>Point the Bundle field at a <b>parent folder</b> and click <b>Triage fleet folder…</b>. The tool discovers every bundle recursively (extracted trees + <code>.tgz</code>/<code>.tar</code>), skips outer wrappers that already have an extracted sibling, runs the full pipeline per host, and builds a <b>roster</b> sorted worst-first: host, cluster, type, build, VMs, key-file coverage, logons/actions (flagged), persistence, indicators, CVE, and a composite <b>risk</b> score. Click any host to open its full single-host triage; the orange <b>&#9664; Fleet roster</b> button returns you to the roster (no re-scan).</p>
+<figure>
+<svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+  <rect width="1000" height="300" rx="10" fill="#0d1117"/>
+  <rect x="14" y="14" width="972" height="272" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="28" y="38" fill="#e6edf3" font-size="13" font-weight="700">Fleet roster</text>
+  <text x="120" y="38" fill="#8b949e" font-size="11">5 host(s), 1 cluster(s)</text>
+  <rect x="690" y="24" width="86" height="22" rx="6" fill="#1c2330" stroke="#30363d"/><text x="700" y="39" fill="#e6edf3" font-size="11">Correlation</text>
+  <rect x="784" y="24" width="96" height="22" rx="6" fill="#238636"/><text x="794" y="39" fill="#fff" font-size="11">Fleet report</text>
+  <!-- header -->
+  <rect x="24" y="52" width="952" height="22" fill="#1c2330"/>
+  <g font-size="10.5" fill="#c9d1d9"><text x="32" y="67">Host</text><text x="180" y="67">Cluster</text><text x="360" y="67">Type</text><text x="440" y="67">VMs</text><text x="520" y="67">Key files</text><text x="616" y="67">Logons</text><text x="710" y="67">Actions</text><text x="806" y="67">Ind</text><text x="852" y="67">CVE</text><text x="910" y="67">Risk</text></g>
+  <g font-size="11" font-family="Consolas,monospace">
+    <rect x="24" y="74" width="952" height="26" fill="#2a1416"/>
+    <text x="32" y="91" fill="#e6edf3" font-weight="700">esxi-lab03</text><rect x="180" y="80" width="150" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="186" y="91" fill="#79c0ff" font-size="9">Cluster A · vSAN 7a1c9f2e</text><text x="360" y="91" fill="#e6edf3">ESXi</text><text x="440" y="91" fill="#e6edf3">18</text><text x="520" y="91" fill="#e6edf3">22/22</text><text x="616" y="91" fill="#e6edf3">58 <tspan fill="#ff6b6b">(4)</tspan></text><text x="710" y="91" fill="#e6edf3">35 <tspan fill="#ff6b6b">(3)</tspan></text><text x="806" y="91" fill="#ff6b6b">4</text><text x="852" y="91" fill="#e6edf3">0</text><text x="910" y="91" fill="#ff6b6b" font-weight="700">14</text>
+    <rect x="24" y="100" width="952" height="26" fill="#241c12"/>
+    <text x="32" y="117" fill="#e6edf3" font-weight="700">esxi-lab01</text><rect x="180" y="106" width="150" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="186" y="117" fill="#79c0ff" font-size="9">Cluster A · vSAN 7a1c9f2e</text><text x="360" y="117" fill="#e6edf3">ESXi</text><text x="440" y="117" fill="#e6edf3">15</text><text x="520" y="117" fill="#e6edf3">22/22</text><text x="616" y="117" fill="#e6edf3">40</text><text x="710" y="117" fill="#e6edf3">12</text><text x="806" y="117" fill="#e6edf3">1</text><text x="852" y="117" fill="#e6edf3">0</text><text x="910" y="117" fill="#e3b341" font-weight="700">4</text>
+    <line x1="24" y1="126" x2="976" y2="126" stroke="#30363d"/>
+    <text x="32" y="143" fill="#e6edf3" font-weight="700">esxi-lab02</text><rect x="180" y="132" width="150" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="186" y="143" fill="#79c0ff" font-size="9">Cluster A · vSAN 7a1c9f2e</text><text x="360" y="143" fill="#e6edf3">ESXi</text><text x="440" y="143" fill="#e6edf3">16</text><text x="520" y="143" fill="#e6edf3">22/22</text><text x="616" y="143" fill="#e6edf3">33</text><text x="710" y="143" fill="#e6edf3">9</text><text x="806" y="143" fill="#e6edf3">0</text><text x="852" y="143" fill="#e6edf3">0</text><text x="910" y="143" fill="#e6edf3" font-weight="700">2</text>
+    <line x1="24" y1="152" x2="976" y2="152" stroke="#30363d"/>
+    <text x="32" y="169" fill="#e6edf3" font-weight="700">vcsa-lab01</text><rect x="180" y="158" width="120" height="15" rx="7" fill="#10233a" stroke="#1f6feb"/><text x="186" y="169" fill="#79c0ff" font-size="9">Cluster A · vCenter</text><text x="360" y="169" fill="#e6edf3">vCenter</text><text x="440" y="169" fill="#8b949e">-</text><text x="520" y="169" fill="#e6edf3">21/21</text><text x="616" y="169" fill="#e6edf3">72 <tspan fill="#ff6b6b">(2)</tspan></text><text x="710" y="169" fill="#e6edf3">120</text><text x="806" y="169" fill="#e6edf3">0</text><text x="852" y="169" fill="#e3b341">1</text><text x="910" y="169" fill="#e3b341" font-weight="700">5</text>
+    <line x1="24" y1="178" x2="976" y2="178" stroke="#30363d"/>
+    <text x="32" y="195" fill="#e6edf3" font-weight="700">esxi-dmz01</text><text x="186" y="195" fill="#8b949e" font-size="10">standalone</text><text x="360" y="195" fill="#e6edf3">ESXi</text><text x="440" y="195" fill="#e6edf3">6</text><text x="520" y="195" fill="#e6edf3">22/22</text><text x="616" y="195" fill="#e6edf3">18</text><text x="710" y="195" fill="#e6edf3">4</text><text x="806" y="195" fill="#e6edf3">0</text><text x="852" y="195" fill="#e6edf3">0</text><text x="910" y="195" fill="#e6edf3" font-weight="700">1</text>
+  </g>
+  <text x="28" y="224" fill="#8b949e" font-size="10.5">Sorted by risk. Grouped by cluster (vSAN sub-cluster UUID). Click a host to open its full triage.</text>
+</svg>
+<figcaption>Fleet roster — hosts grouped by cluster, worst-first, with the vCenter tied to its cluster (synthetic data).</figcaption>
+</figure>
+
+<h2 id="clusters">9. Clusters</h2>
+<p>ESXi hosts are grouped by their <b>vSAN Sub-Cluster UUID</b> (from <code>vsan-cluster-get</code>), which also names all cluster members. A vCenter is tied to a cluster when it <b>manages</b> a member host (from vpxd's <code>host-N,&lt;fqdn&gt;</code> map) or shares task opIDs with one. Nodes with no vSAN membership are labelled <b>standalone</b>. This lets a mixed folder of cluster nodes + standalone hosts + a vCenter self-organise.</p>
+
+<h2 id="correlation">10. Correlation &amp; the vCenter&rarr;ESXi chain</h2>
+<p>The <b>Correlation</b> button on the roster opens cross-host analysis (computed from the in-memory snapshots — no re-parse):</p>
+<ul>
+  <li><b>Clusters</b> — members present vs named-but-absent.</li>
+  <li><b>Source IPs across hosts</b> — an IP on &gt;1 host suggests lateral movement / shared attacker infra.</li>
+  <li><b>Accounts on multiple hosts</b> — credential spread.</li>
+  <li><b>IOC hits across hosts</b> and <b>coordinated indicators</b> (the same tell on N hosts = a mass action).</li>
+  <li><b>vCenter&rarr;ESXi task chain</b> — an <code>opID</code> shared between a vCenter <code>vpxd</code> task and the host <code>vpxa</code> that executed it, reconstructing "which vCenter action ran on which host".</li>
+  <li><b>Unified cross-host flagged-event timeline</b>, merged and time-ordered.</li>
+</ul>
+<figure>
+<svg viewBox="0 0 1000 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
+  <rect width="1000" height="360" rx="10" fill="#0d1117"/>
+  <text x="20" y="30" fill="#e6edf3" font-size="13" font-weight="700">Cross-host correlation</text>
+  <text x="200" y="30" fill="#8b949e" font-size="11">1 cluster · 2 IP(s) on &gt;1 host · 1 shared account · 6 chain link(s)</text>
+  <!-- shared IPs panel -->
+  <rect x="14" y="42" width="480" height="150" rx="8" fill="#0f141b" stroke="#30363d"/>
+  <text x="28" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Source IPs across hosts <tspan fill="#8b949e" font-weight="400">— &gt;1 host = possible lateral movement</tspan></text>
+  <rect x="28" y="72" width="452" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="36" y="86">Source IP</text><text x="200" y="86"># hosts</text><text x="280" y="86">Hosts</text></g>
+  <g font-size="11" font-family="Consolas,monospace">
+    <rect x="28" y="92" width="452" height="22" fill="#2a1416"/><text x="36" y="107" fill="#ff6b6b">203.0.113.66</text><text x="200" y="107" fill="#e6edf3">3</text><text x="280" y="107" fill="#e6edf3">esxi-lab01, esxi-lab02, esxi-lab03</text>
+    <rect x="28" y="114" width="452" height="22" fill="#2a1416"/><text x="36" y="129" fill="#ff6b6b">198.51.100.24</text><text x="200" y="129" fill="#e6edf3">2</text><text x="280" y="129" fill="#e6edf3">esxi-lab01, vcsa-lab01</text>
+    <text x="36" y="151" fill="#8b949e">10.20.30.9</text><text x="200" y="151" fill="#e6edf3">1</text><text x="280" y="151" fill="#8b949e">esxi-lab03</text>
+  </g>
+  <!-- coordinated indicators -->
+  <rect x="506" y="42" width="480" height="150" rx="8" fill="#0f141b" stroke="#30363d"/>
+  <text x="520" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Coordinated indicators <tspan fill="#8b949e" font-weight="400">— same tell on N hosts</tspan></text>
+  <rect x="520" y="72" width="452" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="528" y="86">Indicator</text><text x="820" y="86"># hosts</text><text x="880" y="86">Hosts</text></g>
+  <g font-size="10.5">
+    <rect x="520" y="92" width="452" height="22" fill="#2a1416"/><text x="528" y="107" fill="#e6edf3">SSH / ESXi Shell used</text><text x="828" y="107" fill="#ff6b6b" font-family="Consolas,monospace">3</text><text x="880" y="107" fill="#8b949e" font-family="Consolas,monospace">lab01-03</text>
+    <rect x="520" y="114" width="452" height="22" fill="#2a1416"/><text x="528" y="129" fill="#e6edf3">Host-encryption change</text><text x="828" y="129" fill="#ff6b6b" font-family="Consolas,monospace">2</text><text x="880" y="129" fill="#8b949e" font-family="Consolas,monospace">lab01,03</text>
+    <text x="528" y="151" fill="#e6edf3" font-size="10.5">External source IP on login</text><text x="828" y="151" fill="#ff6b6b" font-family="Consolas,monospace">3</text><text x="880" y="151" fill="#8b949e" font-family="Consolas,monospace">lab01-03</text>
+  </g>
+  <!-- chain -->
+  <rect x="14" y="204" width="972" height="140" rx="8" fill="#0f141b" stroke="#30363d"/>
+  <text x="28" y="224" fill="#c9d1d9" font-size="11.5" font-weight="700">vCenter → ESXi task chain <tspan fill="#8b949e" font-weight="400">— opID shared between a vpxd task and the host vpxa that executed it</tspan></text>
+  <rect x="28" y="234" width="944" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="36" y="248">When (UTC)</text><text x="180" y="248">vCenter</text><text x="290" y="248">Task (vim method)</text><text x="560" y="248">opID</text><text x="760" y="248">Executed on host</text></g>
+  <g font-size="10.5" font-family="Consolas,monospace" fill="#e6edf3">
+    <text x="36" y="270">2026-05-12 09:41:10</text><text x="180" y="270">vcsa-lab01</text><text x="290" y="270">vim.VirtualMachine.PowerOffVM_Task</text><text x="560" y="270" fill="#8b949e">opID=5b4a8771-2f</text><text x="760" y="270">esxi-lab03</text>
+    <line x1="28" y1="278" x2="972" y2="278" stroke="#30363d"/>
+    <text x="36" y="294">2026-05-12 09:41:44</text><text x="180" y="294">vcsa-lab01</text><text x="290" y="294">vim.VirtualMachine.ReconfigVM_Task</text><text x="560" y="294" fill="#8b949e">opID=6e27d392-11</text><text x="760" y="294">esxi-lab03</text>
+    <line x1="28" y1="302" x2="972" y2="302" stroke="#30363d"/>
+    <text x="36" y="318">2026-05-12 09:42:02</text><text x="180" y="318">vcsa-lab01</text><text x="290" y="318">vim.Datastore.DeleteDatastoreFile_Task</text><text x="560" y="318" fill="#8b949e">opID=13449918-a7</text><text x="760" y="318">esxi-lab01</text>
+  </g>
+</svg>
+<figcaption>Correlation — shared IPs, coordinated indicators, and the vCenter→ESXi task chain (synthetic data).</figcaption>
+</figure>
+
+<h2 id="exports">11. Exports &amp; reports</h2>
+<p>All export buttons are green:</p>
+<table>
+<tr><th>Where</th><th>Output</th></tr>
+<tr><td>Key Files / Logons / Actions / Timeline / IOC / VMs</td><td>CSV of the current view</td></tr>
+<tr><td>Specification</td><td>Standalone <b>node-spec HTML</b></td></tr>
+<tr><td>Overview</td><td><b>Case-note report</b> (self-contained HTML: node config, spec, VMs, coverage, indicators, CVE, persistence, logon summary, flagged actions, IOC hits)</td></tr>
+<tr><td>Fleet roster</td><td>Roster CSV &middot; <b>Fleet report HTML</b> (roster + clusters + correlation + chain)</td></tr>
+<tr><td>Correlation</td><td>Cross-host timeline CSV</td></tr>
+</table>
+
+<h2 id="caveats">12. Caveats &amp; limitations</h2>
+<div class="caveat"><b>Guest IPs</b> are not in ESXi bundles (they are guest-side). The VMs tab shows a Guest IP column only when a <b>vCenter in the same fleet</b> reported them and the VM names match. In single-bundle mode the column is hidden.</div>
+<div class="caveat"><b>vCenter task&rarr;user attribution</b> is <b>approximate</b> — tasks are attributed to the nearest-preceding human SAML login, not an exact session-to-user binding. Treat "user approx" as a lead, corroborate with the Logons tab.</div>
+<div class="caveat"><b>The vCenter&rarr;ESXi chain</b> needs a vCenter and ESXi bundle from the <b>same cluster</b> in the fleet; different environments correctly show no shared opIDs.</div>
+<div class="warn"><b>CVE verdicts are advisory</b> (see §6). <b>Support bundles are targeted</b>, not disk images — some persistence artefacts (cron, systemd-admin, authorized_keys, passwd) are simply not captured and are shown as "not captured".</div>
+
+<h2 id="workflow">13. Suggested DFIR workflow</h2>
+<ol>
+  <li><b>Scope:</b> open the bundle (or fleet). Read the Overview — indicator panel, CVE panel, key-file coverage. On a fleet, sort the roster by risk.</li>
+  <li><b>Know the node:</b> Specification for config, networking, and (for recovery) vSAN/disk layout; VMs for the guest inventory.</li>
+  <li><b>Access:</b> Logons — external IPs, failed→success bursts, privileged and off-hours logins.</li>
+  <li><b>Actions:</b> what was done — shell commands (ESXi) / attributed vpxd tasks (vCenter). Watch the red <span class="tag t-red">shell command</span> and <span class="tag t-red">SUSPECT</span>/<span class="tag t-red">DESTRUCTIVE</span> rows.</li>
+  <li><b>Persistence &amp; tampering:</b> boot scripts, syslog forwarding, ransom-note scan, log-integrity gaps.</li>
+  <li><b>IOCs:</b> drop your <code>IOC.txt</code> in and re-analyse to sweep the logs.</li>
+  <li><b>Fleet:</b> Correlation for shared IPs/users/IOCs, coordinated indicators, and the vCenter&rarr;ESXi chain. Export the cross-host timeline.</li>
+  <li><b>Document:</b> Case-note report per host and/or the Fleet report for the engagement.</li>
+</ol>
+
+<footer>
+  vSphere Support Bundle Triage Tool — Field Manual for v0.9.3. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+</footer>
+</main>
+</div>
+<script>
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav a'));
+  function target(a){ var h=a.getAttribute('href')||''; return h.charAt(0)==='#'?document.getElementById(h.slice(1)):null; }
+  links.forEach(function(a){ a.addEventListener('click', function(e){ var t=target(a); if(t){ e.preventDefault(); t.scrollIntoView({behavior:'smooth',block:'start'}); history.replaceState(null,'',a.getAttribute('href')); } }); });
+  var heads = links.map(target).filter(Boolean);
+  function onScroll(){ var y=window.scrollY||document.documentElement.scrollTop, cur=null;
+    for(var i=0;i<heads.length;i++){ if(heads[i].getBoundingClientRect().top + y - 90 <= y) cur=links[i]; }
+    links.forEach(function(a){ a.classList.remove('on'); }); if(cur) cur.classList.add('on');
+  }
+  window.addEventListener('scroll', onScroll, {passive:true}); onScroll();
+})();
+</script>
+</body>
+</html>
