@@ -59,7 +59,7 @@
   .pill.ok{color:#7ee787;border-color:#2ea043}
   .pill.bad{color:#ff8b3d;border-color:#bd561d;cursor:pointer}
   #appver{font-weight:700}
-  #apppill.old{cursor:pointer}
+  #apppill{cursor:default}
   .wrap{padding:12px 14px}
   .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
@@ -358,7 +358,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.5";
+var APP_VERSION = "0.9.6";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -506,8 +506,9 @@ function resolveZstd(){
   ZSTD=""; return false;
 }
 function checkZstd(){
-  if(ZSTD) $("zstdpill").innerHTML="zstd: <span class='ok'>ready</span>";
-  else $("zstdpill").innerHTML="zstd: <span class='muted'>not found</span>";
+  var p=$("zstdpill");
+  if(ZSTD){ p.innerHTML="zstd: <span class='ok'>ready</span>"; p.title="zstd.exe found - vCenter .zst logs will decompress."; }
+  else { p.innerHTML="zstd: <span class='muted'>not needed</span>"; p.title="Not a problem. zstd.exe is ONLY needed for vCenter (VCSA) .zst logs; ESXi bundles use .gz which is handled natively. If a .zst log is actually encountered, the tool offers to fetch the official zstd.exe on demand - nothing to do until then."; }
 }
 function ensureZstd(){
   if(ZSTD) return true;
@@ -885,6 +886,40 @@ function extractNodeFilesToc(){
 }
 
 /* ---------- node-config parse ---------- */
+/* ---- authoritative host FQDN from bundle CONTENT (not the archive/folder name) ----
+   The wrapper/folder name can be a short label (e.g. "<host>-vcsa-support-log-bundle-<id>" ->
+   just "<host>"); the real FQDN lives inside the bundle. For VCSA it is in etc/hosts (even on
+   the 127.0.0.1 line); for ESXi in esx.conf HostName (+ domain) or etc/hosts. */
+function firstFqdnFromHosts(txt){
+  var lines=String(txt).split("\n");
+  for(var i=0;i<lines.length;i++){ var ln=trimStr(lines[i]); if(!ln||ln.charAt(0)==="#") continue;
+    var m=ln.match(/^(?:\d{1,3}\.){3}\d{1,3}\s+(.+)$/); if(!m) m=ln.match(/^[0-9a-fA-F:]+\s+(.+)$/);
+    if(!m) continue; var toks=m[1].split(/\s+/);
+    for(var t=0;t<toks.length;t++){ var h=toks[t];
+      if(h.indexOf(".")>0 && /[A-Za-z]/.test(h) && !/^localhost/i.test(h) && !/^ip6-|^ipv6-/i.test(h)) return h; } }
+  return "";
+}
+function parseNodeFqdn(){
+  try{
+    if(BTYPE==="vcsa"){ var h=firstFqdnFromHosts(readMember("etc/hosts")); if(h) return h; }
+    else if(BTYPE==="esxi"){
+      var ec=readMember("etc/vmware/esx.conf");
+      var hn=(ec.match(/\/adv\/Misc\/HostName\s*=\s*"([^"]+)"/i)||[])[1]||"";
+      if(hn && hn.indexOf(".")>0) return hn;
+      var hh=firstFqdnFromHosts(readMember("etc/hosts"));
+      if(hh && (!hn || lc(hh).indexOf(lc(hn))===0)) return hh;   // FQDN whose short label matches
+      return hn;
+    }
+  }catch(e){}
+  return "";
+}
+/* prefer an FQDN (dotted) over a short label; between two FQDNs keep the longer */
+function betterHost(cur, alt){ cur=sanitHost(cur||""); alt=sanitHost(alt||"");
+  if(!alt) return cur; if(!cur) return alt;
+  var cd=cur.indexOf(".")>0, ad=alt.indexOf(".")>0;
+  if(ad && !cd) return alt; if(!ad && cd) return cur;
+  if(ad && cd) return alt.length>cur.length?alt:cur;
+  return cur.length>=alt.length?cur:alt; }
 function parseNode(){
   NODE={}; NODE.type=typeLabel();
   var readme=readMember("README");
@@ -903,6 +938,7 @@ function parseNode(){
     NODE.product="VMware vCenter Server (VCSA)";
     var b=trimStr(readMember("etc/vmware-analytics/build.txt")); if(b) NODE.build=b;
   }
+  var fq=parseNodeFqdn(); if(fq){ NODE.fqdn=sanitHost(fq); NODE.host=betterHost(NODE.host, NODE.fqdn); }
 }
 
 /* ============================================================
@@ -1232,6 +1268,43 @@ function wsRows(txt){ var lines=String(txt).split("\n"), rows=[], hdr=false;
 function buildSpec(){
   SPEC=[]; if(BTYPE==="esxi") buildSpecEsxi(); else if(BTYPE==="vcsa") buildSpecVcsa();
 }
+/* Port groups & VLANs (ESXi):
+   - standard vSwitch port groups (name + VLAN) from esxcfg-vswitch -l
+   - distributed (DVS) port groups + VLANs from net-dvs -l, grouped by portgroupid
+     (the host bundle carries the dvportgroup-N id + VLAN; the human PG name is vCenter-side). */
+function parsePortgroupsEsxi(){
+  var out={ std:[], dvs:[], dvsNames:[] };
+  var vsw=readMember("commands/esxcfg-vswitch_-l.txt");
+  if(trimStr(vsw)){ var lines=vsw.split("\n"), curSw="", inPg=false, isDvs=false;
+    for(var i=0;i<lines.length;i++){ var ln=lines[i], t=trimStr(ln);
+      if(!t){ inPg=false; continue; }
+      if(/^Switch Name\b/i.test(t)||/^DVS Name\b/i.test(t)){ isDvs=/^DVS Name\b/i.test(t); inPg=false;
+        var j=i+1; while(j<lines.length && !trimStr(lines[j])) j++;
+        if(j<lines.length){ curSw=splitWs(lines[j])[0]||""; if(isDvs && curSw) out.dvsNames.push(curSw); i=j; } continue; }
+      if(/^PortGroup Name\b/i.test(t)){ inPg=true; continue; }
+      if(/^DVPort ID\b/i.test(t)){ inPg=false; continue; }
+      if(inPg && !isDvs && /^\s{2,}/.test(ln)){ var c=splitWs(ln);
+        if(c.length>=2 && /^\d{1,4}$/.test(c[1])) out.std.push({pg:c[0], sw:curSw, vlan:c[1], uplinks:c[3]||""}); } } }
+  var nd=readMember("commands/net-dvs_-l.txt");
+  if(trimStr(nd)){ var nl=nd.split("\n"), curDvs="", pg={}, cur=null;
+    function commit(){ if(cur && cur.pgid){ if(!pg[cur.pgid]) pg[cur.pgid]={pgid:cur.pgid, dvs:cur.dvs, vlans:{}, ports:0, aliases:{}};
+      var g=pg[cur.pgid]; g.ports++; if(cur.vlan) g.vlans[cur.vlan]=1; if(cur.alias) g.aliases[cur.alias]=1; } cur=null; }
+    for(var k=0;k<nl.length;k++){ var l=nl[k];
+      var am=l.match(/com\.vmware\.common\.alias\s*=\s*(.+?)\s*,\s*propType/i); if(am){ commit(); curDvs=trimStr(am[1]); continue; }
+      var pm=l.match(/^\s*port\s+(\d+):/i); if(pm){ commit(); cur={id:pm[1], dvs:curDvs, pgid:"", vlan:"", alias:""}; continue; }
+      if(cur){
+        var gm=l.match(/com\.vmware\.common\.port\.portgroupid\s*=\s*([^\s,]+)/i); if(gm) cur.pgid=gm[1];
+        var al=l.match(/com\.vmware\.common\.port\.alias\s*=\s*(.*?)\s*,\s*propType/i); if(al) cur.alias=trimStr(al[1]);
+        var vm=l.match(/com\.vmware\.vswitch\.port\.vlan\s*=\s*(.+?)\s*$/i); if(vm) cur.vlan=trimStr(vm[1]);
+        var vm2=l.match(/com\.vmware\.common\.port\.volatile\.vlan\s*=\s*(.+?)\s*$/i); if(vm2 && !cur.vlan) cur.vlan=trimStr(vm2[1]); } }
+    commit();
+    for(var key in pg){ if(!pg.hasOwnProperty(key)) continue; var g=pg[key];
+      var vl=[]; for(var vv in g.vlans) if(g.vlans.hasOwnProperty(vv)) vl.push(vv);
+      var al2=[]; for(var aa in g.aliases) if(g.aliases.hasOwnProperty(aa)) al2.push(aa);
+      out.dvs.push({pg:g.pgid, dvs:g.dvs, vlan:vl.join(", ")||"-", ports:g.ports, aliases:al2.slice(0,5).join(", ")}); }
+    out.dvs.sort(function(a,b){ return a.pg<b.pg?-1:(a.pg>b.pg?1:0); }); }
+  return out;
+}
 function buildSpecEsxi(){
   var ec=readMember("etc/vmware/esx.conf");
   var hn=(ec.match(/\/adv\/Misc\/HostName\s*=\s*"([^"]+)"/i)||[])[1]||NODE.host||"";
@@ -1269,6 +1342,13 @@ function buildSpecEsxi(){
   var ni=readMember("commands/nicinfo.sh.txt");
   if(trimStr(ni)){ var s2=specSec("Physical NICs","tbl"); s2.head=["vmnic","Driver","Link","Speed","MAC","Description"];
     var nr=wsRows(ni); for(i=0;i<nr.length;i++){ var n2=nr[i]; if(!/^(vmnic\d+|vusb\d+)$/.test(n2[0]||"")) continue; s2.rows.push([n2[0]||"",n2[2]||"",n2[4]||"",n2[5]||"",n2[7]||"",n2[9]||""]); } }
+  // port groups & VLANs (standard vSwitch + distributed)
+  var pgs=parsePortgroupsEsxi();
+  if(pgs.std.length){ var sp1=specSec("Port groups &amp; VLANs (standard vSwitch)","tbl"); sp1.head=["Port group","vSwitch","VLAN ID","Uplinks"];
+    for(i=0;i<pgs.std.length;i++){ var p1=pgs.std[i]; sp1.rows.push([p1.pg, p1.sw, p1.vlan, p1.uplinks||""]); } }
+  if(pgs.dvs.length){ var sp2=specSec("Distributed port groups &amp; VLANs (DVS)"+(pgs.dvsNames.length?(" - "+distinct(pgs.dvsNames).join(", ")):""),"tbl");
+    sp2.head=["dvPortgroup ID","Distributed switch","VLAN","Host ports","Port aliases (sample)"];
+    for(i=0;i<pgs.dvs.length;i++){ var p2=pgs.dvs[i]; sp2.rows.push([p2.pg, p2.dvs||"", p2.vlan, String(p2.ports), p2.aliases||""]); } }
   // datastores
   var st=readMember("commands/localcli_storage-filesystem-list--i.txt"); if(!trimStr(st)) st=readMember("commands/localcli_storage-filesystem-list.txt");
   if(trimStr(st)){ var s3=specSec("Datastores / volumes","tbl"); s3.head=["Volume","Type","Size","Free","Mounted"];
@@ -1620,8 +1700,9 @@ function processHostSync(path){
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
   buildInventory(); parseNode();
   parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSpec(); parseVms();
+  var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
-  var snap=snapshotHost(host, path);
+  var snap=snapshotHost(dispHost, path);
   try{ saveSnapshot(LASTOUTDIR, sig, snap); }catch(e){}
   return snap;
 }
@@ -1939,6 +2020,11 @@ function showResults(){
   setTab("overview");
 }
 function showRoster(){ FLEETMODE=true; showEl("results",false); showEl("corrCard",false); showEl("fleetCard",true); renderRoster(); }
+/* user-initiated tab switch - blocked with a warning while a run is in progress */
+function userTab(t){
+  if(BUSY){ try{ alert("Please wait - extraction / log analysis is still running.\n\nTab switching is disabled until the current bundle finishes so every tab renders with complete data. Watch the status line (or click \"Show log\") for progress, then try again."); }catch(e){} return; }
+  setTab(t);
+}
 function setTab(t){
   TAB=t;
   showEl("detailCard",false); $("detBody").innerHTML="";   // close any open preview when switching tabs
@@ -1963,7 +2049,7 @@ function render(){
 
 function kvRow(k,v){ return v?('<div><span class="k">'+esc(k)+'</span> '+esc(v)+'</div>'):""; }
 function statCard(n,l,cls,tab){ return '<span class="stat'+(cls?(" "+cls):"")+'"'+(tab?(' data-tab="'+tab+'" style="cursor:pointer" title="Open the '+esc(l)+' tab"'):'')+'><span class="n">'+esc(n)+'</span><span class="l">'+esc(l)+'</span></span>'; }
-function wireStatTabs(el){ var sp=el.getElementsByTagName("span"); for(var i=0;i<sp.length;i++){ if(sp[i].getAttribute("data-tab")){ sp[i].onclick=function(){ setTab(this.getAttribute("data-tab")); }; } } }
+function wireStatTabs(el){ var sp=el.getElementsByTagName("span"); for(var i=0;i<sp.length;i++){ if(sp[i].getAttribute("data-tab")){ sp[i].onclick=function(){ userTab(this.getAttribute("data-tab")); }; } } }
 function renderOverview(){
   var h="";
   h+=kvRow("Bundle type", NODE.type);
@@ -2348,13 +2434,13 @@ function checkSelfUpdate(){
       try{ if(x.status!==200) return; var t=x.responseText+"";
         var m=t.match(/"tag_name"\s*:\s*"v?([0-9.]+)"/i); if(!m) return; var latest=m[1];
         var av=$("appver"), ap=$("apppill");
-        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.innerHTML="v"+APP_VERSION; av.onclick=null; } if(ap){ ap.className="pill ok"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; ap.onclick=null; } return; }
+        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.innerHTML="v"+APP_VERSION; av.onclick=null; } if(ap){ ap.className="pill"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; ap.onclick=null; } return; }
         var url="", re=/"browser_download_url"\s*:\s*"([^"]+\.hta)"/ig, mm;
         while((mm=re.exec(t))){ if(mm[1].toLowerCase().indexOf(SELF_HTA.toLowerCase())>=0){ url=mm[1]; break; } if(!url) url=mm[1]; }
         if(!url) url="https://github.com/"+SELF_REPO+"/releases/download/v"+latest+"/"+SELF_HTA;
         SELF_LATEST=latest; SELF_ASSET_URL=url;
-        if(av){ av.innerHTML="v"+APP_VERSION+" &rarr; v"+latest+" update"; av.onclick=doSelfUpdate; }
-        if(ap){ ap.className="pill bad old"; ap.title="A newer version (v"+latest+") is on GitHub — click to update"; ap.onclick=doSelfUpdate; }
+        if(av){ av.innerHTML="v"+APP_VERSION; av.onclick=null; }
+        if(ap){ ap.className="pill bad"; ap.title="A newer version (v"+latest+") is on GitHub — use the blue Update button."; ap.onclick=null; }
         var b=$("selfUpd"); if(b){ b.innerHTML="Update to v"+latest; b.className="btn primary"; b.title="A newer "+SELF_HTA+" (v"+latest+") is on GitHub"; }
       }catch(e){} };
     x.send();
@@ -2407,7 +2493,7 @@ function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output direct
 /* ---------- wiring ---------- */
 function init(){
   try{ window.resizeTo(1360,920); }catch(e){}
-  $("appver").innerHTML="v"+APP_VERSION; $("apppill").className="pill ok"; $("apppill").title="You are on the latest known version (checking GitHub…)";
+  $("appver").innerHTML="v"+APP_VERSION; $("apppill").className="pill"; $("apppill").title="Tool version (checking GitHub for updates…)";
   try{ document.title="vSphere Support Bundle Triage Tool v"+APP_VERSION; }catch(e){}
   $("invScroll").onscroll=applyFreeze;
   $("tblScroll").onscroll=applyFreezeTbl;
@@ -2444,7 +2530,7 @@ function init(){
     else { l.style.display="none"; this.innerHTML="Show log"; } };
 
   var tb=$("tabbar").getElementsByTagName("button");
-  for(var i=0;i<tb.length;i++){ tb[i].onclick=function(){ setTab(this.getAttribute("data-tab")); }; }
+  for(var i=0;i<tb.length;i++){ tb[i].onclick=function(){ userTab(this.getAttribute("data-tab")); }; }
 
   $("q").onkeyup=function(){ if(qTimer) window.clearTimeout(qTimer);
     qTimer=window.setTimeout(function(){ QUERY=trimStr($("q").value).toLowerCase(); render(); },150); };
