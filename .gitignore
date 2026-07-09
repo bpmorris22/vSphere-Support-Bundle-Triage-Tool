@@ -13,9 +13,11 @@ runinfo.json
 inventory.json
 logons.json
 actions.json
+snapshot.json
 IOC.txt
 *.colw.txt
 *_export_*.csv
+roster_*.csv
 report_*.html
 specification_*.html
 fleet_report_*.html

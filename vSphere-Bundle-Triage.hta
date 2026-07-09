@@ -59,8 +59,7 @@
   .pill.ok{color:#7ee787;border-color:#2ea043}
   .pill.bad{color:#ff8b3d;border-color:#bd561d;cursor:pointer}
   #appver{font-weight:700}
-  #appver.cur{color:#7ee787}
-  #appver.old{color:#ff8b3d;cursor:pointer;text-decoration:underline}
+  #apppill.old{cursor:pointer}
   .wrap{padding:12px 14px}
   .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
@@ -138,7 +137,8 @@
 </head>
 <body>
 <header>
-  <h1>vSphere Support Bundle Triage <small>- ESXi &amp; vCenter <span id="appver"></span></small></h1>
+  <h1>vSphere Support Bundle Triage</h1>
+  <span class="pill ok" id="apppill">ESXi &amp; vCenter <span id="appver"></span></span>
   <span class="pill" id="verpill">tar: checking&hellip;</span>
   <span class="pill" id="zstdpill">zstd: &hellip;</span>
   <span class="pill" id="typepill">no bundle loaded</span>
@@ -174,6 +174,7 @@
       <button class="btn primary" id="procBtn" title="Read the bundle table of contents, detect the type, and build the file inventory + node-config summary.">Analyze bundle</button>
       <span class="sep"></span>
       <button class="btn" id="fleetBtn" title="Fleet mode: discover every ESXi/vCenter bundle under a folder (recursively) and triage them all into one roster. Point the Bundle field at a parent folder, or use Pick folder.">Triage fleet folder&hellip;</button>
+      <label style="font-size:12px;margin-left:6px" title="Reuse a host's saved analysis from _Processed when the source bundle and tool version are unchanged - much faster on re-runs. Uncheck to force a full fresh re-analysis of every host."><input type="checkbox" id="fleetReuse" checked> reuse cached</label>
       <span class="sep"></span>
       <button class="btn" id="logToggle">Show log</button>
       <span class="muted" id="status" style="margin-left:8px"></span>
@@ -357,7 +358,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.4";
+var APP_VERSION = "0.9.5";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -1547,7 +1548,27 @@ function makeReport(){
    FLEET MODE (drop-1): discover bundles -> per-host snapshot -> roster
    Reuses every single-bundle parser; runs each host fully then snapshots + resets.
    ============================================================ */
-var FLEET=[], FLEETMODE=false, FLEET_CANDS=[], FLEET_I=0, FLEET_HOSTS={};
+var FLEET=[], FLEETMODE=false, FLEET_CANDS=[], FLEET_I=0, FLEET_HOSTS={}, FLEET_REUSE=true;
+/* ---- reuse of a host's saved analysis (snapshot.json under _Processed) ----
+   A full roster snapshot is persisted next to the other _Processed outputs. On a
+   re-run we reload it (skipping the whole extract+parse pipeline) when the source
+   bundle and tool version are unchanged - the big speed win for fleet re-runs. */
+function isoNow(){ var d=new Date(); function p(x){return (x<10?"0":"")+x;}
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); }
+function snapSig(path, archive, mode){ var sz=0; try{ if(archive) sz=fileSize(archive); }catch(e){}
+  return { path:String(path||""), archive:String(archive||""), size:sz, mode:String(mode||""), ver:APP_VERSION }; }
+function snapPath(outdir){ return String(outdir).replace(/[\\\/]+$/,"")+"\\snapshot.json"; }
+function saveSnapshot(outdir, sig, snap){
+  try{ writeUtf8(snapPath(outdir), JSON.stringify({sig:sig, snap:snap}, null, 1)); }catch(e){ appendLog("snapshot save failed: "+e.message); } }
+function loadSnapshot(outdir, sig){
+  try{ var p=snapPath(outdir); if(!fileExists(p)) return null;
+    var o=JSON.parse(readUtf8(p)); if(!o||!o.sig||!o.snap) return null; var s=o.sig;
+    if(s.ver!==sig.ver) return null;                     // tool changed -> re-analyze
+    if(lc(s.path)!==lc(sig.path)) return null;           // different source path
+    if(s.mode!==sig.mode) return null;                   // toc vs tree
+    if(sig.size && s.size!==sig.size) return null;       // archive size changed -> re-analyze
+    var snap=o.snap; snap.reused=true; return snap;
+  }catch(e){ return null; } }
 function fleetBase(){ var b=htaFolder(); if(!b){ try{ b=new ActiveXObject("Scripting.FileSystemObject").GetSpecialFolder(2)+""; }catch(e){ return ""; } } return b+"\\_Processed\\_fleet"; }
 var SKIP_DIRS={"_processed":1,"_extracted":1,"_view":1,"tools":1,"_fleet":1,"_nodecfg":1};
 function discoverBundles(root){
@@ -1568,7 +1589,11 @@ function discoverBundles(root){
 }
 function resolveBundleDesc(path){
   if(folderExists(path)){ var r=findTreeRoot(path); if(r) return {path:path,mode:"tree",root:r,host:guessHost(r)||baseName(r)};
-    var a=findInnerArchive(path); if(a) return {path:path,mode:"toc",archive:a,host:guessHost(path)||guessHost(a)}; return null; }
+    // the inner archive name is more authoritative than the outer wrapper folder name:
+    // an outer wrapper folder "<host>-vcsa-support-log-bundle-<id>" only yields the short
+    // "<host>", but the inner archive "vc-<fqdn>-<date>--<time>-<id>" carries the real FQDN.
+    // Prefer the archive's guess.
+    var a=findInnerArchive(path); if(a) return {path:path,mode:"toc",archive:a,host:guessHost(a)||guessHost(path)}; return null; }
   if(fileExists(path) && isArchive(path)) return {path:path,mode:"toc",archive:path,host:guessHost(path)};
   return null;
 }
@@ -1586,6 +1611,9 @@ function processHostSync(path){
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
   var host=sanitHost(d.host||baseName(path)); if(!host) host="host"+FLEET_I;
   LASTOUTDIR=fleetBase()+"\\"+host; EXDIR=LASTOUTDIR+"\\_extracted"; NODEDIR=LASTOUTDIR+"\\_nodecfg"; ensureDir(LASTOUTDIR);
+  var sig=snapSig(path, ARCHIVE, MODE);
+  if(FLEET_REUSE){ var cached=loadSnapshot(LASTOUTDIR, sig);
+    if(cached){ appendLog("  = "+host+" reused saved analysis from "+(cached.analyzedAt||"?")+" (source unchanged, skipped re-parse)"); return cached; } }
   $("hostName").value=host;
   if(MODE==="toc"){ if(!readTocSync(ARCHIVE)) return null; detectType(); if(MODE==="toc") extractNodeFilesToc(); }
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
@@ -1593,7 +1621,9 @@ function processHostSync(path){
   buildInventory(); parseNode();
   parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSpec(); parseVms();
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
-  return snapshotHost(host, path);
+  var snap=snapshotHost(host, path);
+  try{ saveSnapshot(LASTOUTDIR, sig, snap); }catch(e){}
+  return snap;
 }
 function distinct(arr){ var m={},o=[]; for(var i=0;i<arr.length;i++){ var k=lc(arr[i]); if(k&&!m[k]){ m[k]=1; o.push(arr[i]); } } return o; }
 /* vSAN sub-cluster identity (groups hosts into clusters; also gives member hostnames) */
@@ -1656,7 +1686,7 @@ function snapshotHost(host, path){
     actions:ACTIONS.length, actFlagged:af, persistFlagged:persistHits(), indicHits:indHits(), indicList:indicNames(),
     cveFlag:cveFlag, iocHits:IOCHITS.length, users:distinct(users), iocList:distinct(iocs),
     clusterUuid:cl.uuid, clusterMembers:cl.members, opTasks:collectOpTasks(), flagged:flaggedEvents(),
-    risk:risk, srcPath:path, outdir:LASTOUTDIR };
+    risk:risk, srcPath:path, outdir:LASTOUTDIR, analyzedAt:isoNow(), reused:false };
 }
 /* highlight Analyze vs Triage-fleet based on what the Bundle field points at:
    a single archive / single-bundle folder -> Analyze blue; a folder holding 2+ bundles -> Fleet blue. */
@@ -1683,7 +1713,8 @@ function triageFleet(){
   if(BUSY){ setStatus("Busy - wait for the current run.","err"); return; }
   var root=trimStr($("inPath").value);
   if(!folderExists(root)){ setStatus("Fleet mode: point the Bundle field (or Pick folder) at a FOLDER that contains the bundles.","err"); return; }
-  appendLog("=== FLEET discovery under "+root+" ===");
+  try{ FLEET_REUSE = !!$("fleetReuse").checked; }catch(e){ FLEET_REUSE=true; }
+  appendLog("=== FLEET discovery under "+root+" ==="+(FLEET_REUSE?" (reuse cached analysis where source unchanged)":" (forced fresh re-analysis)"));
   FLEET_CANDS=discoverBundles(root); FLEET=[]; FLEET_HOSTS={}; FLEET_I=0;
   if(!FLEET_CANDS.length){ setStatus("No bundle archives or extracted bundle folders found under that folder.","err"); return; }
   appendLog("Discovered "+FLEET_CANDS.length+" candidate path(s); processing…");
@@ -1729,11 +1760,15 @@ function fleetDone(){
   var nc=0,seen={}; for(var i=0;i<FLEET.length;i++){ if(FLEET[i].clusterUuid&&!seen[FLEET[i].clusterUuid]){ seen[FLEET[i].clusterUuid]=1; nc++; } }
   $("fleetInfo").innerHTML=FLEET.length+" host(s), "+nc+" cluster(s) &middot; "+fleetBase();
 }
+function fmtAnalyzed(r){ var t=r.analyzedAt?isoShort(r.analyzedAt):"-";
+  var tag = r.reused ? ' <span class="tag cmd" title="Reused from _Processed - source bundle unchanged">cached</span>'
+                     : ' <span class="tag auth" title="Freshly analyzed this run">new</span>';
+  return esc(t)+tag; }
 function renderRoster(){
   var q=lc(trimStr($("fq").value||"")); var rows=[];
   for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; if(q && (r.host+" "+r.type+" "+r.build).toLowerCase().indexOf(q)<0) continue; rows.push(r); }
-  var h='<thead><tr><th>Host</th><th>Cluster</th><th>Type</th><th>Version / build</th><th>VMs</th><th>Key files</th><th>Logons (flagged)</th><th>Actions (flagged)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>Risk</th></tr></thead><tbody>';
-  if(!rows.length) h+='<tr><td colspan="12" class="muted">No hosts yet.</td></tr>';
+  var h='<thead><tr><th>Host</th><th>Cluster</th><th>Type</th><th>Version / build</th><th>VMs</th><th>Key files</th><th>Logons (flagged)</th><th>Actions (flagged)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>Risk</th><th>Analyzed</th></tr></thead><tbody>';
+  if(!rows.length) h+='<tr><td colspan="13" class="muted">No hosts yet.</td></tr>';
   for(i=0;i<rows.length;i++){ var r=rows[i]; var rc=r.risk>=8?"row-flag":(r.risk>=3?"row-warn":"");
     var clCls = (r.clusterLabel&&r.clusterLabel.indexOf("Cluster")===0)?"tag cfg":(r.clusterLabel==="standalone"?"muted":"tag info");
     h+='<tr class="'+rc+'" data-h="'+i+'" style="cursor:pointer" title="Open full triage for '+esc(r.host)+'">'
@@ -1745,7 +1780,8 @@ function renderRoster(){
       +'<td class="mono'+(r.persistFlagged?' hl-ioc':'')+'">'+r.persistFlagged+'</td>'
       +'<td class="mono'+(r.indicHits?' hl-ioc':'')+'">'+r.indicHits+'</td>'
       +'<td class="mono'+(r.cveFlag?' hl-ioc':'')+'">'+r.cveFlag+'</td>'
-      +'<td class="mono" style="font-weight:700">'+r.risk+'</td></tr>'; }
+      +'<td class="mono" style="font-weight:700">'+r.risk+'</td>'
+      +'<td class="mono muted" style="text-align:right">'+fmtAnalyzed(r)+'</td></tr>'; }
   h+='</tbody>'; $("fleetTbl").innerHTML=h;
   var trs=$("fleetTbl").getElementsByTagName("tr");
   for(var t=0;t<trs.length;t++){ if(trs[t].getAttribute("data-h")!=null){ trs[t].onclick=function(){ drillHost(rows[parseInt(this.getAttribute("data-h"),10)]); }; } }
@@ -1756,8 +1792,8 @@ function drillHost(rec){ if(!rec) return; FLEETMODE=false; showEl("fleetCard",fa
   setStatus("Opening "+rec.host+"…","muted"); window.setTimeout(analyze, 30);
 }
 function fleetExport(){ if(!FLEET.length){ setStatus("No fleet to export.","err"); return; }
-  var out=["Host,Type,Version,Build,KeyPresent,KeyTotal,KeyMissing,Logons,LogonFlagged,LogonExternal,Actions,ActionFlagged,PersistFlagged,Indicators,CVEFlagged,IOCHits,Risk"];
-  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; out.push([cq(r.host),cq(r.type),cq(r.version),cq(r.build),r.keyPresent,r.keyTotal,r.keyMiss,r.logons,r.logonFlagged,r.logonExt,r.actions,r.actFlagged,r.persistFlagged,r.indicHits,r.cveFlag,r.iocHits,r.risk].join(",")); }
+  var out=["Host,Type,Version,Build,KeyPresent,KeyTotal,KeyMissing,Logons,LogonFlagged,LogonExternal,Actions,ActionFlagged,PersistFlagged,Indicators,CVEFlagged,IOCHits,Risk,Analyzed,Reused"];
+  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; out.push([cq(r.host),cq(r.type),cq(r.version),cq(r.build),r.keyPresent,r.keyTotal,r.keyMiss,r.logons,r.logonFlagged,r.logonExt,r.actions,r.actFlagged,r.persistFlagged,r.indicHits,r.cveFlag,r.iocHits,r.risk,cq(r.analyzedAt||""),(r.reused?1:0)].join(",")); }
   var p=fleetBase()+"\\roster_"+nowStamp()+".csv"; try{ writeUtf8(p,out.join("\r\n")); setStatus("Roster → "+p,"ok"); }catch(e){ setStatus("Export failed: "+e.message,"err"); }
 }
 function fleetReport(){ if(!FLEET.length){ setStatus("No fleet to report.","err"); return; }
@@ -1991,7 +2027,7 @@ var ICOLS=[
   {h:"Category", sk:function(r){return r.cat;}, cell:function(r){ return '<td class="first"><span class="tag '+catTag(r.cat)+'">'+esc(r.cat)+'</span></td>'; }},
   {h:"File", sk:function(r){return lc(r.name);}, cell:function(r){ return '<td>'+(r.key?'<b>':'')+esc(r.name)+(r.key?'</b>':'')+'</td>'; }},
   {h:"Description", sk:function(r){return lc(r.desc);}, cell:function(r){ return '<td class="muted" title="'+esc(r.rel||"")+'">'+esc(r.desc)+'</td>'; }},
-  {h:"Present", sk:function(r){return r.present?1:0;}, cell:function(r){ return '<td>'+(r.present?'<span class="'+(r.key?"pkey":"pgood")+'">present</span>':'<span class="pmiss">absent</span>')+'</td>'; }},
+  {h:"Present", sk:function(r){return r.present?1:0;}, cell:function(r){ return '<td>'+(r.present?'<span class="pgood">present</span>':'<span class="'+(r.key?"pkey":"pmiss")+'">absent</span>')+'</td>'; }},
   {h:"Size", sk:function(r){return r.size||0;}, cell:function(r){ return '<td class="mono" style="text-align:right">'+esc(r.present?(r.dir?(nf(r.count)+" files, "+fmtSize(r.size)):fmtSize(r.size)):"-")+'</td>'; }},
   {h:"Open", sk:function(r){return 0;}, cell:function(r){
       if(!r.present) return '<td class="muted">-</td>';
@@ -2311,13 +2347,14 @@ function checkSelfUpdate(){
     x.onreadystatechange=function(){ if(x.readyState!==4) return;
       try{ if(x.status!==200) return; var t=x.responseText+"";
         var m=t.match(/"tag_name"\s*:\s*"v?([0-9.]+)"/i); if(!m) return; var latest=m[1];
-        var av=$("appver");
-        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.className="cur"; av.title="Up to date — v"+APP_VERSION+" is the latest release."; av.onclick=null; } return; }
+        var av=$("appver"), ap=$("apppill");
+        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.innerHTML="v"+APP_VERSION; av.onclick=null; } if(ap){ ap.className="pill ok"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; ap.onclick=null; } return; }
         var url="", re=/"browser_download_url"\s*:\s*"([^"]+\.hta)"/ig, mm;
         while((mm=re.exec(t))){ if(mm[1].toLowerCase().indexOf(SELF_HTA.toLowerCase())>=0){ url=mm[1]; break; } if(!url) url=mm[1]; }
         if(!url) url="https://github.com/"+SELF_REPO+"/releases/download/v"+latest+"/"+SELF_HTA;
         SELF_LATEST=latest; SELF_ASSET_URL=url;
-        if(av){ av.className="old"; av.innerHTML="v"+APP_VERSION+" &rarr; v"+latest+" update"; av.title="A newer version (v"+latest+") is on GitHub — click to update"; av.onclick=doSelfUpdate; }
+        if(av){ av.innerHTML="v"+APP_VERSION+" &rarr; v"+latest+" update"; av.onclick=doSelfUpdate; }
+        if(ap){ ap.className="pill bad old"; ap.title="A newer version (v"+latest+") is on GitHub — click to update"; ap.onclick=doSelfUpdate; }
         var b=$("selfUpd"); if(b){ b.innerHTML="Update to v"+latest; b.className="btn primary"; b.title="A newer "+SELF_HTA+" (v"+latest+") is on GitHub"; }
       }catch(e){} };
     x.send();
@@ -2370,7 +2407,7 @@ function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output direct
 /* ---------- wiring ---------- */
 function init(){
   try{ window.resizeTo(1360,920); }catch(e){}
-  $("appver").innerHTML="v"+APP_VERSION; $("appver").className="cur"; $("appver").title="You are on the latest known version (checking GitHub…)";
+  $("appver").innerHTML="v"+APP_VERSION; $("apppill").className="pill ok"; $("apppill").title="You are on the latest known version (checking GitHub…)";
   try{ document.title="vSphere Support Bundle Triage Tool v"+APP_VERSION; }catch(e){}
   $("invScroll").onscroll=applyFreeze;
   $("tblScroll").onscroll=applyFreezeTbl;

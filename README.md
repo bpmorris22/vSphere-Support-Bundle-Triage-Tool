@@ -34,7 +34,7 @@ _Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NE
 - **Logons / Actions / Timeline** — parsed, scored, colour-coded events (ESXi `shell.log`/`auth.log`/`hostd`; vCenter `websso`/`vpxd`/`auth.log`) with a multiselect score filter and case-window. vCenter tasks are attributed to a user (nearest human SAML login).
 - **Persistence & tampering** — boot scripts, remote-syslog state, DCUI ransom-note check, VIB acceptance, log-integrity, `ld.so.preload`, cron/systemd.
 - **IOC hits** — sweeps an `IOC.txt` (one term per line, next to the app) across the key logs.
-- **Fleet mode** — discover every bundle under a folder, roster them by risk, group by **vSAN cluster**, and run **cross-host correlation**: shared source IPs (lateral movement), shared accounts, shared IOCs, coordinated indicators, a merged timeline, and the **vCenter&rarr;ESXi opID task chain**.
+- **Fleet mode** — discover every bundle under a folder, roster them by risk, group by **vSAN cluster**, and run **cross-host correlation**: shared source IPs (lateral movement), shared accounts, shared IOCs, coordinated indicators, a merged timeline, and the **vCenter&rarr;ESXi opID task chain**. Re-runs **reuse each host's saved analysis** from `_Processed` when the source bundle is unchanged (uncheck *reuse cached* to force a fresh pass); the roster's **Analyzed** column shows when each host was last processed.
 - **Reports & exports** — per-view CSVs, a standalone node **Specification HTML**, a per-host **Case-note report**, and a consolidated **Fleet report**.
 
 See the [Field Manual](vSphere-Bundle-Triage-Manual.html) for full documentation.
