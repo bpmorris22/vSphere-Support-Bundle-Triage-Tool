@@ -44,7 +44,7 @@
 <style>
   html{margin:0;height:100%;background:#0d1117}
   body{margin:0;height:100%;background:#0d1117;color:#e6edf3;font-family:Segoe UI,Tahoma,sans-serif;font-size:16px}
-  #content{zoom:0.9}
+  #content{zoom:0.9;width:111.111%;box-sizing:border-box}   /* zoom<1 shrinks a 100%-wide block to <100% of the viewport (blank gutter on the right); widen by 1/zoom so it renders back to full width */
   a{color:#58a6ff}
   .mono{font-family:Consolas,"Courier New",monospace}
   .muted{color:#8b949e}
@@ -96,7 +96,7 @@
   td{max-width:560px}
   tr.absent td{opacity:.5}
   tr.key td.first{border-left:3px solid #1f6feb}
-  .scroll{max-height:60vh;overflow:auto;border:1px solid #30363d;border-radius:8px}
+  .scroll{max-height:60vh;overflow:auto;border:1px solid #30363d;border-radius:8px;width:100%;box-sizing:border-box}
   .tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600;margin-right:3px}
   .tag.cfg{background:#10233a;color:#79c0ff;border:1px solid #1f6feb}
   .tag.auth{background:#0f2a1a;color:#7ee787;border:1px solid #2ea043}
@@ -106,11 +106,11 @@
   .tag.cmd{background:#21262d;color:#8b949e;border:1px solid #30363d}
   .tag.danger{background:#3a1416;color:#ff6b6b;border:1px solid #b83030;font-weight:700}
   .pgood{color:#3fb950;font-weight:600}.pmiss{color:#8b949e}.pkey{color:#e3b341;font-weight:700}
-  .dl{font-family:Consolas,"Courier New",monospace;font-size:11px;max-height:340px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px;margin:4px 0;white-space:pre-wrap;word-break:break-word}
+  .dl{font-family:Consolas,"Courier New",monospace;font-size:11px;max-height:340px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px;margin:4px 0;white-space:pre-wrap;word-break:break-word;width:100%;box-sizing:border-box}
   .lnk{cursor:pointer;color:#58a6ff}
   .lnk:hover{text-decoration:underline}
   .sep{display:inline-block;width:1px;height:18px;background:#30363d;margin:0 6px;vertical-align:middle}
-  #log{white-space:pre-wrap;font-family:Consolas,monospace;font-size:11px;color:#8b949e;max-height:160px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;display:none;margin-top:8px}
+  #log{white-space:pre-wrap;font-family:Consolas,monospace;font-size:11px;color:#8b949e;max-height:160px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;display:none;margin-top:8px;width:100%;box-sizing:border-box}
   .hide{display:none}
   .modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.66);z-index:1000;overflow:auto}
   .modal .mcard{max-width:860px;margin:36px auto;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:18px 22px}
@@ -358,7 +358,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.6";
+var APP_VERSION = "0.9.7";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -2434,7 +2434,7 @@ function checkSelfUpdate(){
       try{ if(x.status!==200) return; var t=x.responseText+"";
         var m=t.match(/"tag_name"\s*:\s*"v?([0-9.]+)"/i); if(!m) return; var latest=m[1];
         var av=$("appver"), ap=$("apppill");
-        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.innerHTML="v"+APP_VERSION; av.onclick=null; } if(ap){ ap.className="pill"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; ap.onclick=null; } return; }
+        if(!selfVerNewer(latest,APP_VERSION)){ if(av){ av.innerHTML="v"+APP_VERSION; av.onclick=null; } if(ap){ ap.className="pill ok"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; ap.onclick=null; } return; }
         var url="", re=/"browser_download_url"\s*:\s*"([^"]+\.hta)"/ig, mm;
         while((mm=re.exec(t))){ if(mm[1].toLowerCase().indexOf(SELF_HTA.toLowerCase())>=0){ url=mm[1]; break; } if(!url) url=mm[1]; }
         if(!url) url="https://github.com/"+SELF_REPO+"/releases/download/v"+latest+"/"+SELF_HTA;
@@ -2493,7 +2493,7 @@ function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output direct
 /* ---------- wiring ---------- */
 function init(){
   try{ window.resizeTo(1360,920); }catch(e){}
-  $("appver").innerHTML="v"+APP_VERSION; $("apppill").className="pill"; $("apppill").title="Tool version (checking GitHub for updates…)";
+  $("appver").innerHTML="v"+APP_VERSION; $("apppill").className="pill ok"; $("apppill").title="Tool version (checking GitHub for updates…)";
   try{ document.title="vSphere Support Bundle Triage Tool v"+APP_VERSION; }catch(e){}
   $("invScroll").onscroll=applyFreeze;
   $("tblScroll").onscroll=applyFreezeTbl;
@@ -2505,7 +2505,7 @@ function init(){
   $("outDir").onkeyup=function(){ OUT_TOUCHED=true; };
 
   var zoom=0.9, zContent=$("content");
-  function applyZoom(){ zContent.style.zoom=zoom; var p=Math.round(zoom*100)+"%"; $("fup").title="Larger text ("+p+")"; $("fdown").title="Smaller text ("+p+")"; }
+  function applyZoom(){ zContent.style.zoom=zoom; zContent.style.width=(100/zoom)+"%"; var p=Math.round(zoom*100)+"%"; $("fup").title="Larger text ("+p+")"; $("fdown").title="Smaller text ("+p+")"; }
   applyZoom();
   $("fup").onclick=function(){ zoom=Math.min(zoom+0.15,2.5); applyZoom(); };
   $("fdown").onclick=function(){ zoom=Math.max(zoom-0.15,0.6); applyZoom(); };
