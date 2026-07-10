@@ -278,7 +278,7 @@
         </span>
       </div>
       <div class="scroll" id="vmsScroll" style="max-height:56vh"><table id="vmsTbl"></table></div>
-      <div class="muted" style="font-size:11px;margin-top:6px">Parsed from the registered VMs' .vmx files. Click a VM to open its .vmx (full disk paths for recovery). Guest IP is not captured in ESXi vm-support bundles (guest-side / vCenter). See the Specification tab for the node's vSAN &amp; physical-disk layout.</div>
+      <div class="muted" style="font-size:11px;margin-top:6px">Parsed from the registered VMs' .vmx files. <b>Click a VM</b> to open its <b>activity timeline</b> (power / snapshot / migration / guest-op events from vmware.log, with the opID that joins the vCenter task chain) - snapshot delete/consolidate before an encryption window is the ransomware tell; then <i>view .vmx config</i> for disk paths. Guest IP is not captured in ESXi bundles. See Specification for the node's vSAN &amp; disk layout.</div>
     </div>
 
     <!-- SPECIFICATION -->
@@ -406,7 +406,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.13";
+var APP_VERSION = "1.0.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -696,6 +696,7 @@ var CAT_VCSA=[
   {cat:"Network", key:false, name:"iptables ruleset", desc:"Appliance firewall policy + rules.", rels:["commands/iptables_-L--n.txt"]},
   {cat:"Auth/Logons", key:false, name:"auditd (appliance shell)", desc:"Linux auditd EXECVE - appliance command history (rotated audit.log-*).", rels:["var/log/audit/"], pat:"^audit\\.log"},
   {cat:"Network", key:false, name:"rhttpproxy/", desc:"Reverse proxy inbound connections + source IPs.", rels:["var/log/vmware/rhttpproxy/"], dir:true},
+  {cat:"Network", key:false, name:"envoy access (web)", desc:"Front-proxy HTTP access log - vSphere Client / API requests with client source IPs.", rels:["var/log/vmware/envoy/"], pat:"^envoy-access-\\d+\\.log(\\.gz)?$"},
   {cat:"Network", key:false, name:"envoy/", desc:"Envoy edge proxy logs.", rels:["var/log/vmware/envoy/"], dir:true},
   {cat:"Persistence", key:false, name:"messages", desc:"Photon OS syslog - services, cron, systemd.", rels:["var/log/vmware/messages","var/log/messages"]},
   {cat:"Persistence", key:false, name:"vmon/ (service mgr)", desc:"Service lifecycle: up/down, crashes, restarts.", rels:["var/log/vmware/vmon/"], dir:true},
@@ -1050,13 +1051,13 @@ function readCappedText(path, cap){ try{
 }
 /* return lines of a catalog log; decompress .gz/.zst on demand; cap huge logs */
 var LOG_TRUNC=[];
-function logLines(rel){
+function logLines(rel, capOverride){
   if(!rel){ return []; }
   var src=ensureExtracted(rel);
   if(!src){ appendLog("  log "+rel+" -> NOT extracted/found"); return []; }
   if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v){ appendLog("  log "+rel+" -> decompress failed"); return []; } src=v; }
   var sz=fileSize(src), txt;
-  var cap = (FILE_IO==="fso") ? 8388608 : LOGCAP;   // ANSI-fallback (network/redirected) reads are slow - cap harder to avoid the "stop script" dialog
+  var cap = capOverride || ((FILE_IO==="fso") ? 8388608 : LOGCAP);   // ANSI-fallback (network/redirected) reads are slow - cap harder to avoid the "stop script" dialog
   if(sz>cap){ txt=readCappedText(src, Math.floor(cap)); LOG_TRUNC.push(baseName(rel)+" ("+fmtSize(sz)+", read first "+fmtSize(cap)+")"); }
   else { try{ txt=readUtf8(src); }catch(e){ appendLog("  log "+rel+" -> read error: "+e.message); return []; } }
   var a=String(txt).split("\n"); for(var i=0;i<a.length;i++){ if(a[i].charAt(a[i].length-1)==="\r") a[i]=a[i].substring(0,a[i].length-1); }
@@ -1478,6 +1479,7 @@ function parseNetwork(){
           NETINFO.ext.push({proto:c[0], local:c[3], foreign:c[4], proc:prog}); }
       } }
     NETINFO.sus=scanSusProc(readMember("commands/ps_auwwx---sort--rss.txt"));
+    NETINFO.web=parseEnvoy();
   }
   NETINFO.listen.sort(function(a,b){ if(a.scope!==b.scope) return a.scope<b.scope?1:-1; return a.proc<b.proc?-1:1; });
 }
@@ -1486,6 +1488,39 @@ function scanSusProc(txt){ var out=[]; if(!trimStr(txt)) return out; var lines=S
     // ignore the tool's own harmless java/vmware service lines by requiring a SUS pattern hit
     if(SUS_PROC.test(ln) && !/vmware|\/usr\/lib\/vmware|jre-vmware|java\.security|tmpdir=|HeapDumpPath|ErrorFile|GCLogFile|java\.io\.tmpdir/i.test(ln)) out.push(trunc(ln,240)); }
   return out;
+}
+/* ---- vCenter web-access aggregation from the envoy FRONT-proxy access log ----
+   The front proxy (var/log/vmware/envoy/) fronts the vSphere Client / API. Each request line records
+   the CLIENT source IP (DOWNSTREAM_REMOTE_ADDRESS = the token before HTTP/x). Logs are large (tens of
+   MB); read is byte-capped and the result AGGREGATED by client IP (not listed line-by-line). We flag
+   external/public clients, 4xx/5xx volume, and requests whose path matches web-attack patterns. */
+var ENVOY_CAP=12582912;   // 12 MB sample of the newest front-proxy log
+var SUS_PATH=/\.\.(\/|%2f)|%2e%2e|jndi:|\$\{|\/etc\/passwd|\bunion\s+select|<script|\bcmd=|\/bin\/(sh|bash)|powershell|\.\.;|\/cgi-bin\/|\benv\b.*=.*\(|wget\s|curl\s.*\|/i;
+function envoyFrontLog(){
+  var live="", best="", bestN=-1, i, m;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ var r=TOC[i].rel; m=r.match(/^var\/log\/vmware\/envoy\/envoy-access-(\d+)\.log(\.gz)?$/i); if(!m) continue;
+      if(!m[2]) live=r; else { var n=parseInt(m[1],10); if(n>bestN){ bestN=n; best=r; } } } }
+  else { var names=listUnder("var/log/vmware/envoy/", /^envoy-access-\d+\.log(\.gz)?$/i);
+    for(i=0;i<names.length;i++){ m=names[i].match(/envoy-access-(\d+)\.log(\.gz)?$/i); if(!m) continue;
+      if(!m[2]) live="var/log/vmware/envoy/"+names[i]; else { var n2=parseInt(m[1],10); if(n2>bestN){ bestN=n2; best="var/log/vmware/envoy/"+names[i]; } } } }
+  return live||best;
+}
+function parseEnvoy(){
+  var rel=envoyFrontLog(); if(!rel) return null;
+  var lines=logLines(rel, ENVOY_CAP); if(!lines.length) return null;
+  var ips={}, codes={}, sus=[], reqs=0, err=0, i;
+  for(i=0;i<lines.length;i++){ var ln=lines[i];
+    var m=ln.match(/sub=Default\]\s+\S+Z\s+([A-Z]+)\s+(\S+)\s+(\d{3})\s+.*?\s(\d{1,3}(?:\.\d{1,3}){3}):\d+\s+HTTP\//);
+    if(!m) continue; var meth=m[1], path=m[2], code=m[3], cip=m[4]; reqs++;
+    if(!ips[cip]) ips[cip]={n:0, ext:!ipIsLocal(cip), err:0, m:{}}; ips[cip].n++; ips[cip].m[meth]=1;
+    codes[code]=(codes[code]||0)+1; if(/^[45]/.test(code)){ err++; ips[cip].err++; }
+    if(sus.length<25){ var dp=path; try{ dp=decodeURIComponent(path.replace(/\+/g," ")); }catch(e){} if(SUS_PATH.test(dp)||SUS_PATH.test(path)) sus.push({ip:cip, meth:meth, code:code, path:trunc(path,110)}); }
+  }
+  var arr=[]; for(var k in ips){ if(ips.hasOwnProperty(k)){ var mm=[]; for(var mk in ips[k].m) if(ips[k].m.hasOwnProperty(mk)) mm.push(mk); arr.push({ip:k, n:ips[k].n, ext:ips[k].ext, err:ips[k].err, methods:mm.sort().join(",")}); } }
+  arr.sort(function(a,b){ return b.n-a.n; });
+  var ext=[]; for(i=0;i<arr.length;i++){ if(arr[i].ext) ext.push(arr[i]); }
+  return { file:baseName(rel), reqs:reqs, err:err, codes:codes, ips:arr, external:ext, sus:sus,
+    truncated:(fileSize(ensureExtracted(rel)||"")>ENVOY_CAP) };
 }
 var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup)/;
 function nearestBefore(arr,ep){ var best=""; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep) best=arr[i].user; else break; } return best; }
@@ -1895,6 +1930,11 @@ function buildSecurity(){
     if(!trimStr(bj) && !sched) secAdd(GH,"Backup posture","na","no backup config/scheduler captured");
     else secAdd(GH,"Backup posture", (autob||sched)?"pass":"warn",
       (sched?"file-based backup scheduler active":"scheduler not seen")+"; pre-patch auto-backup "+(autob?"enabled":"not enabled")+" - confirm backups are OFF-appliance & restorable (ransomware targets backups)");
+    if(NETINFO && NETINFO.web){ var w=NETINFO.web;
+      secAdd(GL,"Web-plane suspicious requests", w.sus.length?"fail":"pass", w.sus.length?(w.sus.length+" request(s) match web-attack patterns (traversal/injection/exploit paths) - see the Network tab"):"no web-attack patterns in the sampled front-proxy access log");
+      var extIps=[]; for(var z=0;z<w.external.length && z<5;z++) extIps.push(w.external[z].ip);
+      secAdd(GL,"Web clients from public IPs", w.external.length?"warn":"pass", w.external.length?(w.external.length+" external (public) client IP(s) hit the vSphere Client / API: "+extIps.join(", ")+" - management plane exposed to the internet?"):"all web clients are from private/local addresses");
+    }
   }
 }
 function secScoreOf(){ var p=0,t=0; for(var i=0;i<SECPOST.length;i++){ var s=SECPOST[i].status; if(s==="na") continue; t++; if(s==="pass") p++; } return {p:p,t:t}; }
@@ -2125,7 +2165,7 @@ function renderVms(){
   var h='<thead><tr><th>VM</th><th>Guest OS</th>'+(showIp?'<th>Guest IP</th>':'')+'<th>vCPU</th><th>vRAM</th><th>vDisks</th><th>Storage</th><th>Status</th></tr></thead><tbody>';
   if(!VMS.length) h+='<tr><td colspan="'+(showIp?8:7)+'" class="muted">No .vmx files found in this bundle.</td></tr>';
   for(i=0;i<rows.length;i++){ var v=rows[i]; var gip=fleetGuestIp(v.name);
-    h+='<tr data-cfg="'+esc(v.cfg)+'" style="cursor:pointer" title="Open '+esc(baseName(v.cfg))+'">'
+    h+='<tr data-cfg="'+esc(v.cfg)+'" data-nm="'+esc(v.name)+'" style="cursor:pointer" title="Open the activity timeline (power / snapshot / migration / guest-op) for '+esc(v.name)+'">'
       +'<td><b>'+esc(v.name)+'</b></td><td class="muted">'+esc(v.os||"-")+'</td>'
       +(showIp?('<td class="mono">'+(gip?esc(gip):'<span class="muted">-</span>')+'</td>'):'')
       +'<td class="mono" style="text-align:right">'+v.vcpu+'</td><td class="mono" style="text-align:right">'+esc(fmtMB(v.memMB))+'</td>'
@@ -2134,13 +2174,75 @@ function renderVms(){
       +'<td>'+(v.running?'<span class="pgood">running</span>':'<span class="muted">registered</span>')+'</td></tr>'; }
   h+='</tbody>'; $("vmsTbl").innerHTML=h;
   var trs=$("vmsTbl").getElementsByTagName("tr");
-  for(var t=0;t<trs.length;t++){ if(trs[t].getAttribute("data-cfg")){ trs[t].onclick=function(){ previewVmx(this.getAttribute("data-cfg")); }; } }
+  for(var t=0;t<trs.length;t++){ if(trs[t].getAttribute("data-cfg")){ trs[t].onclick=function(){ openVm(this.getAttribute("data-cfg"), this.getAttribute("data-nm")); }; } }
   setupColResizeFor($("vmsTbl"),"vms");
 }
 function previewVmx(rel){ var txt=catMember(rel); if(!txt){ setStatus("Could not read "+baseName(rel),"err"); return; }
   if(txt.length>200000) txt=txt.substring(0,200000)+"\n…(truncated)";
   $("detBody").innerHTML='<div style="font-size:13px;margin-bottom:6px"><b>'+esc(baseName(rel))+'</b> <span class="muted mono">'+esc(rel)+'</span></div><div class="dl">'+esc(txt)+'</div>';
   showEl("detailCard",true); try{ $("detailCard").scrollIntoView(); }catch(e){}
+}
+/* ---- per-VM activity timeline from the co-located vmware.log (+ rotations) ----
+   Extracts power / snapshot / migration / guest-op events with their opID. An lro-* opID means
+   the op came from vCenter (the opID joins vpxa.log/vpxd.log = the vCenter->host->VM chain).
+   Snapshot delete/consolidate + mass power-off are the ransomware pre-destruction tells. */
+var VMLOG_METH=/^(Bootstrap\.(PowerOn|PowerOff|Reset|Suspend|Migrate)|Snapshot\.(Take|Delete|Consolidate|Revert)|Migrate\.\w+|GuestOps\.(Start\w*|Initiate\w*|Create\w*|MakeDirectory\w*|Move\w*|Delete\w*|Run\w*|Change\w*))$/;
+function vmLogRels(cfgRel){
+  var dir=cfgRel.replace(/\/[^\/]*$/,""), out=[], i;
+  var re=new RegExp("^"+dir.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"/vmware(-\\d+)?\\.log$","i");
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ if(re.test(TOC[i].rel)) out.push(TOC[i].rel); } }
+  else { var names=listUnder(dir+"/", /^vmware(-\d+)?\.log$/i); for(i=0;i<names.length;i++) out.push(dir+"/"+names[i]); }
+  out.sort(function(a,b){ var na=(a.match(/vmware-(\d+)/)||[])[1], nb=(b.match(/vmware-(\d+)/)||[])[1];
+    if(na==null&&nb!=null) return -1; if(nb==null&&na!=null) return 1; return (parseInt(nb,10)||0)-(parseInt(na,10)||0); });
+  return out.slice(0, DEEPROT?10:4);
+}
+function parseVmLog(cfgRel){
+  var logs=vmLogRels(cfgRel), ev=[], i, j, lastMig=0, pendTake=-1;
+  for(i=0;i<logs.length;i++){ var txt=catMember(logs[i]); if(!txt) continue;
+    if(txt.length>4194304) txt=txt.substring(0,4194304);
+    var lines=txt.split("\n"), src=baseName(logs[i]);
+    for(j=0;j<lines.length && ev.length<600;j++){ var ln=lines[j];
+      var m=ln.match(/^(\S+Z)\s.*VigorTransportProcessClientPayload:\s*opID=(\S+)\s+seq=\d+:\s*Receiving\s+(\S+)\s+request/);
+      if(m && VMLOG_METH.test(m[3])){ var meth=m[3], op=m[2];
+        var kind=/^Snapshot\./.test(meth)?"snapshot":(/^GuestOps\./.test(meth)?"guest-op":(/Migrate/.test(meth)?"migrate":"power"));
+        if(kind==="migrate"){ var t=toEpoch(m[1]); if(t-lastMig<15){ lastMig=t; continue; } lastMig=t; }
+        var via=/^lro/i.test(op)?"vCenter task":(/^esxui/i.test(op)?"ESXi Host Client":"direct API / vim-cmd");
+        var e={when:isoShort(m[1]), epoch:toEpoch(m[1]), kind:kind, ev:meth, opID:op, via:via, detail:"", src:src};
+        if(meth==="Snapshot.Take") pendTake=ev.length;
+        ev.push(e); continue; }
+      if(pendTake>=0){ var sm=ln.match(/SnapshotVMX_TakeSnapshot start:\s*'([^']*)'/); if(sm){ ev[pendTake].detail="name: "+sm[1]; pendTake=-1; } }
+    }
+  }
+  ev.sort(function(a,b){ return a.epoch-b.epoch; });
+  return {logs:logs, events:ev};
+}
+function vmEvClass(k){ return k==="snapshot"?"warn":(k==="guest-op"?"hit":(k==="power"?"":"")); }
+function openVm(cfgRel, vmName){
+  setStatus("Reading "+baseName(cfgRel)+" activity log…","muted");
+  var r; try{ r=parseVmLog(cfgRel); }catch(e){ r={logs:[],events:[]}; }
+  var snap=0, del=0, poff=0, gop=0, vc=0, i;
+  for(i=0;i<r.events.length;i++){ var e=r.events[i]; if(e.kind==="snapshot"){ snap++; if(/Delete|Consolidate/.test(e.ev)) del++; }
+    if(e.ev==="Bootstrap.PowerOff") poff++; if(e.kind==="guest-op") gop++; if(e.via==="vCenter task") vc++; }
+  var h='<div style="font-size:13px;margin-bottom:6px"><b>'+esc(vmName||baseName(cfgRel))+'</b> - activity timeline '
+    +'<span class="muted mono" style="font-size:11px">'+esc(cfgRel)+'</span> '
+    +'<span class="lnk" style="margin-left:8px" data-vmx="'+esc(cfgRel)+'">view .vmx config</span></div>';
+  if(!r.logs.length){ h+='<div class="muted" style="font-size:12px">No vmware.log for this VM in the bundle (guest may be powered off, or its datastore was not captured).</div>'; }
+  else {
+    h+='<div class="muted" style="font-size:11px;margin-bottom:6px">'+r.events.length+' event(s) from '+r.logs.length+' log file(s)'
+      +(snap?(' &middot; <b>'+snap+' snapshot op(s)'+(del?(", "+del+" delete/consolidate"):"")+'</b>'):'')
+      +(poff?(' &middot; '+poff+' power-off'):'')+(gop?(' &middot; <span style="color:#ff8b8b">'+gop+' guest-op</span>'):'')
+      +(vc?(' &middot; '+vc+' via vCenter'):'')+'. opID <span class="mono">lro-*</span> = a vCenter task (join it in vpxa/vpxd).</div>';
+    if(!r.events.length) h+='<div class="muted" style="font-size:12px">No power / snapshot / migration / guest-op events (only routine guest-stats noise, filtered).</div>';
+    else { h+='<div class="scroll" style="max-height:44vh"><table><thead><tr><th>When (UTC)</th><th>Event</th><th>Kind</th><th>Initiator</th><th>opID</th><th>Detail</th><th>Log</th></tr></thead><tbody>';
+      for(i=0;i<r.events.length;i++){ var ev=r.events[i]; var cl=vmEvClass(ev.kind);
+        h+='<tr'+(cl?' class="'+(cl==="hit"?"hl-ioc":"")+'"':'')+'><td class="mono">'+esc(ev.when)+'</td><td class="mono'+(cl==="warn"?'" style="color:#e3b341':'')+'">'+esc(ev.ev)+'</td><td>'+esc(ev.kind)+'</td><td'+(ev.via==="vCenter task"?' style="color:#79c0ff"':'')+'>'+esc(ev.via)+'</td><td class="mono muted">'+esc(ev.opID)+'</td><td class="mono">'+esc(ev.detail)+'</td><td class="mono muted">'+esc(ev.src)+'</td></tr>'; }
+      h+='</tbody></table></div>'; }
+  }
+  $("detBody").innerHTML=h; showEl("detailCard",true);
+  var sp=$("detBody").getElementsByTagName("span");
+  for(i=0;i<sp.length;i++){ if(sp[i].getAttribute("data-vmx")){ sp[i].onclick=function(){ previewVmx(this.getAttribute("data-vmx")); }; } }
+  try{ $("detailCard").scrollIntoView(); }catch(e){}
+  setStatus(r.events.length+" activity event(s) for "+(vmName||baseName(cfgRel))+(del?(" - "+del+" snapshot delete/consolidate (review vs any encryption window)"):""), del?"err":"ok");
 }
 function vmsExport(){
   if(!VMS.length){ setStatus("No VMs to export - open an ESXi bundle and let analysis finish (VMs tab shows the list).","err"); return; }
@@ -2838,8 +2940,15 @@ function renderSpec(){
 function renderNetwork(){
   if(!ANALYZED || !NETINFO){ $("netScore").innerHTML=""; $("netBody").innerHTML='<div class="muted" style="font-size:12px">Network snapshot is built during analysis'+(ANALYZED?".":" (runs automatically after Analyze).")+'</div>'; return; }
   if(!NETINFO.captured){ $("netScore").innerHTML=""; $("netBody").innerHTML='<div class="muted" style="font-size:12px">No socket capture in this bundle ('+(BTYPE==="esxi"?"localcli network ip connection list":"netstat -anp")+' not present).</div>'; return; }
-  $("netScore").innerHTML="- "+NETINFO.listenN+" listener(s), "+NETINFO.netFacing+" network-facing, "+NETINFO.ext.length+" external connection(s)"+(NETINFO.sus.length?(", "+NETINFO.sus.length+" suspicious process(es)"):"");
+  $("netScore").innerHTML="- "+NETINFO.listenN+" listener(s), "+NETINFO.netFacing+" network-facing, "+NETINFO.ext.length+" external connection(s)"+(NETINFO.sus.length?(", "+NETINFO.sus.length+" suspicious process(es)"):"")+(NETINFO.web?(", "+nf(NETINFO.web.reqs)+" web request(s)"):"");
   var h="", i;
+  if(NETINFO.web){ var w=NETINFO.web;
+    h+='<div class="panel" style="margin-bottom:10px"><h4>Web access - vSphere Client / API <span class="sub">- '+nf(w.reqs)+' request(s)'+(w.truncated?" (newest ~12MB sampled)":"")+' from '+w.ips.length+' client IP(s), '+w.external.length+' external, '+w.err+' 4xx/5xx, via '+esc(w.file)+'</span></h4>';
+    if(w.sus.length){ h+='<div style="color:#ff8b8b;font-size:12px;margin-bottom:4px"><b>'+w.sus.length+' request(s) match web-attack patterns:</b></div><div class="dl" style="max-height:18vh">';
+      for(i=0;i<w.sus.length;i++) h+=esc(w.sus[i].ip+"  "+w.sus[i].meth+" "+w.sus[i].code+"  "+w.sus[i].path)+"\n"; h+='</div>'; }
+    h+='<div class="scroll" style="max-height:30vh"><table><thead><tr><th>Client IP</th><th>Scope</th><th>Requests</th><th>Errors</th><th>Methods</th></tr></thead><tbody>';
+    for(i=0;i<w.ips.length && i<40;i++){ var ci=w.ips[i]; h+='<tr'+(ci.ext?' class="hl-ioc"':'')+'><td class="mono">'+esc(ci.ip)+'</td><td'+(ci.ext?' style="color:#e3b341"':' class="muted"')+'>'+(ci.ext?"external (public)":"private/local")+'</td><td class="mono">'+nf(ci.n)+'</td><td class="mono'+(ci.err?' hl-ioc':'')+'">'+ci.err+'</td><td class="mono muted">'+esc(ci.methods)+'</td></tr>'; }
+    h+='</tbody></table></div></div>'; }
   if(NETINFO.sus.length){ h+='<div class="panel" style="margin-bottom:10px"><h4 style="color:#ff8b8b">Suspicious processes ('+NETINFO.sus.length+') - attacker-tool / reverse-shell patterns</h4>';
     h+='<div class="dl" style="max-height:20vh">'; for(i=0;i<NETINFO.sus.length;i++) h+=esc(NETINFO.sus[i])+"\n"; h+='</div></div>'; }
   h+='<div class="panel" style="margin-bottom:10px"><h4>External connections <span class="sub">- established sessions to non-private (public) IPs; '+NETINFO.ext.length+' found</span></h4>';
