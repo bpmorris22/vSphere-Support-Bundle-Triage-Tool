@@ -230,6 +230,7 @@
         <button class="btn on" id="tabOverview" data-tab="overview">Overview</button>
         <button class="btn" id="tabSpec" data-tab="spec">Specification</button>
         <button class="btn" id="tabSec" data-tab="sec">Security</button>
+        <button class="btn" id="tabNet" data-tab="net">Network</button>
         <button class="btn" id="tabVms" data-tab="vms">VMs</button>
         <button class="btn" id="tabInv" data-tab="inv">Key Files</button>
         <button class="btn" id="tabLogon" data-tab="logon">Logons</button>
@@ -286,6 +287,13 @@
         <button class="btn green" id="specExport" style="float:right" title="Export this node's specification (config, networking, storage/vSAN, VMs) to a self-contained HTML.">Export &rarr; HTML</button>
       </h3>
       <div id="specBody"></div>
+    </div>
+
+    <!-- NETWORK: listeners / connections / suspicious processes -->
+    <div class="card hide" id="netCard">
+      <h3>Network &amp; processes <span class="muted" style="text-transform:none;font-weight:400" id="netScore"></span></h3>
+      <div class="muted" style="font-size:11px;margin-bottom:8px">Point-in-time snapshot from the bundle's socket + process captures - listening services, established connections to external (public) IPs, and a scan for attacker-tool / reverse-shell process patterns. A network-facing listener from an unexpected process, or a session to a public IP, is the review target.</div>
+      <div id="netBody"></div>
     </div>
 
     <!-- SECURITY POSTURE -->
@@ -398,7 +406,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.12";
+var APP_VERSION = "0.9.13";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -658,6 +666,7 @@ var CAT_ESXI=[
   {cat:"Actions/Audit", key:true, name:"vpxa.log", desc:"vCenter agent: tasks pushed to this host from vCenter.", rels:["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]},
   {cat:"Actions/Audit", key:true,  name:"vobd (audit events)", desc:"Host audit-event stream (esx.audit.*): SSH/shell enable, firewall, accounts, lockdown. Often rotations-only.", rels:["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log","var/run/log/vobd.0.gz","scratch/log/vobd.0.gz"]},
   {cat:"Actions/Audit", key:false, name:"esxupdate.log", desc:"VIB / image-profile change history - who installed what, when.", rels:["var/run/log/esxupdate.log","scratch/log/esxupdate.log","var/log/esxupdate.log"]},
+  {cat:"Network", key:false, name:"socket connections", desc:"Listening + established TCP sockets with owning world - listener/beacon review.", rels:["commands/localcli_network_ip_connection_list.txt"]},
   {cat:"Network", key:false, name:"routing table", desc:"esxcfg-route capture - host routing.", rels:["commands/esxcfg-route_-l.txt"]},
   {cat:"Network", key:false, name:"distributed switch", desc:"net-dvs capture - DVS state.", rels:["commands/net-dvs_-l.txt"]},
   {cat:"Persistence", key:false, name:"vmkernel.log", desc:"Kernel log - driver / VIB load, module events.", rels:["var/run/log/vmkernel.log","scratch/log/vmkernel.log","var/log/vmkernel.log"]},
@@ -683,6 +692,9 @@ var CAT_VCSA=[
   {cat:"Actions/Audit", key:false, name:"vpxd disabled methods", desc:"API methods disabled - hardening / tamper indicator.", rels:["var/log/vmware/vpxd/vpx_disabled_methods.txt"]},
   {cat:"Actions/Audit", key:false, name:"vpxd-svcs/ (authz)", desc:"Authorization / role service logs.", rels:["var/log/vmware/vpxd-svcs/"], dir:true},
   {cat:"Actions/Audit", key:false, name:"eam/ (agent mgr)", desc:"ESX Agent Manager - agent VM deploys.", rels:["var/log/vmware/eam/"], dir:true},
+  {cat:"Network", key:false, name:"socket connections", desc:"netstat -anp: listening + established sockets w/ process - listener/beacon review.", rels:["commands/netstat_-anp.txt"]},
+  {cat:"Network", key:false, name:"iptables ruleset", desc:"Appliance firewall policy + rules.", rels:["commands/iptables_-L--n.txt"]},
+  {cat:"Auth/Logons", key:false, name:"auditd (appliance shell)", desc:"Linux auditd EXECVE - appliance command history (rotated audit.log-*).", rels:["var/log/audit/"], pat:"^audit\\.log"},
   {cat:"Network", key:false, name:"rhttpproxy/", desc:"Reverse proxy inbound connections + source IPs.", rels:["var/log/vmware/rhttpproxy/"], dir:true},
   {cat:"Network", key:false, name:"envoy/", desc:"Envoy edge proxy logs.", rels:["var/log/vmware/envoy/"], dir:true},
   {cat:"Persistence", key:false, name:"messages", desc:"Photon OS syslog - services, cron, systemd.", rels:["var/log/vmware/messages","var/log/messages"]},
@@ -1305,7 +1317,7 @@ function parseActions(){
     var val=logLinesRot(resolveLog(["var/log/auth.log"]));
     for(i=0;i<val.length;i++){ m=val[i].match(/^(\S+[\+Z][\d:]*).*\bsudo:\s+(\S+)\s*:\s+.*COMMAND=(.+)$/); if(!m) continue;
       ep=toEpoch(m[1]); ACTIONS.push(mkAct(ep,m[1],m[2],m[3],"auth.log","sudo command")); }
-    parseSsoAudit();
+    parseSsoAudit(); parseAuditd();
   }
   for(i=0;i<ACTIONS.length;i++) scoreAction(ACTIONS[i]);
 }
@@ -1398,6 +1410,83 @@ function parseSsoAudit(){
   }
   if(n) appendLog("  sso audit: "+n+" identity event(s)");
 }
+/* ---- VCSA appliance shell command history from Linux auditd EXECVE records.
+   Very noisy (routine VMware automation every ~30s) - routine paths are filtered and identical
+   commands deduped, so only genuinely unusual execs survive. ---- */
+var AUDIT_ROUTINE=/vmware|sudo_py_vmw|createDBRole|createcertificate|\/usr\/lib\/vmware|vmafd|vmdir|vpxd|likewise|\/opt\/vmware|observability|lastlog|python3?(\.\d+)?$|logrotate|systemctl|vami|applmgmt/i;
+function auditRotations(){
+  var out=[], i, re=/^var\/log\/audit\/audit\.log[.\-]/i;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ if(re.test(TOC[i].rel)) out.push(TOC[i].rel); } }
+  else { var names=listUnder("var/log/audit/", /^audit\.log/i); for(i=0;i<names.length;i++) out.push("var/log/audit/"+names[i]); }
+  out.sort(); return out;   // epoch-suffixed -> lexical sort = chronological
+}
+function parseAuditd(){
+  var rots=auditRotations(); if(!rots.length) return;
+  var files = DEEPROT ? rots : [rots[rots.length-1]];   // newest rotation by default; all with deep-scan
+  var seen={}, n=0, scanned=0, i, f;
+  for(f=0;f<files.length;f++){ var lines=logLines(files[f]);
+    for(i=0;i<lines.length;i++){ var ln=lines[i]; if(ln.indexOf("type=EXECVE")<0) continue; scanned++;
+      var tm=ln.match(/audit\((\d+)\.\d+:/); var ep=tm?parseInt(tm[1],10):0;
+      var args=[], am, are=/a\d+="((?:[^"\\]|\\.)*)"/g; while((am=are.exec(ln))) args.push(am[1]);
+      if(!args.length) continue; var cmd=args.join(" ");
+      if(AUDIT_ROUTINE.test(cmd)) continue;                 // routine appliance automation
+      var key=cmd; if(seen[key]){ seen[key]++; continue; } seen[key]=1;
+      ACTIONS.push(mkAct(ep, isoFromEpoch(ep), "appliance", cmd, "auditd", "appliance command (auditd)"));
+      if(++n>=2000) break; }
+    if(n>=2000) break;
+  }
+  if(n||scanned) appendLog("  auditd: "+scanned+" execve scanned, "+n+" non-routine command(s) ("+files.length+" rotation"+(files.length===1?"":"s")+")");
+}
+function isoFromEpoch(ep){ if(!ep) return ""; var d=new Date(ep*1000); function p(x){return x<10?("0"+x):x;}
+  return d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate())+"T"+p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds())+"Z"; }
+
+/* ---- network & process snapshot: listeners, external connections, attacker-tool scan ---- */
+var SUS_PROC=/\b(nc|ncat|netcat|socat)\b|\/tmp\/|\/dev\/shm\/|\bbash\s+-i\b|python[0-9.]*\s+-c\b|perl\s+-e\b|\bsh\s+-i\b|base64\s+-d|xmrig|minerd|cryptonight|\/dev\/tcp\/|mkfifo|msfvenom|meterpreter|powershell|certutil|wget\s+http|curl\s+http.*\|/i;
+function dashSpans(line){ var spans=[], m, re=/-+/g; while((m=re.exec(line))){ spans.push([m.index,m.index+m[0].length]); } return spans; }
+function netScope(addr){ var ip=String(addr).replace(/:\d+$/,"").replace(/^\[|\]$/g,"");
+  if(/^127\.|^::1$/.test(ip)) return "loopback";                         // loopback-only, not reachable off-host
+  if(/^0\.0\.0\.0$|^::$|^\*$/.test(ip)) return "network (all interfaces)"; // any-interface bind = exposed
+  return ipIsLocal(ip)?"network (private)":"network"; }
+function splitHostPort(ap){ ap=String(ap); var i=ap.lastIndexOf(":"); if(i<0) return {h:ap,p:""}; return {h:ap.substring(0,i).replace(/^\[|\]$/g,""), p:ap.substring(i+1)}; }
+function parseNetwork(){
+  NETINFO={listen:[], ext:[], sus:[], listenN:0, netFacing:0, captured:false};
+  var i, txt;
+  if(BTYPE==="esxi"){
+    txt=readMember("commands/localcli_network_ip_connection_list.txt");
+    if(trimStr(txt)){ NETINFO.captured=true; var lines=txt.split("\n"), di=-1;
+      for(i=0;i<lines.length;i++){ if(/^-{3,}\s+-{3,}/.test(lines[i])){ di=i; break; } }
+      if(di>=0){ var spans=dashSpans(lines[di]);
+        function col(ln,k){ if(k>=spans.length) return ""; var s=spans[k], e=(k===spans.length-1)?ln.length:spans[k+1][0]; return s[0]<ln.length?trimStr(ln.substring(s[0],Math.min(e,ln.length))):""; }
+        for(i=di+1;i<lines.length;i++){ var ln=lines[i]; if(!trimStr(ln)) continue;
+          var proto=col(ln,0), local=col(ln,3), foreign=col(ln,4), state=col(ln,5), world=col(ln,8);
+          if(!proto) continue;
+          if(/LISTEN/i.test(state)){ NETINFO.listenN++; var sc=netScope(local); if(sc.indexOf("network")===0) NETINFO.netFacing++;
+            NETINFO.listen.push({proto:proto, local:local, proc:world, scope:sc}); }
+          else if(/ESTABLISHED/i.test(state)){ var fp=splitHostPort(foreign); if(fp.h && !ipIsLocal(fp.h) && fp.h!=="0.0.0.0")
+            NETINFO.ext.push({proto:proto, local:local, foreign:foreign, proc:world}); }
+        } }
+    }
+    NETINFO.sus=scanSusProc(readMember("commands/ps_-Cc---tree.txt"));
+  } else if(BTYPE==="vcsa"){
+    txt=readMember("commands/netstat_-anp.txt");
+    if(trimStr(txt)){ NETINFO.captured=true; var vl=txt.split("\n");
+      for(i=0;i<vl.length;i++){ var c=trimStr(vl[i]).split(/\s+/); if(c.length<6 || !/^tcp|^udp/i.test(c[0])) continue;
+        var st=c[5], prog=(c[6]||"").replace(/^\d+\//,"").replace(/[:\s]+$/,"");
+        if(/LISTEN/i.test(st)){ NETINFO.listenN++; var sc2=netScope(c[3]); if(sc2.indexOf("network")===0) NETINFO.netFacing++;
+          NETINFO.listen.push({proto:c[0], local:c[3], proc:prog, scope:sc2}); }
+        else if(/ESTABLISHED/i.test(st)){ var fp2=splitHostPort(c[4]); if(fp2.h && !ipIsLocal(fp2.h) && fp2.h!=="0.0.0.0")
+          NETINFO.ext.push({proto:c[0], local:c[3], foreign:c[4], proc:prog}); }
+      } }
+    NETINFO.sus=scanSusProc(readMember("commands/ps_auwwx---sort--rss.txt"));
+  }
+  NETINFO.listen.sort(function(a,b){ if(a.scope!==b.scope) return a.scope<b.scope?1:-1; return a.proc<b.proc?-1:1; });
+}
+function scanSusProc(txt){ var out=[]; if(!trimStr(txt)) return out; var lines=String(txt).split("\n");
+  for(var i=0;i<lines.length && out.length<40;i++){ var ln=trimStr(lines[i]); if(!ln) continue;
+    // ignore the tool's own harmless java/vmware service lines by requiring a SUS pattern hit
+    if(SUS_PROC.test(ln) && !/vmware|\/usr\/lib\/vmware|jre-vmware|java\.security|tmpdir=|HeapDumpPath|ErrorFile|GCLogFile|java\.io\.tmpdir/i.test(ln)) out.push(trunc(ln,240)); }
+  return out;
+}
 var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup)/;
 function nearestBefore(arr,ep){ var best=""; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep) best=arr[i].user; else break; } return best; }
 function mkAct(ep,ts,actor,cmd,src,kind){ return {kind:"action",epoch:ep,when:isoShort(ts),actor:actor,cmd:cmd,src:src,akind:kind,score:0,tags:[],reasons:[],blob:lc(actor+" "+cmd+" "+src)}; }
@@ -1413,6 +1502,7 @@ function scoreAction(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob
   }
   if(r.src==="sso audit" && /creat|add|delete|remove|password|unlock|policy|certificat/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("SSO identity/config change"); }
   if(r.src==="esxupdate.log"){ r.score+=1; r.reasons.push("software installed/removed on host"); }
+  if(r.src==="auditd"){ r.score+=1; r.tags.push("SUSPECT"); r.reasons.push("non-routine appliance shell command"); }
 }
 function buildTimeline(){
   TIMELINE=[]; var i;
@@ -1440,7 +1530,7 @@ function runAnalysis(){
   window.setTimeout(function(){ try{
     parseLogons(); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
     window.setTimeout(function(){ try{
-      parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSecurity(); buildSpec(); parseVms(); ANALYZED=true;
+      parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); parseNetwork(); buildSecurity(); buildSpec(); parseVms(); ANALYZED=true;
       writeAnalysisOutputs();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
       $("anStatus").innerHTML=msg+(LOG_TRUNC.length?("  (capped: "+LOG_TRUNC.join("; ")+")"):"");
@@ -1458,7 +1548,7 @@ function writeAnalysisOutputs(){ try{
 /* ============================================================
    DROP-2: ransomware indicators + CVE exposure + case-note report
    ============================================================ */
-var INDIC=[], CVES=[], PERSIST=[], SPEC=[], VMS=[], SECPOST=[], VIBS=[], VIBS_NOTABLE=[];
+var INDIC=[], CVES=[], PERSIST=[], SPEC=[], VMS=[], SECPOST=[], VIBS=[], VIBS_NOTABLE=[], NETINFO=null;
 function actCount(sub){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;j<ACTIONS[i].reasons.length;j++){ if(ACTIONS[i].reasons[j].indexOf(sub)>=0){ n++; break; } } } return n; }
 function logonExternal(){ var n=0,ips={}; for(var i=0;i<LOGON.length;i++){ var r=LOGON[i]; if(r.ip && !ipIsLocal(r.ip)){ n++; ips[r.ip]=1; } } var list=[]; for(var k in ips){ if(ips.hasOwnProperty(k)) list.push(k); } return {n:n, ips:list}; }
 function logonFail(){ var n=0; for(var i=0;i<LOGON.length;i++) if(LOGON[i].result==="FAIL") n++; return n; }
@@ -1786,6 +1876,25 @@ function buildSecurity(){
       secAdd(GL,"Host audit events (vobd)", vh?"warn":"pass",
         vh?(VOBD_STATS.ssh+" SSH-enable/disable, "+VOBD_STATS.shell+" shell, "+VOBD_STATS.acct+" account, "+VOBD_STATS.lockdown+" lockdown, "+VOBD_STATS.fw+" non-routine firewall event(s) - review the Actions tab (source vobd)")
           :(VOBD_STATS.total+" audit event(s), none security-relevant beyond routine patching churn")); }
+  }
+  // network exposure (both types) from the socket capture
+  if(NETINFO && NETINFO.captured){
+    secAdd(GL,"Suspicious processes", NETINFO.sus.length?"fail":"pass", NETINFO.sus.length?(NETINFO.sus.length+" process(es) match attacker-tool / reverse-shell patterns - see the Network tab"):"no attacker-tool process patterns in the process capture");
+    secAdd(GL,"External connections", NETINFO.ext.length?"warn":"pass", NETINFO.ext.length?(NETINFO.ext.length+" established session(s) to public IP(s) - management plane talking to the internet? see the Network tab"):"no established sessions to public IPs");
+    secAdd(GH,"Network-facing listeners", "pass", NETINFO.netFacing+" of "+NETINFO.listenN+" listening service(s) bound to a network interface (rest loopback-only) - review the Network tab for any unexpected process");
+  }
+  if(BTYPE==="vcsa"){
+    var ipt=readMember("commands/iptables_-L--n.txt");
+    if(trimStr(ipt)){ var pol=(ipt.match(/Chain INPUT \(policy (\w+)\)/i)||[])[1]||"?";
+      secAdd(GH,"Appliance firewall (iptables INPUT policy)", /drop|reject/i.test(pol)?"pass":"warn", "INPUT policy "+pol+(/drop|reject/i.test(pol)?" (default-deny inbound)":" - not default-deny, review rules")); }
+    else secAdd(GH,"Appliance firewall (iptables)","na","iptables capture not present");
+    var bj=readMember("etc/applmgmt/appliance/patching_backup_config.json");
+    var bcron=readMember("var/log/vmware/applmgmt/backupSchedulerCron.log");
+    var autob=/"enable_auto_backup"\s*:\s*true/i.test(bj);
+    var sched=trimStr(bcron)!=="" || rotationsOf("var/log/vmware/applmgmt/backupSchedulerCron.log").length>0;
+    if(!trimStr(bj) && !sched) secAdd(GH,"Backup posture","na","no backup config/scheduler captured");
+    else secAdd(GH,"Backup posture", (autob||sched)?"pass":"warn",
+      (sched?"file-based backup scheduler active":"scheduler not seen")+"; pre-patch auto-backup "+(autob?"enabled":"not enabled")+" - confirm backups are OFF-appliance & restorable (ransomware targets backups)");
   }
 }
 function secScoreOf(){ var p=0,t=0; for(var i=0;i<SECPOST.length;i++){ var s=SECPOST[i].status; if(s==="na") continue; t++; if(s==="pass") p++; } return {p:p,t:t}; }
@@ -2293,7 +2402,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -2307,7 +2416,7 @@ function processHostSync(path){
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
   buildInventory(); parseNode();
-  parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSecurity(); buildSpec(); parseVms();
+  parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); parseNetwork(); buildSecurity(); buildSpec(); parseVms();
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
   var snap=snapshotHost(dispHost, path);
@@ -2638,9 +2747,9 @@ function userTab(t){
 function setTab(t){
   TAB=t;
   showEl("detailCard",false); $("detBody").innerHTML="";   // close any open preview when switching tabs
-  var ids={overview:"tabOverview",spec:"tabSpec",sec:"tabSec",vms:"tabVms",inv:"tabInv",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
+  var ids={overview:"tabOverview",spec:"tabSpec",sec:"tabSec",net:"tabNet",vms:"tabVms",inv:"tabInv",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
   for(var k in ids){ if(ids.hasOwnProperty(k)) $(ids[k]).className=(k===t)?"btn on":"btn"; }
-  showEl("ovCard", t==="overview"); showEl("invCard", t==="inv"); showEl("specCard", t==="spec"); showEl("secCard", t==="sec"); showEl("vmsCard", t==="vms");
+  showEl("ovCard", t==="overview"); showEl("invCard", t==="inv"); showEl("specCard", t==="spec"); showEl("secCard", t==="sec"); showEl("netCard", t==="net"); showEl("vmsCard", t==="vms");
   var isAn=(t==="logon"||t==="act"||t==="time"||t==="ioc"||t==="persist");
   showEl("tblCard", isAn); showEl("dateWrap", t==="time"||t==="logon");
   showEl("scoreFilt", t==="logon"||t==="act"||t==="time");   // score buckets only where rows have a score
@@ -2652,6 +2761,7 @@ function render(){
   if(TAB==="overview"){ renderOverview(); return; }
   if(TAB==="spec"){ renderSpec(); return; }
   if(TAB==="sec"){ renderSecurity(); return; }
+  if(TAB==="net"){ renderNetwork(); return; }
   if(TAB==="vms"){ renderVms(); return; }
   if(TAB==="inv"){ renderInventory(); return; }
   if(!ANALYZED){ $("tbl").innerHTML='<thead><tr><th>Parsing…</th></tr></thead><tbody><tr><td class="muted">Log analysis runs automatically after Analyze. If this stays empty, open <b>Show log</b> for per-log diagnostics, or click <b>Re-run log analysis</b> on Overview.</td></tr></tbody>'; $("tcount").innerHTML=""; return; }
@@ -2725,6 +2835,26 @@ function renderSpec(){
   $("specBody").innerHTML=h;
 }
 
+function renderNetwork(){
+  if(!ANALYZED || !NETINFO){ $("netScore").innerHTML=""; $("netBody").innerHTML='<div class="muted" style="font-size:12px">Network snapshot is built during analysis'+(ANALYZED?".":" (runs automatically after Analyze).")+'</div>'; return; }
+  if(!NETINFO.captured){ $("netScore").innerHTML=""; $("netBody").innerHTML='<div class="muted" style="font-size:12px">No socket capture in this bundle ('+(BTYPE==="esxi"?"localcli network ip connection list":"netstat -anp")+' not present).</div>'; return; }
+  $("netScore").innerHTML="- "+NETINFO.listenN+" listener(s), "+NETINFO.netFacing+" network-facing, "+NETINFO.ext.length+" external connection(s)"+(NETINFO.sus.length?(", "+NETINFO.sus.length+" suspicious process(es)"):"");
+  var h="", i;
+  if(NETINFO.sus.length){ h+='<div class="panel" style="margin-bottom:10px"><h4 style="color:#ff8b8b">Suspicious processes ('+NETINFO.sus.length+') - attacker-tool / reverse-shell patterns</h4>';
+    h+='<div class="dl" style="max-height:20vh">'; for(i=0;i<NETINFO.sus.length;i++) h+=esc(NETINFO.sus[i])+"\n"; h+='</div></div>'; }
+  h+='<div class="panel" style="margin-bottom:10px"><h4>External connections <span class="sub">- established sessions to non-private (public) IPs; '+NETINFO.ext.length+' found</span></h4>';
+  if(!NETINFO.ext.length) h+='<div class="muted" style="font-size:12px">none - all established sessions are to private/local addresses</div>';
+  else { h+='<div class="scroll" style="max-height:30vh"><table><thead><tr><th>Proto</th><th>Local</th><th>Foreign (external)</th><th>Process</th></tr></thead><tbody>';
+    for(i=0;i<NETINFO.ext.length;i++){ var e=NETINFO.ext[i]; h+='<tr class="hl-ioc"><td class="mono">'+esc(e.proto)+'</td><td class="mono">'+esc(e.local)+'</td><td class="mono">'+esc(e.foreign)+'</td><td class="mono">'+esc(e.proc)+'</td></tr>'; }
+    h+='</tbody></table></div>'; }
+  h+='</div>';
+  h+='<div class="panel"><h4>Listening services <span class="sub">- '+NETINFO.listenN+' listener(s), '+NETINFO.netFacing+' network-facing</span></h4>';
+  h+='<div class="scroll" style="max-height:40vh"><table><thead><tr><th>Proto</th><th>Local address</th><th>Scope</th><th>Process</th></tr></thead><tbody>';
+  for(i=0;i<NETINFO.listen.length;i++){ var l=NETINFO.listen[i]; var nf2=l.scope.indexOf("network")===0;
+    h+='<tr><td class="mono">'+esc(l.proto)+'</td><td class="mono">'+esc(l.local)+'</td><td'+(nf2?' style="color:#e3b341"':' class="muted"')+'>'+esc(l.scope)+'</td><td class="mono">'+esc(l.proc)+'</td></tr>'; }
+  h+='</tbody></table></div></div>';
+  $("netBody").innerHTML=h;
+}
 function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"")); }
 function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"clear")); }
 function renderSecurity(){
@@ -2810,6 +2940,7 @@ function renderAnStats(){
   s+=statCard(nf(TIMELINE.length),"timeline","","time");
   s+=statCard(nf(IOCHITS.length),"IOC hits",IOCHITS.length?"flag":"","ioc");
   if(SECPOST.length){ var ss=secScoreOf(); s+=statCard(ss.p+"/"+ss.t,"security posture",(ss.p<ss.t?"warn":"ok2"),"sec"); }
+  if(NETINFO && NETINFO.captured){ s+=statCard(nf(NETINFO.netFacing)+"/"+nf(NETINFO.listenN),"net listeners",(NETINFO.sus.length||NETINFO.ext.length)?"flag":"","net"); }
   $("anStats").innerHTML=s; wireStatTabs($("anStats"));
 }
 /* ---------- shared analysis table rendering ---------- */
