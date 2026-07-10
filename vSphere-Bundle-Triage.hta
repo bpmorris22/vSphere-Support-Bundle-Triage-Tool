@@ -225,6 +225,7 @@
       <div class="row" id="tabbar" style="margin-bottom:2px">
         <button class="btn on" id="tabOverview" data-tab="overview">Overview</button>
         <button class="btn" id="tabSpec" data-tab="spec">Specification</button>
+        <button class="btn" id="tabSec" data-tab="sec">Security</button>
         <button class="btn" id="tabVms" data-tab="vms">VMs</button>
         <button class="btn" id="tabInv" data-tab="inv">Key Files</button>
         <button class="btn" id="tabLogon" data-tab="logon">Logons</button>
@@ -281,6 +282,13 @@
         <button class="btn green" id="specExport" style="float:right" title="Export this node's specification (config, networking, storage/vSAN, VMs) to a self-contained HTML.">Export &rarr; HTML</button>
       </h3>
       <div id="specBody"></div>
+    </div>
+
+    <!-- SECURITY POSTURE -->
+    <div class="card hide" id="secCard">
+      <h3>Security posture <span class="muted" style="text-transform:none;font-weight:400" id="secScore"></span></h3>
+      <div class="muted" style="font-size:11px;margin-bottom:8px">Graded review of patch state and recommended security controls, checked against the bundle's config captures AND the parsed log evidence. Support bundles are targeted - a control whose source is not captured is graded <b>n/a</b>, never assumed compliant. Verdicts are advisory - verify before reporting.</div>
+      <div id="secBody"></div>
     </div>
 
     <!-- GENERIC ANALYSIS TABLE (logon / act / time / ioc) -->
@@ -384,7 +392,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.8";
+var APP_VERSION = "0.9.9";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -636,16 +644,16 @@ var CAT_ESXI=[
   {cat:"Config", key:false, name:"firewall service.xml", desc:"ESXi firewall service definitions.", rels:["etc/vmware/firewall/service.xml"]},
   {cat:"Config", key:false, name:"AD/Kerberos join", desc:"Likewise AD/Kerberos join config (domain membership).", rels:["etc/likewise/likewise-krb5-ad.conf"]},
   {cat:"Config", key:false, name:"local accounts / groups", desc:"Local users & groups (vm-support usually excludes passwd/shadow; group is captured).", rels:["etc/passwd","etc/group"]},
-  {cat:"Auth/Logons", key:true,  name:"shell.log", desc:"ESXi Shell enable/disable + command history (KEY).", rels:["var/run/log/shell.log","scratch/log/shell.log"]},
-  {cat:"Auth/Logons", key:true,  name:"auth.log", desc:"PAM / SSH / DCUI authentication.", rels:["var/run/log/auth.log","scratch/log/auth.log"]},
-  {cat:"Auth/Logons", key:true,  name:"hostd.log", desc:"Mgmt agent: SOAP logins, tasks, source IPs (KEY).", rels:["var/run/log/hostd.log","scratch/log/hostd.log"]},
-  {cat:"Auth/Logons", key:false, name:"vmauthd.log", desc:"Direct VM / management authentication daemon.", rels:["var/run/log/vmauthd.log","scratch/log/vmauthd.log"]},
-  {cat:"Auth/Logons", key:false, name:"rhttpproxy.log", desc:"Reverse proxy: inbound API/UI connections + source IPs.", rels:["var/run/log/rhttpproxy.log","scratch/log/rhttpproxy.log"]},
-  {cat:"Actions/Audit", key:true, name:"vpxa.log", desc:"vCenter agent: tasks pushed to this host from vCenter.", rels:["var/run/log/vpxa.log","scratch/log/vpxa.log"]},
-  {cat:"Actions/Audit", key:false, name:"vobd.log", desc:"VMkernel observation events (config/state changes).", rels:["var/run/log/vobd.log","scratch/log/vobd.log"]},
+  {cat:"Auth/Logons", key:true,  name:"shell.log", desc:"ESXi Shell enable/disable + command history (KEY).", rels:["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"]},
+  {cat:"Auth/Logons", key:true,  name:"auth.log", desc:"PAM / SSH / DCUI authentication.", rels:["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"]},
+  {cat:"Auth/Logons", key:true,  name:"hostd.log", desc:"Mgmt agent: SOAP logins, tasks, source IPs (KEY).", rels:["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]},
+  {cat:"Auth/Logons", key:false, name:"vmauthd.log", desc:"Direct VM / management authentication daemon.", rels:["var/run/log/vmauthd.log","scratch/log/vmauthd.log","var/log/vmauthd.log"]},
+  {cat:"Auth/Logons", key:false, name:"rhttpproxy.log", desc:"Reverse proxy: inbound API/UI connections + source IPs.", rels:["var/run/log/rhttpproxy.log","scratch/log/rhttpproxy.log","var/log/rhttpproxy.log"]},
+  {cat:"Actions/Audit", key:true, name:"vpxa.log", desc:"vCenter agent: tasks pushed to this host from vCenter.", rels:["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]},
+  {cat:"Actions/Audit", key:false, name:"vobd.log", desc:"VMkernel observation events (config/state changes).", rels:["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]},
   {cat:"Network", key:false, name:"routing table", desc:"esxcfg-route capture - host routing.", rels:["commands/esxcfg-route_-l.txt"]},
   {cat:"Network", key:false, name:"distributed switch", desc:"net-dvs capture - DVS state.", rels:["commands/net-dvs_-l.txt"]},
-  {cat:"Persistence", key:false, name:"vmkernel.log", desc:"Kernel log - driver / VIB load, module events.", rels:["var/run/log/vmkernel.log","scratch/log/vmkernel.log"]},
+  {cat:"Persistence", key:false, name:"vmkernel.log", desc:"Kernel log - driver / VIB load, module events.", rels:["var/run/log/vmkernel.log","scratch/log/vmkernel.log","var/log/vmkernel.log"]},
   {cat:"Persistence", key:true,  name:"VIB list", desc:"Installed VIBs - rogue / unsigned package check.", rels:["commands/localcli_software-vib-list.txt"]},
   {cat:"Persistence", key:true,  name:"VIB acceptance level", desc:"CommunitySupport acceptance = elevated risk.", rels:["commands/localcli_software-acceptance-get.txt"]},
   {cat:"Persistence", key:false, name:"rc.local.d/local.sh", desc:"Boot-time persistence script.", rels:["etc/rc.local.d/local.sh"]},
@@ -1195,13 +1203,13 @@ function parseLogons(){
   LOGON=[]; var i,m,ep;
   if(BTYPE==="esxi"){
     // auth.log - sshd Accepted/Failed
-    var al=logLines(resolveLog(["var/run/log/auth.log","scratch/log/auth.log"]));
+    var al=logLines(resolveLog(["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"]));
     for(i=0;i<al.length;i++){ var ln=al[i]; var ts=(ln.match(/^(\S+Z)/)||[])[1]||"";
       m=ln.match(/Accepted\s+\S+\s+for\s+(\S+)\s+from\s+([\d.]+)\s+port/); if(m){ ep=toEpoch(ts); LOGON.push(mkLogon(ep,ts,"OK",m[1],m[2],"ssh","auth.log")); continue; }
       m=ln.match(/Failed\s+password\s+for\s+(?:invalid user\s+)?(\S+)\s+from\s+([\d.]+)/); if(m){ ep=toEpoch(ts); LOGON.push(mkLogon(ep,ts,"FAIL",m[1],m[2],"ssh","auth.log")); }
     }
     // hostd.log - "Accepted password for user X from IP"
-    var hl=logLines(resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log"]));
+    var hl=logLines(resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]));
     for(i=0;i<hl.length;i++){ m=hl[i].match(/^(\S+Z).*Accepted password for user (\S+) from ([\w.:]+)/); if(m){ ep=toEpoch(m[1]); LOGON.push(mkLogon(ep,m[1],"OK",m[2],m[3],"hostd/SOAP","hostd.log")); }
       else { m=hl[i].match(/^(\S+Z).*(?:Rejected|Failed) (?:password|login) for user (\S+) from ([\w.:]+)/); if(m){ ep=toEpoch(m[1]); LOGON.push(mkLogon(ep,m[1],"FAIL",m[2],m[3],"hostd/SOAP","hostd.log")); } }
     }
@@ -1232,7 +1240,7 @@ function scoreLogon(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob)
 function parseActions(){
   ACTIONS=[]; var i,m,ep;
   if(BTYPE==="esxi"){
-    var sh=logLines(resolveLog(["var/run/log/shell.log","scratch/log/shell.log"]));
+    var sh=logLines(resolveLog(["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"]));
     for(i=0;i<sh.length;i++){ m=sh[i].match(/^(\S+Z)\s+shell\[(\d+)\]:\s+\[([^\]]+)\]:\s+(.+)$/); if(!m) continue;
       ep=toEpoch(m[1]); ACTIONS.push(mkAct(ep,m[1],m[3],m[4],"shell.log","shell command")); }
   } else if(BTYPE==="vcsa"){
@@ -1275,7 +1283,7 @@ function sweepIocs(){
   IOCHITS=[]; if(!IOCS.length) return;
   var logs = BTYPE==="vcsa"
     ? [["var/log/auth.log"],["var/log/vmware/sso/websso.log"],["var/log/vmware/sso/tokenservice.log"],["var/log/vmware/vmdird/vmdird.log"],["var/log/vmware/messages","var/log/messages"]]
-    : [["var/run/log/auth.log","scratch/log/auth.log"],["var/run/log/shell.log","scratch/log/shell.log"],["var/run/log/hostd.log","scratch/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log"],["var/run/log/vobd.log","scratch/log/vobd.log"]];
+    : [["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"],["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]];
   for(var j=0;j<logs.length;j++){ var rel=resolveLog(logs[j]); if(!rel) continue; var lines=logLines(rel);
     for(var L=0;L<lines.length;L++){ var low=lc(lines[L]); for(var k=0;k<IOCS.length;k++){ if(low.indexOf(IOCS[k])>=0){
       IOCHITS.push({file:baseName(rel),line:(L+1),ioc:IOCS[k],excerpt:trimStr(trunc(lines[L],300)),blob:low}); if(IOCHITS.length>8000) return; break; } } }
@@ -1290,7 +1298,7 @@ function runAnalysis(){
   window.setTimeout(function(){ try{
     parseLogons(); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
     window.setTimeout(function(){ try{
-      parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSpec(); parseVms(); ANALYZED=true;
+      parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSecurity(); buildSpec(); parseVms(); ANALYZED=true;
       writeAnalysisOutputs();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
       $("anStatus").innerHTML=msg+(LOG_TRUNC.length?("  (capped: "+LOG_TRUNC.join("; ")+")"):"");
@@ -1308,7 +1316,7 @@ function writeAnalysisOutputs(){ try{
 /* ============================================================
    DROP-2: ransomware indicators + CVE exposure + case-note report
    ============================================================ */
-var INDIC=[], CVES=[], PERSIST=[], SPEC=[], VMS=[];
+var INDIC=[], CVES=[], PERSIST=[], SPEC=[], VMS=[], SECPOST=[];
 function actCount(sub){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;j<ACTIONS[i].reasons.length;j++){ if(ACTIONS[i].reasons[j].indexOf(sub)>=0){ n++; break; } } } return n; }
 function logonExternal(){ var n=0,ips={}; for(var i=0;i<LOGON.length;i++){ var r=LOGON[i]; if(r.ip && !ipIsLocal(r.ip)){ n++; ips[r.ip]=1; } } var list=[]; for(var k in ips){ if(ips.hasOwnProperty(k)) list.push(k); } return {n:n, ips:list}; }
 function logonFail(){ var n=0; for(var i=0;i<LOGON.length;i++) if(LOGON[i].result==="FAIL") n++; return n; }
@@ -1378,13 +1386,34 @@ function buildCves(){
     CVES.push(cve("CVE-2024-37085","VMSA-2024-0013","ESXi Active Directory 'ESX Admins' auth bypass (abused by ransomware)",
       ad?"review":"na",
       ad ? ("AD integration "+(ad==="maybe"?"config present (verify join)":"joined")+" - confirm patch vs VMSA-2024-0013 (host build "+(b||"?")+")") : "host not AD-integrated"));
+    // 2025 advisories - the fix line is picked by THIS host's version + update level, because
+    // build numbers are NOT monotonic across trains (e.g. 8.0 U3f 24784735 < 8.0 U2e 24789317).
+    // Fix builds verified from the VMSAs / release notes (2026-07).
+    var mj=parseInt(String(NODE.version||"").split(".")[0],10)||0;
+    var up=parseInt(NODE.update||"",10); if(isNaN(up)) up=-1;
+    cveEsxiLine("CVE-2025-22224","VMSA-2025-0004","VMCI TOCTOU out-of-bounds write - guest-to-host VMX escape (EXPLOITED IN THE WILD 2025-03)", b, mj, up,
+      { v7:24585291, d7:"7.0 U3s (24585291)", v8u3:24585383, d8u3:"8.0 U3d (24585383)", d8other:"8.0 U2d line", v9:"not affected (ESX 9.x shipped after the fix)" });
+    cveEsxiLine("CVE-2025-41236","VMSA-2025-0013","VMXNET3 integer overflow - guest-to-host escape (Pwn2Own 2025; +CVE-2025-41237/38/39)", b, mj, up,
+      { v7:24784741, d7:"7.0 U3w (24784741)", v8u3:24784735, d8u3:"8.0 U3f (24784735)", v8u2:24789317, d8u2:"8.0 U2e (24789317)", v9:"fixed in ESX 9.0.0.0100 - verify this 9.x build vs the VMSA" });
   } else if(BTYPE==="vcsa"){
     // vCenter exposes only a build number (no version line) and 7.0/8.0 build ranges OVERLAP, so
     // compare CONSERVATIVELY vs per-line fix builds: patched only if >= the HIGHEST fix, review if
     // below the LOWEST, else verify. Fix builds verified from the VMSAs (2026-07).
     cveMulti("CVE-2023-34048","VMSA-2023-0023","vCenter DCERPC out-of-bounds write - unauth RCE (exploited in the wild)", b, [22357613,22368047], "7.0 U3o (22357613) / 8.0 U1d (22368047)");
     cveMulti("CVE-2024-38812","VMSA-2024-0019","vCenter DCERPC heap overflow - unauth RCE", b, [24145809,24262322], "7.0 U3s (24145809) / 8.0 U3b (24262322)");
+    cveMulti("CVE-2025-41225","VMSA-2025-0010","vCenter authenticated command execution via alarm script actions", b, [24730281,24674346], "7.0 U3v (24730281) / 8.0 U3e (24674346)");
   }
+}
+/* per-version/per-update fix-line compare for ESXi (which, unlike vCenter, exposes version+update) */
+function cveEsxiLine(id,vmsa,title,b,mj,up,f){
+  var verdict, detail;
+  if(mj===7){ verdict = !b?"verify":(b>=f.v7?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d7; }
+  else if(mj===8 && up>=3){ verdict = !b?"verify":(b>=f.v8u3?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d8u3; }
+  else if(mj===8 && up>=2 && f.v8u2){ verdict = !b?"verify":(b>=f.v8u2?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d8u2; }
+  else if(mj===8){ verdict="verify"; detail="host is 8.0 U"+(up<0?"?":up)+" - this train's fix ("+(f.d8other||"see VMSA")+") is not tracked; verify vs the VMSA"; }
+  else if(mj>=9){ if(/not affected/i.test(f.v9||"")){ verdict="na"; } else { verdict="verify"; } detail=f.v9||"verify vs the VMSA for this version"; }
+  else { verdict="verify"; detail="version not identified - verify vs the VMSA ("+f.d7+" / "+f.d8u3+")"; }
+  CVES.push(cve(id,vmsa,title,verdict,detail));
 }
 function cveMulti(id,vmsa,title,build,fixes,fixDesc){
   var mn=fixes[0], mx=fixes[0]; for(var i=1;i<fixes.length;i++){ if(fixes[i]<mn) mn=fixes[i]; if(fixes[i]>mx) mx=fixes[i]; }
@@ -1406,7 +1435,9 @@ function listUnder(pre, re){ pre=pre.replace(/\/+$/,"")+"/"; var out=[];
   return out;
 }
 function firstLastTs(lines){ var f="",l=""; for(var i=0;i<lines.length;i++){ var m=lines[i].match(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/); if(m){ if(!f) f=m[1]; l=m[1]; } } return {first:f,last:l}; }
-function logIntegrity(rels){ for(var i=0;i<rels.length;i++){ var rel=resolveLog([rels[i]]); var nm=baseName(rels[i]);
+function logIntegrity(rels){ for(var i=0;i<rels.length;i++){
+    var cand = (typeof rels[i]==="string") ? [rels[i]] : rels[i];   // each entry: one path or a candidate list (7.x var/run/log, scratch, 9.x var/log)
+    var rel=resolveLog(cand); var nm=baseName(cand[0]);
     if(!rel){ PERSIST.push(pfind("Log integrity",nm,"na","not captured in this bundle")); continue; }
     var lines=logLines(rel); var real=0; for(var j=0;j<lines.length;j++) if(trimStr(lines[j])) real++;
     if(real<=1){ PERSIST.push(pfind("Log integrity",nm,"suspect","present but EMPTY/near-empty ("+real+" lines) - possible truncation or wipe",rel)); }
@@ -1429,7 +1460,7 @@ function buildPersistence(){
     if(acc) PERSIST.push(pfind("Persistence","VIB acceptance level",/community/i.test(acc)?"suspect":"clean","acceptance: "+acc+(/community/i.test(acc)?" - allows UNSIGNED VIBs":""),"commands/localcli_software-acceptance-get.txt"));
     var sk=resolveLog(["etc/ssh/keys-root/authorized_keys"]);
     PERSIST.push(sk? pfind("Persistence","root SSH authorized_keys","review","present - review key entries",sk) : pfind("Persistence","root SSH authorized_keys","na","not captured in this bundle"));
-    logIntegrity(["var/run/log/shell.log","var/run/log/auth.log","var/run/log/hostd.log","var/run/log/vpxa.log"]);
+    logIntegrity([["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]]);
   } else if(BTYPE==="vcsa"){
     var pre = MODE==="tree" ? fileExists(ROOT+"\\etc\\ld.so.preload") : (TOCMAP["etc/ld.so.preload"]!=null);
     PERSIST.push(pre? pfind("Persistence","/etc/ld.so.preload","suspect","present - global shared-library injection; open & inspect","etc/ld.so.preload") : pfind("Persistence","/etc/ld.so.preload","clean","absent - no global preload injection"));
@@ -1445,6 +1476,107 @@ function buildPersistence(){
   }
 }
 function persistHits(){ var n=0; for(var i=0;i<PERSIST.length;i++){ var v=PERSIST[i].verdict; if(v==="suspect"||v==="review") n++; } return n; }
+
+/* ============================================================
+   SECURITY POSTURE - patch state + recommended controls graded
+   against config captures AND parsed log evidence.
+   Bundles are targeted: missing source => "na", never "pass".
+   ============================================================ */
+function secAdd(grp,name,status,detail){ SECPOST.push({grp:grp,name:name,status:status,detail:detail}); }
+/* advanced settings CHANGED from default (localcli ... advanced-list -d).
+   Presence = operator changed it; absence = still at ESXi default. */
+function advChangedMap(){
+  var t=readMember("commands/localcli_system-settings-advanced-list--d.txt");
+  var map={captured:trimStr(t)!==""}, lines=String(t).split("\n"), cur="";
+  for(var i=0;i<lines.length;i++){ var ln=lines[i];
+    var p=ln.match(/^\s+Path:\s*(\S+)/); if(p){ cur=p[1]; map[cur]={}; continue; }
+    if(!cur) continue;
+    var iv=ln.match(/^\s+Int Value:\s*(-?\d+)/);        if(iv) map[cur].i=parseInt(iv[1],10);
+    var sv=ln.match(/^\s+String Value:\s*(.*)$/);       if(sv && map[cur].s==null) map[cur].s=trimStr(sv[1]);
+  }
+  return map;
+}
+function secShellCount(){ var n=0; for(var i=0;i<ACTIONS.length;i++){ if(/shell/i.test(ACTIONS[i].akind||"")) n++; } return n; }
+function secLogIntegrity(){ var n=0; for(var i=0;i<PERSIST.length;i++){ var f=PERSIST[i]; if(f.cat==="Log integrity" && f.verdict==="suspect") n++; } return n; }
+function buildSecurity(){
+  SECPOST=[];
+  var GP="Patch state", GH="Hardening controls", GL="Log-corroborated controls";
+  // --- patch state (both types): summarize the CVE panel verdicts ---
+  var exp=0, rev=0, i;
+  for(i=0;i<CVES.length;i++){ if(CVES[i].verdict==="exposed") exp++; else if(CVES[i].verdict==="review") rev++; }
+  var bld=(NODE.version?NODE.version+" ":"")+(NODE.build||"");
+  if(CVES.length) secAdd(GP,"Known-CVE exposure (advisory)", exp?"fail":(rev?"warn":"pass"),
+    "running "+bld+" - "+exp+" exposed / "+rev+" review / "+(CVES.length-exp-rev)+" clear of "+CVES.length+" tracked CVEs; see the Overview CVE panel + VMSA links");
+  else secAdd(GP,"Known-CVE exposure","na","no CVE checks apply to this bundle type/version");
+  if(BTYPE==="esxi"){
+    // --- hardening (config captures) ---
+    var adv=advChangedMap();
+    var acc=lc(NODE.acceptance||"");
+    if(!acc) secAdd(GH,"VIB acceptance level","na","acceptance capture missing");
+    else secAdd(GH,"VIB acceptance level", acc.indexOf("communitysupported")>=0?"fail":"pass", NODE.acceptance+(acc.indexOf("communitysupported")>=0?" - unsigned community VIBs allowed (rogue-VIB risk)":""));
+    var enc=readMember("commands/localcli_system-settings-encryption-get.txt");
+    if(!trimStr(enc)) secAdd(GH,"Host encryption mode","na","encryption capture missing");
+    else { var mode=(enc.match(/Mode:\s*(\S+)/i)||[])[1]||"?";
+      secAdd(GH,"Host encryption mode", /tpm/i.test(mode)?"pass":"warn", "Mode: "+mode+(/tpm/i.test(mode)?" (config sealed by TPM)":" - secrets not TPM-sealed"));
+      var execOnly=/Require Executables Only From Installed VIBs:\s*true/i.test(enc);
+      secAdd(GH,"execInstalledOnly", execOnly?"pass":"warn", execOnly?"only installed-VIB executables may run":"false - arbitrary binaries can execute (ransomware payloads run from /tmp)");
+      var sb=/Require Secure Boot:\s*true/i.test(enc);
+      secAdd(GH,"Require Secure Boot", sb?"pass":"warn", sb?"enforced":"false - unsigned boot chain accepted"); }
+    var tb=readMember("commands/localcli_hardware-trustedboot-get.txt");
+    if(!trimStr(tb)) secAdd(GH,"TPM / measured boot","na","trustedboot capture missing");
+    else { var tpm=/Tpm Present:\s*true/i.test(tb), drtm=/Drtm Enabled:\s*true/i.test(tb);
+      secAdd(GH,"TPM / measured boot", tpm?"pass":"warn", "TPM "+(tpm?"present":"absent")+", DRTM "+(drtm?"enabled":"disabled")); }
+    if(adv.captured){
+      // "at default" claims below are the DOCUMENTED 7.x/8.x defaults; on other versions the
+      // delta-capture still proves "unchanged", but the default VALUE is flagged for verification.
+      var smj=parseInt(String(NODE.version||"").split(".")[0],10)||0;
+      var defNote=(smj===7||smj===8)?"":" [defaults per 7.x/8.x docs - verify for this version]";
+      var mob=adv["/Config/HostAgent/plugins/solo/enableMob"];
+      secAdd(GH,"Managed Object Browser (MOB)", (mob&&mob.i===1)?"fail":"pass", (mob&&mob.i===1)?"ENABLED (changed from default) - unauthenticated recon/abuse surface":"at default (disabled)"+defNote);
+      var alf=adv["/Security/AccountLockFailures"];
+      secAdd(GH,"Account lockout", alf?(alf.i===0?"fail":"pass"):"pass", alf?(alf.i===0?"DISABLED (AccountLockFailures=0) - unlimited password guessing":("changed: locks after "+alf.i+" failures")):"at default (locks after 5 failures)"+defNote);
+      var pqc=adv["/Security/PasswordQualityControl"];
+      secAdd(GH,"Password quality policy", "pass", pqc?("changed: "+(pqc.s||"?")):"at ESXi default policy"+defNote);
+      var st1=adv["/UserVars/ESXiShellTimeOut"], st2=adv["/UserVars/ESXiShellInteractiveTimeOut"];
+      var toSet=(st1&&st1.i>0)||(st2&&st2.i>0);
+      secAdd(GH,"Shell/SSH idle timeout", toSet?"pass":"warn", toSet?("timeout configured ("+((st1&&st1.i)||0)+"s / "+((st2&&st2.i)||0)+"s interactive)"):"at default 0 - enabled shells stay open indefinitely"+defNote);
+      var dcui=adv["/UserVars/DcuiAccess"];
+      secAdd(GH,"DCUI access list", dcui?"warn":"pass", dcui?("changed: "+(dcui.s||"?")+" - review who has console access"):"at default (root)"+defNote);
+    } else secAdd(GH,"Advanced-settings checks (MOB / lockout / timeouts / DCUI)","na","advanced-list -d capture missing");
+    var vsl=(readMember("etc/vmsyslog.conf").match(/loghost\s*=\s*(.+)/i)||[])[1]; vsl=vsl?trimStr(vsl):"";
+    if(!vsl) secAdd(GH,"Remote syslog","na","vmsyslog.conf not captured");
+    else secAdd(GH,"Remote syslog", vsl==="<none>"?"warn":"pass", vsl==="<none>"?"loghost=<none> - logs LOCAL only (trivially wiped)":("forwarding to "+vsl));
+    var ntp=readMember("commands/localcli_--formatterjson-system-ntp-get.txt");
+    if(trimStr(ntp)){ var en=/"Enabled":\s*true/i.test(ntp), sync=/"Time Synchronized":\s*true/i.test(ntp);
+      secAdd(GH,"NTP time sync", (en&&sync)?"pass":(en?"warn":"fail"), en?("enabled, "+(sync?"synchronized":"NOT synchronized")):"DISABLED - host clock free-running (timestamps in this triage may drift)"); }
+    else { var nc=readMember("etc/ntp.conf"); var srv=String(nc).match(/^\s*server\s+\S+/im);
+      secAdd(GH,"NTP time sync", nc?(srv?"warn":"fail"):"na", nc?(srv?"servers configured (sync state not captured)":"no servers configured"):"not captured"); }
+  } else if(BTYPE==="vcsa"){
+    var sso=readMember("commands/sso-config.txt");
+    if(trimStr(sso)){ var ad=/EXTERNAL|ACTIVE.?DIRECTORY|LDAP_AD/i.test(sso);
+      secAdd(GH,"SSO identity sources", "pass", ad?"external AD/LDAP identity source configured":"built-in vsphere.local/localos only");
+      secAdd(GH,"SSO password / lockout policy","na","not captured in vc-support (check via VAMI or dir-cli)"); }
+    else secAdd(GH,"SSO configuration","na","sso-config capture missing");
+    var rs=readMember("etc/rsyslog.conf");
+    if(rs==="") secAdd(GH,"Remote syslog forwarding","na","rsyslog.conf not captured");
+    else { var fwd=/@@?[\w.\-]+(:\d+)?|omfwd|ActionForward|Target\s*=/i.test(rs);
+      secAdd(GH,"Remote syslog forwarding", fwd?"pass":"warn", fwd?"rsyslog forwards off-host":"no off-host forwarding (appliance logs local only)"); }
+    var vnc=readMember("etc/ntp.conf"); var vsrv=String(vnc).match(/^\s*server\s+\S+/im);
+    secAdd(GH,"NTP time sync", vnc?(vsrv?"pass":"fail"):"na", vnc?(vsrv?"servers configured":"no servers configured"):"not captured");
+  }
+  // --- log-corroborated (both types; uses the parsed Logons/Actions) ---
+  var ssh=sshLoginCount();
+  secAdd(GL,"SSH access observed in logs", ssh?"warn":"pass", ssh?(ssh+" SSH login event(s) - SSH is enabled and used in practice; review the Logons tab"):"no SSH logins in the captured window");
+  var sc=secShellCount();
+  if(BTYPE==="esxi") secAdd(GL,"ESXi Shell usage observed", sc?"warn":"pass", sc?(sc+" shell command(s) recorded - review the Actions tab"):"no shell activity in the captured window");
+  var ext=logonExternal();
+  secAdd(GL,"Logons from external (public) IPs", ext.n?"fail":"pass", ext.n?(ext.n+" logon(s) from "+ext.ips.length+" public IP(s): "+ext.ips.slice(0,5).join(", ")+" - management plane reachable from outside"):"all logon sources private/local");
+  var lf=logonFail();
+  secAdd(GL,"Failed-login volume", lf>=10?"warn":"pass", lf+" failed login(s) in the window"+(lf>=10?" - possible guessing/spray; check the Logons tab":""));
+  var li=secLogIntegrity();
+  secAdd(GL,"Log integrity", li?"warn":"pass", li?(li+" key log(s) empty/truncated (see Persistence) - logging tamper or rollover"):"key logs present with content");
+}
+function secScoreOf(){ var p=0,t=0; for(var i=0;i<SECPOST.length;i++){ var s=SECPOST[i].status; if(s==="na") continue; t++; if(s==="pass") p++; } return {p:p,t:t}; }
 
 /* ============================================================
    SPECIFICATION (deep node config parsed from the bundle)
@@ -1750,6 +1882,14 @@ function buildReportHtml(){
       h.push('<tr><td class="muted">'+rEsc(pp.cat)+'</td><td>'+rEsc(pp.name)+'</td><td class="'+pc+'">'+rEsc(persistLbl(pp.verdict))+'</td><td class="muted">'+rEsc(pp.detail)+'</td></tr>'); }
     h.push('</table>'); }
   else h.push('<p class="muted">No persistence checks for this bundle type.</p>');
+  // security posture
+  if(SECPOST.length){ var ssc=secScoreOf();
+    h.push('<h2>Security posture ('+ssc.p+' of '+ssc.t+' checkable controls at best practice)</h2>');
+    h.push('<p class="muted">Graded against config captures and parsed log evidence. Not-captured sources are n/a, never assumed compliant; verdicts are advisory.</p>');
+    h.push('<table><tr><th>Group</th><th>Control</th><th>Status</th><th>Detail</th></tr>');
+    for(i=0;i<SECPOST.length;i++){ var sp=SECPOST[i]; var scls=sp.status==="fail"?"hit":(sp.status==="warn"?"warn":(sp.status==="na"?"na":"clear"));
+      h.push('<tr><td>'+rEsc(sp.grp)+'</td><td>'+rEsc(sp.name)+'</td><td class="'+scls+'">'+rEsc(sp.status==="na"?"n/a":sp.status.toUpperCase())+'</td><td>'+rEsc(sp.detail)+'</td></tr>'); }
+    h.push('</table>'); }
   // logon summary
   var ext=logonExternal();
   h.push('<h2>Logon summary</h2><p>'+LOGON.length+' login event(s); '+logonFail()+' failed; '+ext.n+' from external IP'+(ext.ips.length?(' ('+rEsc(ext.ips.slice(0,8).join(", "))+')'):'')+'.</p>');
@@ -1877,7 +2017,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; LOG_TRUNC=[]; }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -1891,7 +2031,7 @@ function processHostSync(path){
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
   buildInventory(); parseNode();
-  parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSpec(); parseVms();
+  parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); buildSecurity(); buildSpec(); parseVms();
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
   var snap=snapshotHost(dispHost, path);
@@ -1913,7 +2053,7 @@ function extractCluster(){
    opIDs propagate vCenter->host, so a shared opID ties a vCenter task to the executing host. */
 var OP_NOISE=/PollQuickStats|HB-host|getChanges|fetchQuickStats|createContainerView|retrieveContent|queryBatch|ViewManager|View\.destroy|hasUserPrivilege|hasPrivilege|waitForChanges|sessionIsActive|queryView|CatalogSyncManager|Heartbeat|queryDateTime|currentTime|SearchIndex|queryConfigOption|queryAvailablePerfMetric/i;
 function collectOpTasks(){
-  var out={}, rel = BTYPE==="esxi" ? resolveLog(["var/run/log/vpxa.log","scratch/log/vpxa.log"]) : resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
+  var out={}, rel = BTYPE==="esxi" ? resolveLog(["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]) : resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
   if(!rel) return out; var lines=logLines(rel), cnt=0;
   for(var i=0;i<lines.length && cnt<1500;i++){ var m=lines[i].match(/^(\S+Z).*opID=([^\]\s]+)\].*\[VpxLRO\] -- BEGIN \S+(?:\s+--\s+session\[[^\]]*\]\S*)?\s+--\s+(\S+)\s+--/);
     if(!m) continue; var op=m[2], method=m[3]; if(OP_NOISE.test(method)||OP_NOISE.test(op)) continue;
@@ -2221,9 +2361,9 @@ function userTab(t){
 function setTab(t){
   TAB=t;
   showEl("detailCard",false); $("detBody").innerHTML="";   // close any open preview when switching tabs
-  var ids={overview:"tabOverview",spec:"tabSpec",vms:"tabVms",inv:"tabInv",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
+  var ids={overview:"tabOverview",spec:"tabSpec",sec:"tabSec",vms:"tabVms",inv:"tabInv",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
   for(var k in ids){ if(ids.hasOwnProperty(k)) $(ids[k]).className=(k===t)?"btn on":"btn"; }
-  showEl("ovCard", t==="overview"); showEl("invCard", t==="inv"); showEl("specCard", t==="spec"); showEl("vmsCard", t==="vms");
+  showEl("ovCard", t==="overview"); showEl("invCard", t==="inv"); showEl("specCard", t==="spec"); showEl("secCard", t==="sec"); showEl("vmsCard", t==="vms");
   var isAn=(t==="logon"||t==="act"||t==="time"||t==="ioc"||t==="persist");
   showEl("tblCard", isAn); showEl("dateWrap", t==="time"||t==="logon");
   showEl("scoreFilt", t==="logon"||t==="act"||t==="time");   // score buckets only where rows have a score
@@ -2234,6 +2374,7 @@ function setTab(t){
 function render(){
   if(TAB==="overview"){ renderOverview(); return; }
   if(TAB==="spec"){ renderSpec(); return; }
+  if(TAB==="sec"){ renderSecurity(); return; }
   if(TAB==="vms"){ renderVms(); return; }
   if(TAB==="inv"){ renderInventory(); return; }
   if(!ANALYZED){ $("tbl").innerHTML='<thead><tr><th>Parsing…</th></tr></thead><tbody><tr><td class="muted">Log analysis runs automatically after Analyze. If this stays empty, open <b>Show log</b> for per-log diagnostics, or click <b>Re-run log analysis</b> on Overview.</td></tr></tbody>'; $("tcount").innerHTML=""; return; }
@@ -2307,6 +2448,24 @@ function renderSpec(){
   $("specBody").innerHTML=h;
 }
 
+function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"")); }
+function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"clear")); }
+function renderSecurity(){
+  if(!ANALYZED || !SECPOST.length){
+    $("secScore").innerHTML=""; $("secBody").innerHTML='<div class="muted" style="font-size:12px">Security posture is graded during log analysis'+(ANALYZED?" - nothing checkable for this bundle type.":" (runs automatically after Analyze).")+'</div>'; return; }
+  var sc=secScoreOf();
+  $("secScore").innerHTML="- "+sc.p+" of "+sc.t+" checkable controls at best practice";
+  var groups=[], seen={}, i;
+  for(i=0;i<SECPOST.length;i++){ if(!seen[SECPOST[i].grp]){ seen[SECPOST[i].grp]=1; groups.push(SECPOST[i].grp); } }
+  var h="";
+  for(var g=0;g<groups.length;g++){ var grp=groups[g];
+    h+='<div class="panel" style="margin-bottom:10px"><h4>'+esc(grp)+'</h4>';
+    for(i=0;i<SECPOST.length;i++){ var r=SECPOST[i]; if(r.grp!==grp) continue;
+      h+='<div class="ind"><span class="dot '+secDotCls(r.status)+'"></span><span class="nm">'+esc(r.name)+'</span><span class="st '+secStCls(r.status)+'">'+esc(r.status==="na"?"n/a":r.status.toUpperCase())+'</span><span class="dt">'+esc(r.detail)+'</span></div>'; }
+    h+='</div>'; }
+  $("secBody").innerHTML=h;
+}
+
 var ICOLS=[
   {h:"Category", sk:function(r){return r.cat;}, cell:function(r){ return '<td class="first"><span class="tag '+catTag(r.cat)+'">'+esc(r.cat)+'</span></td>'; }},
   {h:"File", sk:function(r){return lc(r.name);}, cell:function(r){ return '<td>'+(r.key?'<b>':'')+esc(r.name)+(r.key?'</b>':'')+'</td>'; }},
@@ -2365,6 +2524,7 @@ function renderAnStats(){
   if(af) s+=statCard(nf(af),"flagged action","flag","act");
   s+=statCard(nf(TIMELINE.length),"timeline","","time");
   s+=statCard(nf(IOCHITS.length),"IOC hits",IOCHITS.length?"flag":"","ioc");
+  if(SECPOST.length){ var ss=secScoreOf(); s+=statCard(ss.p+"/"+ss.t,"security posture",(ss.p<ss.t?"warn":"ok2"),"sec"); }
   $("anStats").innerHTML=s; wireStatTabs($("anStats"));
 }
 /* ---------- shared analysis table rendering ---------- */

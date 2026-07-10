@@ -60,6 +60,7 @@
   <a href="#tabs">4. The tabs</a>
   <a href="#overview-tab">&nbsp;&nbsp;Overview</a>
   <a href="#spec-tab">&nbsp;&nbsp;Specification</a>
+  <a href="#security-tab">&nbsp;&nbsp;Security</a>
   <a href="#vms-tab">&nbsp;&nbsp;VMs</a>
   <a href="#keyfiles-tab">&nbsp;&nbsp;Key Files</a>
   <a href="#logons-tab">&nbsp;&nbsp;Logons</a>
@@ -84,7 +85,7 @@
 <header class="top">
   <h1>vSphere Support Bundle Triage Tool</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles — one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.8</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.9</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -122,7 +123,7 @@
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
   <!-- header -->
   <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
-  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.8</tspan></text>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.9</tspan></text>
   <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
   <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
   <!-- tabs -->
@@ -175,6 +176,15 @@
 
 <h3 id="spec-tab">Specification</h3>
 <p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, <b>serial / service tag</b>, model/PSNT, <b>management IP + ESXi Host Client URL</b>, and the <b>iDRAC / BMC IP</b> when in-band IPMI exposes it), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>port groups &amp; VLANs</b> (standard vSwitch port groups plus distributed port groups with their VLANs, parsed from <code>esxcfg-vswitch -l</code> and <code>net-dvs -l</code>), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage — for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, <b>management IP + vSphere Client &amp; VAMI (:5480) URLs</b>, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document. (The same identity fields — serial, management IP, web URLs, iDRAC — also appear on the <b>Overview → Node configuration</b> pane.)</p>
+
+<h3 id="security-tab">Security</h3>
+<p>A graded review of <b>patch state and recommended security controls</b>, checked against the bundle's config captures <b>and</b> the parsed log evidence, scored as <i>N of M checkable controls at best practice</i> (a bubble on Overview jumps here; the case-note report gets a matching section). Three groups:</p>
+<ul>
+  <li><b>Patch state</b> — build number vs the tracked CVE fix-builds (summarises the Overview CVE panel; advisory, verify against the VMSA).</li>
+  <li><b>Hardening controls</b> (ESXi) — VIB acceptance, host encryption mode / <code>execInstalledOnly</code> / Require Secure Boot, TPM &amp; measured boot, MOB, account lockout, password policy, shell/SSH idle timeouts, DCUI access, remote syslog, NTP. Settings checks read <code>advanced-list -d</code> (options <i>changed from default</i>), so "at default" is provable, not assumed. vCenter: SSO identity sources, rsyslog forwarding, NTP.</li>
+  <li><b>Log-corroborated controls</b> — what the logs show actually happened: SSH logins and ESXi Shell usage observed, logons from public IPs, failed-login volume, and log-integrity gaps. Config claims and observed behaviour are graded separately, so a "disabled" control that the logs show being used still surfaces.</li>
+</ul>
+<div class="note">Support bundles are targeted: a control whose source file isn't captured is graded <b>n/a</b> — never assumed compliant. Lockdown mode on ESXi 7+ lives in the ConfigStore, which <code>vm-support</code> does not capture. The checks are <b>version-aware</b>: patch-state verdicts select the fix line by the host's version and update level; capture-driven checks degrade to n/a on versions that lack a capture; and the "at default" claims are the documented 7.x/8.x defaults — on other versions the check still proves the setting is <i>unchanged</i>, but flags the default value for verification.</div>
 
 <h3 id="vms-tab">VMs</h3>
 <p>(ESXi) Every registered VM parsed from its <code>.vmx</code>: name, guest OS, vCPU, vRAM, vDisk count/names, datastore/vSAN, and running status. Click a VM to preview its <code>.vmx</code> (full disk paths for recovery). A <b>Guest IP</b> column appears only when a vCenter in the fleet supplied it (ESXi bundles do not carry guest IPs). Green <b>Export VMs &rarr; CSV</b>.</p>
@@ -279,7 +289,7 @@
 </ul>
 
 <h2 id="cve">6. CVE exposure (Overview)</h2>
-<p>Advisory panel mapping the parsed build to high-impact vSphere CVEs, with clickable links to <b>NVD</b> and the <b>VMSA</b> advisory. Cross-checks: ESXi SLP running state (OpenSLP/ESXiArgs), AD integration (AD auth-bypass).</p>
+<p>Advisory panel mapping the parsed build to high-impact vSphere CVEs, with clickable links to <b>NVD</b> and the <b>VMSA</b> advisory. Cross-checks: ESXi SLP running state (OpenSLP/ESXiArgs), AD integration (AD auth-bypass). Tracked advisories include VMSA-2021-0002, VMSA-2024-0013, <b>VMSA-2025-0004</b> (exploited in the wild) and <b>VMSA-2025-0013</b> for ESXi, and VMSA-2023-0023, VMSA-2024-0019 and <b>VMSA-2025-0010</b> for vCenter. <b>ESXi checks are version-aware</b>: the fix line is selected by the host's version <i>and</i> update level (build numbers are not monotonic across trains — e.g. 8.0&nbsp;U3f&nbsp;24784735 &lt; 8.0&nbsp;U2e&nbsp;24789317); a train the tool doesn't track is graded <b>verify</b>, and ESX 9.x hosts are pointed at the VMSA rather than guessed.</p>
 <div class="caveat"><b>vCenter CVEs are conservative advisories.</b> vCenter exposes only a build number, and 7.0/8.0 build ranges overlap, so the verdict is: <b>patched</b> only if the build is at/above the highest known fix, <b>review</b> if below the lowest, else <b>verify</b>. Always confirm against the linked VMSA and your exact release. Fix builds are dated to the manual's build (2026-07) and should be spot-checked over time.</div>
 
 <h2 id="scoring">7. Scoring &amp; tags</h2>
@@ -409,7 +419,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Triage Tool — Field Manual for v0.9.8. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Triage Tool — Field Manual for v0.9.9. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>
