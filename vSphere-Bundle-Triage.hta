@@ -406,7 +406,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.0.0";
+var APP_VERSION = "1.0.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -1092,6 +1092,15 @@ function logLinesRot(rel, force){
   var live=logLines(rel); for(i=0;i<live.length;i++) out.push(live[i]);
   return out;
 }
+/* read the LAST `cap` bytes of a text file (for huge append-only logs where the newest entries are
+   at the tail). The first (partial) line after the skip is a fragment - parsers that require a full
+   line structure drop it naturally. */
+function readTailText(path, cap){
+  try{ var fso=new ActiveXObject("Scripting.FileSystemObject"); var sz=0; try{ sz=fso.GetFile(path).Size; }catch(es){}
+    var f=fso.OpenTextFile(path,1,false,0); if(sz>cap){ try{ f.Skip(sz-cap); }catch(e2){} }
+    var t=""; try{ t=f.ReadAll(); }catch(e3){ t=""; } f.Close(); return t;
+  }catch(e){ return ""; }
+}
 /* read a (possibly .gz) config member as text (e.g. hostd/dvportgroups.xml.gz) */
 function readMemberGz(rel){
   var src=ensureExtracted(rel); if(!src) return "";
@@ -1468,6 +1477,7 @@ function parseNetwork(){
         } }
     }
     NETINFO.sus=scanSusProc(readMember("commands/ps_-Cc---tree.txt"));
+    NETINFO.web=parseRhttp();
   } else if(BTYPE==="vcsa"){
     txt=readMember("commands/netstat_-anp.txt");
     if(trimStr(txt)){ NETINFO.captured=true; var vl=txt.split("\n");
@@ -1494,7 +1504,10 @@ function scanSusProc(txt){ var out=[]; if(!trimStr(txt)) return out; var lines=S
    the CLIENT source IP (DOWNSTREAM_REMOTE_ADDRESS = the token before HTTP/x). Logs are large (tens of
    MB); read is byte-capped and the result AGGREGATED by client IP (not listed line-by-line). We flag
    external/public clients, 4xx/5xx volume, and requests whose path matches web-attack patterns. */
-var ENVOY_CAP=12582912;   // 12 MB sample of the newest front-proxy log
+var ENVOY_CAP=12582912;   // 12 MB tail of the newest front-proxy log
+var ENVOY_ROWS=50;         // recent-requests table row count (25/50/100)
+var ENVOY_SIMPLE=false;    // Simplified: show only Login/Logout events (vCenter)
+var WEB_HIDELOOP=false;    // hide loopback (127.0.0.1 / ::1) client rows in the recent table
 var SUS_PATH=/\.\.(\/|%2f)|%2e%2e|jndi:|\$\{|\/etc\/passwd|\bunion\s+select|<script|\bcmd=|\/bin\/(sh|bash)|powershell|\.\.;|\/cgi-bin\/|\benv\b.*=.*\(|wget\s|curl\s.*\|/i;
 function envoyFrontLog(){
   var live="", best="", bestN=-1, i, m;
@@ -1507,20 +1520,52 @@ function envoyFrontLog(){
 }
 function parseEnvoy(){
   var rel=envoyFrontLog(); if(!rel) return null;
-  var lines=logLines(rel, ENVOY_CAP); if(!lines.length) return null;
-  var ips={}, codes={}, sus=[], reqs=0, err=0, i;
+  var src=ensureExtracted(rel); if(!src) return null;
+  if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v) return null; src=v; }
+  var sz=fileSize(src);
+  var txt = sz>ENVOY_CAP ? readTailText(src, ENVOY_CAP) : (function(){ try{ return readUtf8(src); }catch(e){ return ""; } })();
+  if(!trimStr(txt)) return null;
+  var lines=txt.split("\n"), ips={}, codes={}, sus=[], recent=[], auth=[], reqs=0, err=0, i;
   for(i=0;i<lines.length;i++){ var ln=lines[i];
-    var m=ln.match(/sub=Default\]\s+\S+Z\s+([A-Z]+)\s+(\S+)\s+(\d{3})\s+.*?\s(\d{1,3}(?:\.\d{1,3}){3}):\d+\s+HTTP\//);
-    if(!m) continue; var meth=m[1], path=m[2], code=m[3], cip=m[4]; reqs++;
+    var m=ln.match(/sub=Default\]\s+(\S+Z)\s+([A-Z]+)\s+(\S+)\s+(\d{3})\s+.*?\s(\d{1,3}(?:\.\d{1,3}){3}):\d+\s+HTTP\//);
+    if(!m) continue; var ts=m[1], meth=m[2], path=m[3], code=m[4], cip=m[5]; reqs++;
     if(!ips[cip]) ips[cip]={n:0, ext:!ipIsLocal(cip), err:0, m:{}}; ips[cip].n++; ips[cip].m[meth]=1;
     codes[code]=(codes[code]||0)+1; if(/^[45]/.test(code)){ err++; ips[cip].err++; }
-    if(sus.length<25){ var dp=path; try{ dp=decodeURIComponent(path.replace(/\+/g," ")); }catch(e){} if(SUS_PATH.test(dp)||SUS_PATH.test(path)) sus.push({ip:cip, meth:meth, code:code, path:trunc(path,110)}); }
+    var op=(ln.match(/"([^"]{1,80})"\s*$/)||[])[1]||"";       // trailing SOAP operation / user-agent
+    var rec={ts:isoShort(ts), ip:cip, meth:meth, path:path, code:code, op:op, ext:!ipIsLocal(cip)};
+    recent.push(rec); if(recent.length>1000) recent.splice(0, recent.length-1000);   // bounded window for the full view
+    if(/^(Login|Logout|Logoff)/i.test(op)){ auth.push(rec); if(auth.length>3000) auth.splice(0, auth.length-3000); }   // login/logout kept separately so Simplified spans the whole window
+    var suspect=false, dp=path; try{ dp=decodeURIComponent(path.replace(/\+/g," ")); }catch(e){} if(SUS_PATH.test(dp)||SUS_PATH.test(path)) suspect=true;
+    if(suspect && sus.length<25) sus.push({ip:cip, meth:meth, code:code, path:trunc(path,110)});
   }
   var arr=[]; for(var k in ips){ if(ips.hasOwnProperty(k)){ var mm=[]; for(var mk in ips[k].m) if(ips[k].m.hasOwnProperty(mk)) mm.push(mk); arr.push({ip:k, n:ips[k].n, ext:ips[k].ext, err:ips[k].err, methods:mm.sort().join(",")}); } }
   arr.sort(function(a,b){ return b.n-a.n; });
   var ext=[]; for(i=0;i<arr.length;i++){ if(arr[i].ext) ext.push(arr[i]); }
-  return { file:baseName(rel), reqs:reqs, err:err, codes:codes, ips:arr, external:ext, sus:sus,
-    truncated:(fileSize(ensureExtracted(rel)||"")>ENVOY_CAP) };
+  recent.reverse(); auth.reverse();   // newest first
+  return { kind:"vcsa", title:"WEB ACCESS SUMMARY - vSphere Client / API", file:baseName(rel), path:src, reqs:reqs, err:err, codes:codes, ips:arr, external:ext, sus:sus, recent:recent, auth:auth,
+    truncated:(sz>ENVOY_CAP) };
+}
+/* ---- ESXi node web/API connections from rhttpproxy.log (the reverse proxy in front of the Host
+   Client / API). "New proxy client" lines carry the client source IP (2nd TCP tuple); the paired
+   "Connected to localhost:PORT (/service)" line (same Proxy Req N) gives the accessed service. ---- */
+function parseRhttp(){
+  var rel=resolveLog(["var/run/log/rhttpproxy.log","scratch/log/rhttpproxy.log","var/log/rhttpproxy.log"]); if(!rel) return null;
+  var lines=logLinesRot(rel); if(!lines.length) return null;
+  var svc={}, ips={}, recent=[], reqs=0, i, m;
+  for(i=0;i<lines.length;i++){ m=lines[i].match(/Proxy Req (\d+)\]\s+Connected to \S+ \(([^)]+)\)/); if(m) svc[m[1]]=m[2]; }
+  for(i=0;i<lines.length;i++){ m=lines[i].match(/^(\S+Z)\s.*Proxy Req (\d+)\]\s+New proxy client .*<TCP '([\d.]+) : (\d+)'>,\s*<TCP '([\d.]+) : (\d+)'>/);
+    if(!m) continue; var ts=m[1], reqN=m[2], lport=m[4], cip=m[5]; reqs++;
+    var proto=(lport==="443")?"HTTPS":(lport==="80"?"HTTP":(":"+lport));
+    if(!ips[cip]) ips[cip]={n:0, ext:!ipIsLocal(cip), err:0, m:{}}; ips[cip].n++; ips[cip].m[proto]=1;
+    recent.push({ts:isoShort(ts), ip:cip, meth:proto, path:(svc[reqN]||"(connection)"), code:"", op:"", ext:!ipIsLocal(cip)});
+    if(recent.length>1200) recent.splice(0, recent.length-1200);
+  }
+  if(!reqs) return null;
+  var arr=[]; for(var k in ips){ if(ips.hasOwnProperty(k)){ var mm=[]; for(var mk in ips[k].m) if(ips[k].m.hasOwnProperty(mk)) mm.push(mk); arr.push({ip:k, n:ips[k].n, ext:ips[k].ext, err:0, methods:mm.sort().join(",")}); } }
+  arr.sort(function(a,b){ return b.n-a.n; });
+  var ext=[]; for(i=0;i<arr.length;i++){ if(arr[i].ext) ext.push(arr[i]); }
+  recent.reverse();
+  return { kind:"esxi", title:"WEB / API CONNECTIONS - Host Client / API (rhttpproxy)", file:baseName(rel), path:ensureExtracted(rel), reqs:reqs, err:0, codes:{}, ips:arr, external:ext, sus:[], recent:recent, truncated:false };
 }
 var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup)/;
 function nearestBefore(arr,ep){ var best=""; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep) best=arr[i].user; else break; } return best; }
@@ -1917,6 +1962,10 @@ function buildSecurity(){
     secAdd(GL,"Suspicious processes", NETINFO.sus.length?"fail":"pass", NETINFO.sus.length?(NETINFO.sus.length+" process(es) match attacker-tool / reverse-shell patterns - see the Network tab"):"no attacker-tool process patterns in the process capture");
     secAdd(GL,"External connections", NETINFO.ext.length?"warn":"pass", NETINFO.ext.length?(NETINFO.ext.length+" established session(s) to public IP(s) - management plane talking to the internet? see the Network tab"):"no established sessions to public IPs");
     secAdd(GH,"Network-facing listeners", "pass", NETINFO.netFacing+" of "+NETINFO.listenN+" listening service(s) bound to a network interface (rest loopback-only) - review the Network tab for any unexpected process");
+    if(NETINFO.web){ var wc=NETINFO.web, wext=[]; for(var wz=0;wz<wc.external.length && wz<5;wz++) wext.push(wc.external[wz].ip);
+      var wapi=(wc.kind==="esxi")?"Host Client / API (rhttpproxy)":"vSphere Client / API";
+      var wdet = wc.external.length ? (wc.external.length+" external (public) client IP(s) reached the "+wapi+": "+wext.join(", ")+" - management plane exposed to the internet?") : "all web/API clients are from private/local addresses";
+      secAdd(GL,"Web/API clients from public IPs", wc.external.length?"warn":"pass", wdet); }
   }
   if(BTYPE==="vcsa"){
     var ipt=readMember("commands/iptables_-L--n.txt");
@@ -1932,8 +1981,6 @@ function buildSecurity(){
       (sched?"file-based backup scheduler active":"scheduler not seen")+"; pre-patch auto-backup "+(autob?"enabled":"not enabled")+" - confirm backups are OFF-appliance & restorable (ransomware targets backups)");
     if(NETINFO && NETINFO.web){ var w=NETINFO.web;
       secAdd(GL,"Web-plane suspicious requests", w.sus.length?"fail":"pass", w.sus.length?(w.sus.length+" request(s) match web-attack patterns (traversal/injection/exploit paths) - see the Network tab"):"no web-attack patterns in the sampled front-proxy access log");
-      var extIps=[]; for(var z=0;z<w.external.length && z<5;z++) extIps.push(w.external[z].ip);
-      secAdd(GL,"Web clients from public IPs", w.external.length?"warn":"pass", w.external.length?(w.external.length+" external (public) client IP(s) hit the vSphere Client / API: "+extIps.join(", ")+" - management plane exposed to the internet?"):"all web clients are from private/local addresses");
     }
   }
 }
@@ -2942,13 +2989,37 @@ function renderNetwork(){
   if(!NETINFO.captured){ $("netScore").innerHTML=""; $("netBody").innerHTML='<div class="muted" style="font-size:12px">No socket capture in this bundle ('+(BTYPE==="esxi"?"localcli network ip connection list":"netstat -anp")+' not present).</div>'; return; }
   $("netScore").innerHTML="- "+NETINFO.listenN+" listener(s), "+NETINFO.netFacing+" network-facing, "+NETINFO.ext.length+" external connection(s)"+(NETINFO.sus.length?(", "+NETINFO.sus.length+" suspicious process(es)"):"")+(NETINFO.web?(", "+nf(NETINFO.web.reqs)+" web request(s)"):"");
   var h="", i;
-  if(NETINFO.web){ var w=NETINFO.web;
-    h+='<div class="panel" style="margin-bottom:10px"><h4>Web access - vSphere Client / API <span class="sub">- '+nf(w.reqs)+' request(s)'+(w.truncated?" (newest ~12MB sampled)":"")+' from '+w.ips.length+' client IP(s), '+w.external.length+' external, '+w.err+' 4xx/5xx, via '+esc(w.file)+'</span></h4>';
+  if(NETINFO.web){ var w=NETINFO.web; var esxiWeb=(w.kind==="esxi");
+    var unit=esxiWeb?"connection":"request";
+    h+='<div class="panel" style="margin-bottom:10px"><h4>'+esc(w.title||"WEB ACCESS SUMMARY")+' <span class="sub">- '+nf(w.reqs)+' '+unit+'(s)'+(w.truncated?" (newest ~12MB sampled)":"")+' from '+w.ips.length+' client IP(s), '+w.external.length+' external'+(esxiWeb?'':(', '+w.err+' 4xx/5xx'))+', via '+(w.path?('<span class="lnk" data-raw="'+esc(w.path)+'" title="Open the raw log file">'+esc(w.file)+'</span>'):esc(w.file))+'</span></h4>';
     if(w.sus.length){ h+='<div style="color:#ff8b8b;font-size:12px;margin-bottom:4px"><b>'+w.sus.length+' request(s) match web-attack patterns:</b></div><div class="dl" style="max-height:18vh">';
       for(i=0;i<w.sus.length;i++) h+=esc(w.sus[i].ip+"  "+w.sus[i].meth+" "+w.sus[i].code+"  "+w.sus[i].path)+"\n"; h+='</div>'; }
-    h+='<div class="scroll" style="max-height:30vh"><table><thead><tr><th>Client IP</th><th>Scope</th><th>Requests</th><th>Errors</th><th>Methods</th></tr></thead><tbody>';
+    h+='<div class="scroll" style="max-height:26vh"><table><thead><tr><th>Client IP</th><th>Scope</th><th>Requests</th><th>Errors</th><th>Methods</th></tr></thead><tbody>';
     for(i=0;i<w.ips.length && i<40;i++){ var ci=w.ips[i]; h+='<tr'+(ci.ext?' class="hl-ioc"':'')+'><td class="mono">'+esc(ci.ip)+'</td><td'+(ci.ext?' style="color:#e3b341"':' class="muted"')+'>'+(ci.ext?"external (public)":"private/local")+'</td><td class="mono">'+nf(ci.n)+'</td><td class="mono'+(ci.err?' hl-ioc':'')+'">'+ci.err+'</td><td class="mono muted">'+esc(ci.methods)+'</td></tr>'; }
-    h+='</tbody></table></div></div>'; }
+    h+='</tbody></table></div></div>';
+    // recent requests / connections detail table (newest first) with a row-count filter + (vCenter) Simplified login/logout filter
+    if((w.recent && w.recent.length)||(w.auth && w.auth.length)){
+      var simp = (!esxiWeb) && ENVOY_SIMPLE;
+      var base = simp ? (w.auth||[]) : (w.recent||[]);
+      var rows=[]; for(i=0;i<base.length;i++){ var rr=base[i]; if(WEB_HIDELOOP && /^127\.|^::1$/.test(rr.ip)) continue; rows.push(rr); }
+      var shown=Math.min(ENVOY_ROWS, rows.length);
+      h+='<div class="panel" style="margin-bottom:10px"><h4>'+(esxiWeb?"Recent connections":"Recent web requests")+' <span class="sub">- newest '+shown+' of '+nf(rows.length)+(simp?" login/logout":"")+(WEB_HIDELOOP?", non-loopback":"")+' shown</span>'
+        +'<span style="float:right;font-weight:400;text-transform:none">'
+        +'<label title="Hide loopback (127.0.0.1 / ::1) client connections - focus on real remote clients"><input type="checkbox" id="webHideLoop"'+(WEB_HIDELOOP?" checked":"")+'> hide loopback</label> &middot; '
+        +(esxiWeb?'':('<label title="Show only Login / Logout events - hides the noisy API/query traffic"><input type="checkbox" id="envoySimple"'+(ENVOY_SIMPLE?" checked":"")+'> Simplified (login/logoff)</label> &middot; '))
+        +'show <select id="envoyRows">'+[25,50,100].map(function(n){return '<option value="'+n+'"'+(n===ENVOY_ROWS?' selected':'')+'>'+n+'</option>';}).join("")+'</select> rows'
+        +(w.path?(' &middot; <span class="lnk" data-raw="'+esc(w.path)+'">open raw log</span>'):'')+'</span></h4>';
+      var ncol=esxiWeb?4:6;
+      if(esxiWeb) h+='<div class="scroll" style="max-height:36vh"><table><thead><tr><th>When (UTC)</th><th>Source IP</th><th>Protocol</th><th>Service / path</th></tr></thead><tbody>';
+      else h+='<div class="scroll" style="max-height:36vh"><table><thead><tr><th>When (UTC)</th><th>Source IP</th><th>Method</th><th>Response</th><th>Path</th><th>Operation / UA</th></tr></thead><tbody>';
+      if(!shown) h+='<tr><td colspan="'+ncol+'" class="muted">No matching '+(esxiWeb?"connections":"requests")+(simp?" - no Login/Logout events in the captured window (a long-lived session\'s login may pre-date it)":"")+(WEB_HIDELOOP?" (all were loopback)":"")+'.</td></tr>';
+      for(i=0;i<shown;i++){ var rq=rows[i]; var ec=/^[45]/.test(rq.code);
+        var pathCell='<td class="mono"><span class="lnk" data-raw="'+(w.path?esc(w.path):'')+'" title="'+esc(rq.path)+' - click to open the raw log">'+esc(trunc(rq.path,90))+'</span></td>';
+        if(esxiWeb) h+='<tr'+(rq.ext?' class="hl-ioc"':'')+'><td class="mono">'+esc(rq.ts)+'</td><td class="mono"'+(rq.ext?' style="color:#e3b341"':'')+'>'+esc(rq.ip)+'</td><td class="mono">'+esc(rq.meth)+'</td>'+pathCell+'</tr>';
+        else h+='<tr'+(rq.ext?' class="hl-ioc"':'')+'><td class="mono">'+esc(rq.ts)+'</td><td class="mono"'+(rq.ext?' style="color:#e3b341"':'')+'>'+esc(rq.ip)+'</td><td class="mono">'+esc(rq.meth)+'</td><td class="mono'+(ec?' hl-ioc':'')+'">'+esc(rq.code)+'</td>'+pathCell+'<td class="mono muted">'+esc(rq.op)+'</td></tr>';
+      }
+      h+='</tbody></table></div></div>'; }
+  }
   if(NETINFO.sus.length){ h+='<div class="panel" style="margin-bottom:10px"><h4 style="color:#ff8b8b">Suspicious processes ('+NETINFO.sus.length+') - attacker-tool / reverse-shell patterns</h4>';
     h+='<div class="dl" style="max-height:20vh">'; for(i=0;i<NETINFO.sus.length;i++) h+=esc(NETINFO.sus[i])+"\n"; h+='</div></div>'; }
   h+='<div class="panel" style="margin-bottom:10px"><h4>External connections <span class="sub">- established sessions to non-private (public) IPs; '+NETINFO.ext.length+' found</span></h4>';
@@ -2963,6 +3034,11 @@ function renderNetwork(){
     h+='<tr><td class="mono">'+esc(l.proto)+'</td><td class="mono">'+esc(l.local)+'</td><td'+(nf2?' style="color:#e3b341"':' class="muted"')+'>'+esc(l.scope)+'</td><td class="mono">'+esc(l.proc)+'</td></tr>'; }
   h+='</tbody></table></div></div>';
   $("netBody").innerHTML=h;
+  var sp=$("netBody").getElementsByTagName("span");
+  for(var z=0;z<sp.length;z++){ if(sp[z].getAttribute("data-raw")){ sp[z].onclick=function(){ launchFile(this.getAttribute("data-raw")); }; } }
+  var sel=$("envoyRows"); if(sel){ sel.onchange=function(){ ENVOY_ROWS=parseInt(this.value,10)||50; renderNetwork(); }; }
+  var simp=$("envoySimple"); if(simp){ simp.onclick=function(){ ENVOY_SIMPLE=!!this.checked; renderNetwork(); }; }
+  var hl=$("webHideLoop"); if(hl){ hl.onclick=function(){ WEB_HIDELOOP=!!this.checked; renderNetwork(); }; }
 }
 function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"")); }
 function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"clear")); }
