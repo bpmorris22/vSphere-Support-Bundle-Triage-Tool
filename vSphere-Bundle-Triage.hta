@@ -289,7 +289,9 @@
 
     <!-- SECURITY POSTURE -->
     <div class="card hide" id="secCard">
-      <h3>Security posture <span class="muted" style="text-transform:none;font-weight:400" id="secScore"></span></h3>
+      <h3>Security posture <span class="muted" style="text-transform:none;font-weight:400" id="secScore"></span>
+        <button class="btn green" id="secExport" style="float:right" title="Export a security-focused report (posture score, patch state/CVEs, intrusion indicators, control matrix, VIB integrity, persistence) to a self-contained HTML.">Export &rarr; HTML</button>
+      </h3>
       <div class="muted" style="font-size:11px;margin-bottom:8px">Graded review of patch state and recommended security controls, checked against the bundle's config captures AND the parsed log evidence. Support bundles are targeted - a control whose source is not captured is graded <b>n/a</b>, never assumed compliant. Verdicts are advisory - verify before reporting.</div>
       <div id="secBody"></div>
     </div>
@@ -395,7 +397,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.10";
+var APP_VERSION = "0.9.11";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -2011,6 +2013,62 @@ function specExport(){
   try{ var path=LASTOUTDIR+"\\specification_"+sanitHost(NODE.host||"node")+"_"+nowStamp()+".html"; ensureDir(LASTOUTDIR); writeUtf8(path, buildSpecHtml()); setStatus("Specification → "+path,"ok"); appendLog("Spec HTML: "+path); launchFile(path); }
   catch(e){ setStatus("Spec export failed: "+e.message,"err"); appendLog("Spec export error: "+e.message); }
 }
+/* ---- security-focused standalone HTML report ---- */
+function cveCls(v){ return v==="exposed"?"hit":((v==="review"||v==="verify")?"warn":(v==="na"?"na":"clear")); }
+function buildSecurityHtml(){
+  var d=new Date(); function p(x){return x<10?("0"+x):x;}
+  var gen=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+  var sc=secScoreOf(), i;
+  var h=['<!doctype html><html><head><meta charset="utf-8"><title>Security Report - '+rEsc(NODE.host||"")+'</title>',
+    '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:20px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:12px 0 4px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:210px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}.hit{color:#b00020;font-weight:700}.warn{color:#9a6700;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}.box{border:1px solid #ccd2da;border-radius:8px;padding:10px 14px;margin:8px 0;background:#f7f9fc}.score{font-size:22px;font-weight:700}.pill{display:inline-block;border-radius:12px;padding:1px 9px;font-size:11px;font-weight:700;margin-right:6px}.pf{background:#fde8e8;color:#b00020}.pw{background:#fdf4e3;color:#9a6700}.pp{background:#e6f4ea;color:#1a7f37}</style></head><body>',
+    '<h1>vSphere Security Report - '+rEsc(NODE.host||"?")+'</h1>',
+    '<div class="muted">'+rEsc(NODE.type||"")+' &middot; '+rEsc((NODE.product||"")+" "+(NODE.version||"")+" build "+(NODE.build||""))+(NODE.serial?(' &middot; serial '+rEsc(NODE.serial)):'')+' &middot; captured '+rEsc(NODE.captured||"?")+' &middot; report generated '+gen+' &middot; tool v'+APP_VERSION+'</div>'];
+  // executive summary
+  var fails=[], warns=[]; for(i=0;i<SECPOST.length;i++){ if(SECPOST[i].status==="fail") fails.push(SECPOST[i]); else if(SECPOST[i].status==="warn") warns.push(SECPOST[i]); }
+  var cexp=0,crev=0; for(i=0;i<CVES.length;i++){ if(CVES[i].verdict==="exposed") cexp++; else if(CVES[i].verdict==="review"||CVES[i].verdict==="verify") crev++; }
+  var indH=indHits();
+  h.push('<div class="box"><span class="score">'+sc.p+' / '+sc.t+'</span> checkable controls at best practice &nbsp; '
+    +'<span class="pill pf">'+fails.length+' fail</span><span class="pill pw">'+warns.length+' warn</span><span class="pill pp">'+(sc.t-fails.length-warns.length)+' pass</span><br>'
+    +'<span class="muted" style="font-size:12px">Patch state: '+cexp+' exposed / '+crev+' to verify of '+CVES.length+' tracked CVEs. Intrusion indicators: '+indH+' of '+INDIC.length+' triggered. Advisory - verify before reporting; untested captures are graded n/a, not assumed compliant.</span></div>');
+  if(fails.length||warns.length){ h.push('<h3>Top findings</h3><table><tr><th>Severity</th><th>Group</th><th>Control</th><th>Detail</th></tr>');
+    for(i=0;i<fails.length;i++){ h.push('<tr><td class="hit">FAIL</td><td>'+rEsc(fails[i].grp)+'</td><td>'+rEsc(fails[i].name)+'</td><td>'+rEsc(fails[i].detail)+'</td></tr>'); }
+    for(i=0;i<warns.length;i++){ h.push('<tr><td class="warn">WARN</td><td>'+rEsc(warns[i].grp)+'</td><td>'+rEsc(warns[i].name)+'</td><td>'+rEsc(warns[i].detail)+'</td></tr>'); }
+    h.push('</table>'); }
+  // patch state / CVE
+  if(CVES.length){ h.push('<h2>Patch state &amp; CVE exposure</h2><p class="muted">Advisory - confirm against the linked VMSA and the host\'s exact build.</p>');
+    h.push('<table><tr><th>CVE</th><th>VMSA</th><th>Verdict</th><th>Basis</th><th>Title</th></tr>');
+    for(i=0;i<CVES.length;i++){ var c=CVES[i]; h.push('<tr><td class="mono">'+rEsc(c.id)+'</td><td class="mono">'+rEsc(c.vmsa)+'</td><td class="'+cveCls(c.verdict)+'">'+rEsc(c.verdict.toUpperCase())+'</td><td>'+rEsc(c.basis)+'</td><td>'+rEsc(c.title)+'</td></tr>'); }
+    h.push('</table>'); }
+  // intrusion indicators
+  if(INDIC.length){ h.push('<h2>Ransomware / intrusion indicators ('+indH+' of '+INDIC.length+' triggered)</h2><table><tr><th>Indicator</th><th>Status</th><th>Detail</th></tr>');
+    for(i=0;i<INDIC.length;i++){ var it=INDIC[i]; var icl=it.status==="hit"?"hit":(it.status==="na"?"na":"clear"); h.push('<tr><td>'+rEsc(it.name)+'</td><td class="'+icl+'">'+rEsc(it.status==="hit"?"TRIGGERED":(it.status==="na"?"n/a":"clear"))+'</td><td>'+rEsc(it.detail)+'</td></tr>'); }
+    h.push('</table>'); }
+  // full control matrix
+  if(SECPOST.length){ h.push('<h2>Security controls</h2><table><tr><th>Group</th><th>Control</th><th>Status</th><th>Detail</th></tr>');
+    for(i=0;i<SECPOST.length;i++){ var s2=SECPOST[i]; var s2c=s2.status==="fail"?"hit":(s2.status==="warn"?"warn":(s2.status==="na"?"na":"clear"));
+      h.push('<tr><td>'+rEsc(s2.grp)+'</td><td>'+rEsc(s2.name)+'</td><td class="'+s2c+'">'+rEsc(s2.status==="na"?"n/a":s2.status.toUpperCase())+'</td><td>'+rEsc(s2.detail)+'</td></tr>'); }
+    h.push('</table>'); }
+  // VIBs
+  if(VIBS_NOTABLE.length){ h.push('<h2>Third-party &amp; non-standard VIBs ('+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages)</h2>');
+    h.push('<table><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr>');
+    for(i=0;i<VIBS_NOTABLE.length;i++){ var vb=VIBS_NOTABLE[i]; var vc2=vb.trust===0?"hit":((vb.trust===1||!vb.known)?"warn":"");
+      h.push('<tr><td class="mono">'+rEsc(vb.name)+'</td><td class="mono">'+rEsc(vb.ver)+'</td><td class="mono'+(vc2?" "+vc2:"")+'">'+rEsc(vb.vendor)+(vb.known||vb.vmware?"":" (unknown)")+'</td><td class="'+vc2+'">'+rEsc(vb.acc)+'</td><td class="mono">'+rEsc(vb.date)+'</td></tr>'); }
+    h.push('</table>'); }
+  // security-relevant persistence & tampering
+  if(PERSIST.length){ h.push('<h2>Persistence &amp; tampering</h2><table><tr><th>Category</th><th>Check</th><th>Verdict</th><th>Detail</th></tr>');
+    for(i=0;i<PERSIST.length;i++){ var pf=PERSIST[i]; var pcl=pf.verdict==="suspect"?"hit":(pf.verdict==="review"?"warn":(pf.verdict==="na"?"na":"clear"));
+      h.push('<tr><td>'+rEsc(pf.cat)+'</td><td>'+rEsc(pf.name)+'</td><td class="'+pcl+'">'+rEsc(pf.verdict.toUpperCase())+'</td><td>'+rEsc(pf.detail)+'</td></tr>'); }
+    h.push('</table>'); }
+  h.push('<p class="muted" style="margin-top:20px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'. Read-only triage of a vm-support / vc-support bundle; verdicts are advisory and should be confirmed on the live host before remediation.</p></body></html>');
+  return h.join("\n");
+}
+function securityExport(){
+  if(!BTYPE){ setStatus("Analyze a bundle first.","err"); return; }
+  if(!ANALYZED || !SECPOST.length){ setStatus("Security posture not graded yet - let analysis finish, then export.","err"); return; }
+  if(!trimStr(LASTOUTDIR)){ setStatus("No output directory set - Analyze a bundle first.","err"); return; }
+  try{ var path=LASTOUTDIR+"\\security_"+sanitHost(NODE.host||"node")+"_"+nowStamp()+".html"; ensureDir(LASTOUTDIR); writeUtf8(path, buildSecurityHtml()); setStatus("Security report → "+path,"ok"); appendLog("Security HTML: "+path); launchFile(path); }
+  catch(e){ setStatus("Security export failed: "+e.message,"err"); appendLog("Security export error: "+e.message); }
+}
 function makeReport(){
   if(!BTYPE){ setStatus("Analyze a bundle first.","err"); return; }
   if(!ANALYZED){ setStatus("Log analysis has not finished yet.","err"); return; }
@@ -2984,6 +3042,7 @@ function init(){
   $("vmq").onkeyup=function(){ renderVms(); };
   $("vmsExport").onclick=vmsExport;
   $("specExport").onclick=specExport;
+  $("secExport").onclick=securityExport;
   $("tq").onkeyup=function(){ if(qTimer) window.clearTimeout(qTimer); qTimer=window.setTimeout(function(){ TQUERY=trimStr($("tq").value).toLowerCase(); render(); },150); };
   function scWire(id,bk){ $(id).onclick=function(){ SCOREF[bk]=this.checked; render(); }; }
   scWire("scf5","c5"); scWire("scf3","c3"); scWire("scf1","c1"); scWire("scf0","c0");
