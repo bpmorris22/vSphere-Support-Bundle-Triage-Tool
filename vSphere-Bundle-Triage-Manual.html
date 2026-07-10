@@ -85,7 +85,7 @@
 <header class="top">
   <h1>vSphere Support Bundle Triage Tool</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles — one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.11</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.12</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -123,7 +123,7 @@
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
   <!-- header -->
   <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
-  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.11</tspan></text>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.12</tspan></text>
   <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
   <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
   <!-- tabs -->
@@ -226,7 +226,8 @@
 <p>Authentication events. <b>ESXi:</b> <code>auth.log</code> SSH, <code>hostd</code> SOAP logins, <code>shell.log</code> shell-enable. <b>vCenter:</b> <code>websso</code> SSO logins (user + client IP), appliance SSH, and <b>vpxd SAML human logins</b>. Scored for external source IPs, failures, and privileged accounts. Case-window (<code>from</code>/<code>to</code>) filters this tab.</p>
 
 <h3 id="actions-tab">Actions</h3>
-<p>Privileged operations. <b>ESXi:</b> <code>shell.log</code> command history (attacker-typed commands). <b>vCenter:</b> meaningful <code>vpxd</code> tasks (VM lifecycle, permission/role changes, sessions) <b>attributed to a user</b> (nearest-preceding human login — labelled <em>user approx</em>), plus appliance <code>sudo</code> commands.</p>
+<p>Privileged operations. <b>ESXi:</b> <code>shell.log</code> command history (attacker-typed commands), the <b>vobd audit-event stream</b> (<code>esx.audit.*</code>: SSH/shell enable, account events, lockdown, non-routine firewall disables — boot-replay and patching churn filtered out; rotations always read since the live file often doesn't exist), and <b>esxupdate software changes</b> (image-profile/VIB add-remove batches, with recurring agent re-stages collapsed into one row). <b>vCenter:</b> meaningful <code>vpxd</code> tasks (VM lifecycle, permission/role changes, sessions) <b>attributed to a user</b> (nearest-preceding human login — labelled <em>user approx</em>), appliance <code>sudo</code> commands, and <b>SSO identity events</b> (<code>sso-events/audit_events.log</code>: user/group creation, membership adds, password resets — with acting user and client IP, retention far beyond websso).</p>
+<p><b>Rotated logs:</b> the <i>incl. rotated logs</i> checkbox (next to Analyze) also reads <code>hostd.0.gz</code>, <code>auth.1.gz</code>, … — weeks of extra logon/action history instead of just the live file, at the cost of decompressing each rotation. vobd rotations are always read; vpxd keeps its largest-rotation behaviour.</p>
 
 <h3 id="timeline-tab">Timeline</h3>
 <p>Merged logons + actions, time-ordered. The <b>Score / tags</b> column is colour-coded, and the <b>Kind</b> column colours <span class="tag t-red">shell command</span> red, sudo orange, vpxd/task blue. A multiselect <b>Score</b> filter (<span class="tag t-red">&ge;5</span> <span class="tag t-amb">3-4</span> <span class="tag t-grn">1-2</span> <span class="muted">0</span>) narrows to the bands you tick. Case-window filters this tab.</p>
@@ -275,6 +276,7 @@
 </figure>
 
 <h3 id="persist-tab">Persistence &amp; tampering</h3>
+<p style="margin:4px 0"><span class="muted">ESXi checks now include <b>VM autostart</b> (<code>vmAutoStart.xml</code> — a rogue VM set to auto-start survives host reboots), and the Specification's distributed port groups show their <b>human names</b> (from <code>hostd/dvportgroups.xml.gz</code>) alongside the dvportgroup IDs.</span></p>
 <p>File-inspection findings (verdict: suspect / review / clean / n-a). <b>ESXi:</b> DCUI welcome banner (ransom-note check), <code>rc.local.d/local.sh</code>, remote-syslog state, VIB acceptance, SSH keys, key-log integrity. <b>vCenter:</b> <code>ld.so.preload</code>, rsyslog forwarding, admin systemd units, cron, log integrity. Bundles are <em>targeted</em> — items the bundle does not capture are marked "not captured", not "clean".</p>
 
 <h3 id="ioc-tab">IOC hits</h3>
@@ -421,7 +423,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Triage Tool — Field Manual for v0.9.11. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Triage Tool — Field Manual for v0.9.12. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>

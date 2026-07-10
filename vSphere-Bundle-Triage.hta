@@ -185,6 +185,7 @@
       <span class="sep"></span>
       <button class="btn" id="fleetBtn" title="Fleet mode: discover every ESXi/vCenter bundle under a folder (recursively) and triage them all into one roster. Point the Bundle field at a parent folder, or use Pick folder.">Triage fleet folder&hellip;</button>
       <label style="font-size:12px;margin-left:6px" title="Reuse a host's saved analysis from _Processed when the source bundle and tool version are unchanged - much faster on re-runs. Uncheck to force a full fresh re-analysis of every host."><input type="checkbox" id="fleetReuse" checked> reuse cached</label>
+      <label style="font-size:12px;margin-left:6px" title="Also read the ROTATED logs (hostd.0.gz, auth.1.gz, ...) - weeks of extra logon/action history instead of just the live file. Slower (decompresses each rotation). The vobd audit log is always read in full (rotations are small and it is the host's audit trail). vpxd keeps its largest-rotation behaviour."><input type="checkbox" id="deepRot"> incl. rotated logs</label>
       <span class="sep"></span>
       <button class="btn" id="logToggle">Show log</button>
       <span class="muted" id="status" style="margin-left:8px"></span>
@@ -397,7 +398,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.11";
+var APP_VERSION = "0.9.12";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -655,7 +656,8 @@ var CAT_ESXI=[
   {cat:"Auth/Logons", key:false, name:"vmauthd.log", desc:"Direct VM / management authentication daemon.", rels:["var/run/log/vmauthd.log","scratch/log/vmauthd.log","var/log/vmauthd.log"]},
   {cat:"Auth/Logons", key:false, name:"rhttpproxy.log", desc:"Reverse proxy: inbound API/UI connections + source IPs.", rels:["var/run/log/rhttpproxy.log","scratch/log/rhttpproxy.log","var/log/rhttpproxy.log"]},
   {cat:"Actions/Audit", key:true, name:"vpxa.log", desc:"vCenter agent: tasks pushed to this host from vCenter.", rels:["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]},
-  {cat:"Actions/Audit", key:false, name:"vobd.log", desc:"VMkernel observation events (config/state changes).", rels:["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]},
+  {cat:"Actions/Audit", key:true,  name:"vobd (audit events)", desc:"Host audit-event stream (esx.audit.*): SSH/shell enable, firewall, accounts, lockdown. Often rotations-only.", rels:["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log","var/run/log/vobd.0.gz","scratch/log/vobd.0.gz"]},
+  {cat:"Actions/Audit", key:false, name:"esxupdate.log", desc:"VIB / image-profile change history - who installed what, when.", rels:["var/run/log/esxupdate.log","scratch/log/esxupdate.log","var/log/esxupdate.log"]},
   {cat:"Network", key:false, name:"routing table", desc:"esxcfg-route capture - host routing.", rels:["commands/esxcfg-route_-l.txt"]},
   {cat:"Network", key:false, name:"distributed switch", desc:"net-dvs capture - DVS state.", rels:["commands/net-dvs_-l.txt"]},
   {cat:"Persistence", key:false, name:"vmkernel.log", desc:"Kernel log - driver / VIB load, module events.", rels:["var/run/log/vmkernel.log","scratch/log/vmkernel.log","var/log/vmkernel.log"]},
@@ -675,6 +677,7 @@ var CAT_VCSA=[
   {cat:"Auth/Logons", key:true,  name:"sso/tokenservice.log", desc:"STS token issuance (SAML tokens).", rels:["var/log/vmware/sso/tokenservice.log"]},
   {cat:"Auth/Logons", key:false, name:"sso/ssoAdminServer.log", desc:"SSO admin operations: users, roles, identity sources.", rels:["var/log/vmware/sso/ssoAdminServer.log"]},
   {cat:"Auth/Logons", key:true,  name:"vmdird/vmdird.log", desc:"Directory service: account/group changes, replication.", rels:["var/log/vmware/vmdird/vmdird.log"]},
+  {cat:"Auth/Logons", key:true,  name:"SSO identity audit", desc:"sso-events/audit_events.log - user/group creation, membership, password &amp; policy changes with acting user + client IP (long retention) (KEY).", rels:["var/log/audit/sso-events/audit_events.log"]},
   {cat:"Actions/Audit", key:true,  name:"vpxd-N.log (task/event audit)", desc:"Core vCenter task/event audit: who did what to which object - rotated vpxd-N.log (KEY).", rels:["var/log/vmware/vpxd/"], pat:"^vpxd-\\d+\\.log$"},
   {cat:"Actions/Audit", key:false, name:"vpxd/authz-data.json", desc:"Authorization data snapshot.", rels:["var/log/vmware/vpxd/authz-data.json"]},
   {cat:"Actions/Audit", key:false, name:"vpxd disabled methods", desc:"API methods disabled - hardening / tamper indicator.", rels:["var/log/vmware/vpxd/vpx_disabled_methods.txt"]},
@@ -717,6 +720,7 @@ function findInnerArchive(dir){
    ============================================================ */
 function analyze(){
   if(BUSY){ setStatus("A run is already in progress.","err"); return; }
+  try{ DEEPROT = !!$("deepRot").checked; }catch(eDR){ DEEPROT=false; }
   var inp=trimStr($("inPath").value);
   if(!inp){ setStatus("Point at a bundle archive (.tgz/.tar) or an already-extracted folder.","err"); return; }
   if(!requireHost()) return;
@@ -1047,6 +1051,40 @@ function logLines(rel){
   appendLog("  log "+rel+" -> "+nf(a.length)+" lines");
   return a;
 }
+/* ---------- rotation-aware log reading ----------
+   Live logs cover days; the rotations (hostd.0.gz .. hostd.9.gz) cover WEEKS. Off by default
+   (#deepRot) except callers that always want rotations (vobd - the audit log - is small). */
+var DEEPROT=false, MAXROT=12;
+function rotationsOf(rel){
+  var base=baseName(rel).replace(/\.log$/i,"");
+  var re=new RegExp("^(?:var/run/log|scratch/log|var/log)/"+base.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\.(\\d+)(?:\\.gz)?$","i");
+  var found={}, i;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ var m=TOC[i].rel.match(re); if(!m) continue; var n=parseInt(m[1],10);
+      if(found[n]==null || TOC[i].rel.indexOf("var/run/log/")===0) found[n]=TOC[i].rel; } }   // rotations are duplicated under var/run/log + scratch/log - keep one copy
+  else { var dirs=["var/run/log","scratch/log","var/log"];
+    for(var d=0;d<dirs.length;d++){ var names=listUnder(dirs[d]+"/", new RegExp("^"+base.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\.\\d+(\\.gz)?$","i"));
+      for(i=0;i<names.length;i++){ var mm=names[i].match(/\.(\d+)(?:\.gz)?$/); if(mm){ var n2=parseInt(mm[1],10); if(found[n2]==null) found[n2]=dirs[d]+"/"+names[i]; } } } }
+  var nums=[]; for(var k in found){ if(found.hasOwnProperty(k)) nums.push(parseInt(k,10)); }
+  nums.sort(function(a,b){ return b-a; });   // highest N = oldest -> chronological order
+  var out=[]; for(i=0;i<nums.length && i<MAXROT;i++) out.push(found[nums[i]]);
+  return out;
+}
+/* lines of live log + (optionally / forced) its rotations, oldest first */
+function logLinesRot(rel, force){
+  if(!rel) return [];
+  var out=[], i;
+  if(DEEPROT || force){ var rots=rotationsOf(rel);
+    for(i=0;i<rots.length;i++){ var rl=logLines(rots[i]); for(var j=0;j<rl.length;j++) out.push(rl[j]); }
+    if(rots.length) appendLog("  +"+rots.length+" rotation(s) of "+baseName(rel)); }
+  var live=logLines(rel); for(i=0;i<live.length;i++) out.push(live[i]);
+  return out;
+}
+/* read a (possibly .gz) config member as text (e.g. hostd/dvportgroups.xml.gz) */
+function readMemberGz(rel){
+  var src=ensureExtracted(rel); if(!src) return "";
+  if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v) return ""; src=v; }
+  try{ return readUtf8(src); }catch(e){ return ""; }
+}
 function toEpoch(iso){ var m=String(iso).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/); if(!m) return 0;
   return Math.floor(Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6])/1000); }
 function isoShort(iso){ var m=String(iso).match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/); return m?(m[1]+" "+m[2]):String(iso); }
@@ -1208,26 +1246,26 @@ function parseLogons(){
   LOGON=[]; var i,m,ep;
   if(BTYPE==="esxi"){
     // auth.log - sshd Accepted/Failed
-    var al=logLines(resolveLog(["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"]));
+    var al=logLinesRot(resolveLog(["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"]));
     for(i=0;i<al.length;i++){ var ln=al[i]; var ts=(ln.match(/^(\S+Z)/)||[])[1]||"";
       m=ln.match(/Accepted\s+\S+\s+for\s+(\S+)\s+from\s+([\d.]+)\s+port/); if(m){ ep=toEpoch(ts); LOGON.push(mkLogon(ep,ts,"OK",m[1],m[2],"ssh","auth.log")); continue; }
       m=ln.match(/Failed\s+password\s+for\s+(?:invalid user\s+)?(\S+)\s+from\s+([\d.]+)/); if(m){ ep=toEpoch(ts); LOGON.push(mkLogon(ep,ts,"FAIL",m[1],m[2],"ssh","auth.log")); }
     }
     // hostd.log - "Accepted password for user X from IP"
-    var hl=logLines(resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]));
+    var hl=logLinesRot(resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]));
     for(i=0;i<hl.length;i++){ m=hl[i].match(/^(\S+Z).*Accepted password for user (\S+) from ([\w.:]+)/); if(m){ ep=toEpoch(m[1]); LOGON.push(mkLogon(ep,m[1],"OK",m[2],m[3],"hostd/SOAP","hostd.log")); }
       else { m=hl[i].match(/^(\S+Z).*(?:Rejected|Failed) (?:password|login) for user (\S+) from ([\w.:]+)/); if(m){ ep=toEpoch(m[1]); LOGON.push(mkLogon(ep,m[1],"FAIL",m[2],m[3],"hostd/SOAP","hostd.log")); } }
     }
   } else if(BTYPE==="vcsa"){
     // websso auditlogger JSON (authoritative vCenter logins)
-    var wl=logLines(resolveLog(["var/log/vmware/sso/websso.log"]));
+    var wl=logLinesRot(resolveLog(["var/log/vmware/sso/websso.log"]));
     for(i=0;i<wl.length;i++){ if(wl[i].indexOf("[auditlogger]")<0) continue; var ln2=wl[i].replace(/\\"/g,'"');
       var t=ln2.match(/"type":"([^"]+)"/); if(!t) continue; var isFail=/Fail/i.test(t[1]); if(!/Login/i.test(t[1])) continue;
       var u=(ln2.match(/"user":"([^"]*)"/)||[])[1]||"", c=(ln2.match(/"client":"([^"]*)"/)||[])[1]||"";
       var ts2=(wl[i].match(/^(\S+Z)/)||[])[1]||""; ep=toEpoch(ts2);
       LOGON.push(mkLogon(ep,ts2,isFail?"FAIL":"OK",u,c,"SSO/websso","websso.log")); }
     // appliance auth.log ssh
-    var val=logLines(resolveLog(["var/log/auth.log"]));
+    var val=logLinesRot(resolveLog(["var/log/auth.log"]));
     for(i=0;i<val.length;i++){ var vt=(val[i].match(/^(\S+[\+Z][\d:]*)/)||[])[1]||"";
       m=val[i].match(/Accepted\s+\S+\s+for\s+(\S+)\s+from\s+([\d.]+)/); if(m){ ep=toEpoch(vt); LOGON.push(mkLogon(ep,vt,"OK",m[1],m[2],"ssh","auth.log")); continue; }
       m=val[i].match(/Failed\s+password\s+for\s+(?:invalid user\s+)?(\S+)\s+from\s+([\d.]+)/); if(m){ ep=toEpoch(vt); LOGON.push(mkLogon(ep,vt,"FAIL",m[1],m[2],"ssh","auth.log")); }
@@ -1245,9 +1283,10 @@ function scoreLogon(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob)
 function parseActions(){
   ACTIONS=[]; var i,m,ep;
   if(BTYPE==="esxi"){
-    var sh=logLines(resolveLog(["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"]));
+    var sh=logLinesRot(resolveLog(["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"]));
     for(i=0;i<sh.length;i++){ m=sh[i].match(/^(\S+Z)\s+shell\[(\d+)\]:\s+\[([^\]]+)\]:\s+(.+)$/); if(!m) continue;
       ep=toEpoch(m[1]); ACTIONS.push(mkAct(ep,m[1],m[3],m[4],"shell.log","shell command")); }
+    parseVobd(); parseEsxupdate();
   } else if(BTYPE==="vcsa"){
     var vp=logLines(resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"));
     // pass 1: vpxd SAML logins -> human-login timeline (for task attribution) + Logons (deduped, humans only)
@@ -1263,11 +1302,101 @@ function parseActions(){
       ep=toEpoch(m[1]); var who=nearestBefore(humans,ep);
       ACTIONS.push(mkAct(ep,m[1],who||"vpxd",method,"vpxd.log", who?"vpxd task (user approx)":"vpxd task")); }
     // appliance sudo commands
-    var val=logLines(resolveLog(["var/log/auth.log"]));
+    var val=logLinesRot(resolveLog(["var/log/auth.log"]));
     for(i=0;i<val.length;i++){ m=val[i].match(/^(\S+[\+Z][\d:]*).*\bsudo:\s+(\S+)\s*:\s+.*COMMAND=(.+)$/); if(!m) continue;
       ep=toEpoch(m[1]); ACTIONS.push(mkAct(ep,m[1],m[2],m[3],"auth.log","sudo command")); }
+    parseSsoAudit();
   }
   for(i=0;i<ACTIONS.length;i++) scoreAction(ACTIONS[i]);
+}
+/* ---- vobd: the host's own audit-event stream (esx.audit.*). Live vobd.log often does NOT
+   exist (rotations only), so rotations are ALWAYS read here - they are small. vob.* duplicates
+   of the same events are skipped; routine firewall-ruleset churn (patching) is filtered. ---- */
+var VOBD_STATS=null;
+var VOBD_ROUTINE_FW=/rule set (esxupdate|updateManager|vum|dynamicruleset|hyperbus|vsanEncryption|iofiltervp|trusted-infrastructure|vvold|nfs\w*|activeDirector\w*)\b/i;
+function parseVobd(){
+  VOBD_STATS={ssh:0,shell:0,acct:0,fw:0,lockdown:0,image:0,total:0,captured:false};
+  var live=resolveLog(["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]);
+  var lines=[], i, j, rots=rotationsOf("var/run/log/vobd.log");
+  for(i=0;i<rots.length;i++){ var rl=logLines(rots[i]); for(j=0;j<rl.length;j++) lines.push(rl[j]); }
+  if(live){ var lv=logLines(live); for(i=0;i<lv.length;i++) lines.push(lv[i]); }
+  if(!lines.length) return;
+  VOBD_STATS.captured=true;
+  var n=0;
+  for(i=0;i<lines.length;i++){ var m=lines[i].match(/^(\S+?Z):\s+\[(\w+)\]\s+\d+us:\s+\[(esx\.audit\.[\w.]+)\]\s*(.*)$/);
+    if(!m) continue;
+    var ev=m[3], msg=trimStr(m[4]); VOBD_STATS.total++;
+    if(/^esx\.audit\.net\.firewall/i.test(ev)){
+      // boot replays every configured ruleset (add/allowall/setrequired/enable) - only a DISABLE
+      // of a non-routine ruleset, or the whole firewall going down, is a config-change tell
+      if(!/firewall\.disabled\b/i.test(ev)){
+        if(!/Operation 'disable'/i.test(msg)) continue;
+        if(VOBD_ROUTINE_FW.test(msg)) continue; }
+      VOBD_STATS.fw++; }
+    else if(/ssh\.(enabled|disabled)/i.test(ev)) VOBD_STATS.ssh++;
+    else if(/shell\.(enabled|disabled)/i.test(ev)) VOBD_STATS.shell++;
+    else if(/account\./i.test(ev)) VOBD_STATS.acct++;
+    else if(/lockdown/i.test(ev)) VOBD_STATS.lockdown++;
+    else if(/esximage/i.test(ev)) VOBD_STATS.image++;
+    if(n<4000){ var ep2=toEpoch(m[1]); ACTIONS.push(mkAct(ep2,m[1],"host",ev+" - "+msg,"vobd","audit event (vobd)")); n++; }
+  }
+  appendLog("  vobd: "+VOBD_STATS.total+" audit event(s), "+n+" ingested (routine firewall-ruleset churn filtered)");
+}
+/* ---- esxupdate.log: VIB / image-profile change history. One Actions row per change batch
+   (an image update logs every VIB it touches - grouped by minute). ---- */
+var ESXUP_EVENTS=[];
+function parseEsxupdate(){
+  ESXUP_EVENTS=[];
+  var rel=resolveLog(["var/run/log/esxupdate.log","scratch/log/esxupdate.log","var/log/esxupdate.log"]);
+  if(!rel) return;
+  var lines=logLinesRot(rel), groups={}, order=[], i;
+  for(i=0;i<lines.length;i++){
+    // removals log "VIB X is being removed from ImageProfile ..."; additions log "Adding VIB X to ImageProfile ..."
+    var m=lines[i].match(/^(\S+Z)\s+esxupdate:.*VIB (\S+) is being (removed) from ImageProfile(?:\s*\(Updated\))?\s*(.*)$/);
+    var isAdd=false;
+    if(!m){ m=lines[i].match(/^(\S+Z)\s+esxupdate:.*Adding VIB (\S+) to ImageProfile(?:\s*\(Updated\))?\s*(.*)$/); if(m){ isAdd=true; m=[m[0],m[1],m[2],"added",m[3]]; } }
+    if(!m) continue;
+    var minute=m[1].substring(0,16);   // group per minute
+    if(!groups[minute]){ groups[minute]={ts:m[1], add:0, rem:0, profile:trimStr(m[4]||""), vibs:{}}; order.push(minute); }
+    if(isAdd) groups[minute].add++; else groups[minute].rem++;
+    groups[minute].vibs[m[2]]=1;
+    if(!groups[minute].profile && m[4]) groups[minute].profile=trimStr(m[4]);
+  }
+  // scheduled agents (e.g. HPE SUT on VxRail) re-stage the SAME VIB every ~30min - collapse
+  // consecutive identical small batches into one "recurring" summary row instead of hundreds
+  function gsig(g){ var ks=[]; for(var k in g.vibs){ if(g.vibs.hasOwnProperty(k)) ks.push(k); } ks.sort(); return g.add+"/"+g.rem+"/"+ks.join(","); }
+  function emit(g, recN, lastTs){
+    var lbl = recN>1 ? ("recurring software re-stage x"+recN+" ("+isoShort(g.ts)+" -> "+isoShort(lastTs)+") - scheduled agent behaviour, verify: ") : "image profile change - ";
+    ESXUP_EVENTS.push(g);
+    ACTIONS.push(mkAct(toEpoch(g.ts), g.ts, "esxupdate", lbl+g.add+" VIB(s) added, "+g.rem+" removed"+(g.profile?(" ("+trunc(g.profile,50)+")"):""), "esxupdate.log", "software change"));
+  }
+  var prevSig="", pend=null, pendN=0, pendLast="", emitted=0;
+  for(i=0;i<order.length;i++){ var g=groups[order[i]]; var sig=gsig(g);
+    if(pend && sig===prevSig && g.rem===0 && g.add<=2){ pendN++; pendLast=g.ts; continue; }
+    if(pend && emitted<60){ emit(pend, pendN, pendLast); emitted++; }
+    pend=g; pendN=1; pendLast=g.ts; prevSig=sig;
+  }
+  if(pend && emitted<60){ emit(pend, pendN, pendLast); emitted++; }
+  if(order.length) appendLog("  esxupdate: "+order.length+" raw batch(es) -> "+emitted+" event(s) after collapsing recurring re-stages");
+}
+/* ---- VCSA SSO identity audit (sso-events/audit_events.log): PrincipalManagement etc.
+   The rogue-SSO-admin detector: user/group creation, membership adds, password/policy changes,
+   with acting user + client IP. Login* events are skipped (websso already covers logons). ---- */
+function parseSsoAudit(){
+  var rel=resolveLog(["var/log/audit/sso-events/audit_events.log"]); if(!rel) return;
+  var lines=logLinesRot(rel), n=0, i;
+  for(i=0;i<lines.length;i++){ var ln=lines[i];
+    var m=ln.match(/^(\S+?Z)\s+\{/); if(!m) continue;
+    var ty=(ln.match(/"type":"([^"]*)"/)||[])[1]||"";
+    if(!ty || /Login|Logout/i.test(ty)) continue;   // logons covered by websso; logouts are noise
+    var usr=(ln.match(/"user":"([^"]*)"/)||[])[1]||"?";
+    var cli=(ln.match(/"client":"([^"]*)"/)||[])[1]||"";
+    var desc=(ln.match(/"description":"((?:[^"\\]|\\.)*)"/)||[])[1]||"";
+    desc=desc.replace(/\\"/g,'"').replace(/\\\\/g,"\\");
+    ACTIONS.push(mkAct(toEpoch(m[1]), m[1], usr+(cli?(" from "+cli):""), ty.replace(/^com\.vmware\.sso\./,"")+": "+desc, "sso audit", "SSO identity event"));
+    if(++n>=4000) break;
+  }
+  if(n) appendLog("  sso audit: "+n+" identity event(s)");
 }
 var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup)/;
 function nearestBefore(arr,ep){ var best=""; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep) best=arr[i].user; else break; } return best; }
@@ -1276,6 +1405,14 @@ function scoreAction(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob
   if(h){ r.score+=3; r.tags.push("IOC"); r.reasons.push("IOC/keyword: "+h); }
   var s=susCmd(r.cmd); if(s){ r.score+=3; r.tags.push("SUSPECT"); r.reasons.push(s); }
   if(/(Destroy_Task|PowerOff|UnregisterVM|Delete\w*_Task|RemoveAuthorizationRole|removeEntityPermissions)/.test(r.cmd)){ r.score+=2; r.tags.push("DESTRUCTIVE"); r.reasons.push("destructive/authz-changing vCenter task"); }
+  if(r.src==="vobd"){
+    if(/lockdown\w*\.disabled|firewall\.disabled\b/i.test(r.cmd)){ r.score+=3; r.tags.push("SUSPECT"); r.reasons.push("protection disabled (vobd audit)"); }
+    else if(/ssh\.enabled|shell\.enabled/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("remote shell access enabled (vobd audit)"); }
+    else if(/account\./i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("local account event (vobd audit)"); }
+    else if(/firewall/i.test(r.cmd)){ r.score+=1; r.reasons.push("non-routine firewall change"); }
+  }
+  if(r.src==="sso audit" && /creat|add|delete|remove|password|unlock|policy|certificat/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("SSO identity/config change"); }
+  if(r.src==="esxupdate.log"){ r.score+=1; r.reasons.push("software installed/removed on host"); }
 }
 function buildTimeline(){
   TIMELINE=[]; var i;
@@ -1465,6 +1602,12 @@ function buildPersistence(){
     if(acc) PERSIST.push(pfind("Persistence","VIB acceptance level",/community/i.test(acc)?"suspect":"clean","acceptance: "+acc+(/community/i.test(acc)?" - allows UNSIGNED VIBs":""),"commands/localcli_software-acceptance-get.txt"));
     var sk=resolveLog(["etc/ssh/keys-root/authorized_keys"]);
     PERSIST.push(sk? pfind("Persistence","root SSH authorized_keys","review","present - review key entries",sk) : pfind("Persistence","root SSH authorized_keys","na","not captured in this bundle"));
+    // VM autostart: a rogue VM set to auto-start survives host reboots
+    var vas=readMember("etc/vmware/hostd/vmAutoStart.xml");
+    if(!trimStr(vas)) PERSIST.push(pfind("Persistence","VM autostart (vmAutoStart.xml)","na","not captured in this bundle"));
+    else { var vasN=(vas.match(/<e id="/g)||[]).length; var vasOn=/<SystemDefaults>[\s\S]*?<enabled>true<\/enabled>/i.test(vas);
+      PERSIST.push(vasN? pfind("Persistence","VM autostart (vmAutoStart.xml)","review",vasN+" autostart entr"+(vasN===1?"y":"ies")+(vasOn?" (autostart ENABLED)":" (autostart master switch off)")+" - verify each VM is expected","etc/vmware/hostd/vmAutoStart.xml")
+                       : pfind("Persistence","VM autostart (vmAutoStart.xml)","clean","no autostart entries"+(vasOn?" (master switch on, list empty)":""))); }
     logIntegrity([["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]]);
   } else if(BTYPE==="vcsa"){
     var pre = MODE==="tree" ? fileExists(ROOT+"\\etc\\ld.so.preload") : (TOCMAP["etc/ld.so.preload"]!=null);
@@ -1552,8 +1695,10 @@ function buildVibChecks(GH){
   secAdd(GH,"Unrecognized VIB vendor", unknownV.length?"review":"pass",
     unknownV.length?(unknownV.length+" VIB(s) from a vendor not VMware/known-OEM - verify legitimacy: "+unknownV.slice(0,6).join(", ")):"all VIB vendors are VMware or known hardware OEMs");
   var addNote=""; if(added.length && (DFROM||DTO)){ var inW=0; for(i=0;i<added.length;i++){ var dd=dayNum(added[i].date); if((!DFROM||dd>=DFROM)&&(!DTO||dd<=DTO)) inW++; } if(inW) addNote=" ("+inW+" within the case window - HIGH interest)"; }
+  var upNote=""; if(ESXUP_EVENTS.length){ var upT=[]; for(var u=ESXUP_EVENTS.length-1;u>=0 && upT.length<3;u--) upT.push(isoShort(ESXUP_EVENTS[u].ts));
+    upNote="; esxupdate.log corroborates software-change activity at "+upT.join(", ")+(ESXUP_EVENTS.length>3?(" (+"+(ESXUP_EVENTS.length-3)+" earlier)"):""); }
   secAdd(GH,"VIBs added after the base image", added.length?"review":"pass",
-    added.length?(added.length+" VIB(s) installed after the "+base+" base image"+addNote+" - often legitimate (patches/OEM add-ons) but confirm each, especially any CommunitySupported: "+added.slice(0,6).map(function(v){return v.name+" ("+v.date+", "+v.acc+")";}).join("; ")):"all VIBs date to the "+base+" base image");
+    added.length?(added.length+" VIB(s) installed after the "+base+" base image"+addNote+" - often legitimate (patches/OEM add-ons) but confirm each, especially any CommunitySupported: "+added.slice(0,6).map(function(v){return v.name+" ("+v.date+", "+v.acc+")";}).join("; ")+upNote):("all VIBs date to the "+base+" base image"+upNote));
   secAdd(GH,"VIB inventory", "pass",
     VIBS.length+" VIBs: "+certified+" VMwareCertified / "+accepted+" VMwareAccepted / "+partner+" PartnerSupported / "+community.length+" CommunitySupported; "+thirdParty+" non-VMware"+(vlist.length?(" ("+vlist.sort().join(", ")+")"):""));
 }
@@ -1635,6 +1780,13 @@ function buildSecurity(){
   secAdd(GL,"Failed-login volume", lf>=10?"warn":"pass", lf+" failed login(s) in the window"+(lf>=10?" - possible guessing/spray; check the Logons tab":""));
   var li=secLogIntegrity();
   secAdd(GL,"Log integrity", li?"warn":"pass", li?(li+" key log(s) empty/truncated (see Persistence) - logging tamper or rollover"):"key logs present with content");
+  if(BTYPE==="esxi"){
+    if(!VOBD_STATS || !VOBD_STATS.captured) secAdd(GL,"Host audit events (vobd)","na","vobd log/rotations not captured");
+    else { var vh=VOBD_STATS.ssh+VOBD_STATS.shell+VOBD_STATS.acct+VOBD_STATS.lockdown+VOBD_STATS.fw;
+      secAdd(GL,"Host audit events (vobd)", vh?"warn":"pass",
+        vh?(VOBD_STATS.ssh+" SSH-enable/disable, "+VOBD_STATS.shell+" shell, "+VOBD_STATS.acct+" account, "+VOBD_STATS.lockdown+" lockdown, "+VOBD_STATS.fw+" non-routine firewall event(s) - review the Actions tab (source vobd)")
+          :(VOBD_STATS.total+" audit event(s), none security-relevant beyond routine patching churn")); }
+  }
 }
 function secScoreOf(){ var p=0,t=0; for(var i=0;i<SECPOST.length;i++){ var s=SECPOST[i].status; if(s==="na") continue; t++; if(s==="pass") p++; } return {p:p,t:t}; }
 
@@ -1680,10 +1832,13 @@ function parsePortgroupsEsxi(){
         var vm=l.match(/com\.vmware\.vswitch\.port\.vlan\s*=\s*(.+?)\s*$/i); if(vm) cur.vlan=trimStr(vm[1]);
         var vm2=l.match(/com\.vmware\.common\.port\.volatile\.vlan\s*=\s*(.+?)\s*$/i); if(vm2 && !cur.vlan) cur.vlan=trimStr(vm2[1]); } }
     commit();
+    // hostd's dvportgroups.xml.gz maps dvportgroup-N ids to their HUMAN names
+    var names={}, nx=readMemberGz("etc/vmware/hostd/dvportgroups.xml.gz"), nm2, nre=/<portgroupKey>([^<]+)<\/portgroupKey>[\s\S]*?<name>([^<]+)<\/name>/g;
+    while((nm2=nre.exec(nx))){ names[nm2[1]]=nm2[2]; }
     for(var key in pg){ if(!pg.hasOwnProperty(key)) continue; var g=pg[key];
       var vl=[]; for(var vv in g.vlans) if(g.vlans.hasOwnProperty(vv)) vl.push(vv);
       var al2=[]; for(var aa in g.aliases) if(g.aliases.hasOwnProperty(aa)) al2.push(aa);
-      out.dvs.push({pg:g.pgid, dvs:g.dvs, vlan:vl.join(", ")||"-", ports:g.ports, aliases:al2.slice(0,5).join(", ")}); }
+      out.dvs.push({pg:g.pgid, pgName:names[g.pgid]||"", dvs:g.dvs, vlan:vl.join(", ")||"-", ports:g.ports, aliases:al2.slice(0,5).join(", ")}); }
     out.dvs.sort(function(a,b){ return a.pg<b.pg?-1:(a.pg>b.pg?1:0); }); }
   return out;
 }
@@ -1730,8 +1885,8 @@ function buildSpecEsxi(){
   if(pgs.std.length){ var sp1=specSec("Port groups &amp; VLANs (standard vSwitch)","tbl"); sp1.head=["Port group","vSwitch","VLAN ID","Uplinks"];
     for(i=0;i<pgs.std.length;i++){ var p1=pgs.std[i]; sp1.rows.push([p1.pg, p1.sw, p1.vlan, p1.uplinks||""]); } }
   if(pgs.dvs.length){ var sp2=specSec("Distributed port groups &amp; VLANs (DVS)"+(pgs.dvsNames.length?(" - "+distinct(pgs.dvsNames).join(", ")):""),"tbl");
-    sp2.head=["dvPortgroup ID","Distributed switch","VLAN","Host ports","Port aliases (sample)"];
-    for(i=0;i<pgs.dvs.length;i++){ var p2=pgs.dvs[i]; sp2.rows.push([p2.pg, p2.dvs||"", p2.vlan, String(p2.ports), p2.aliases||""]); } }
+    sp2.head=["Port group","dvPortgroup ID","Distributed switch","VLAN","Host ports","Port aliases (sample)"];
+    for(i=0;i<pgs.dvs.length;i++){ var p2=pgs.dvs[i]; sp2.rows.push([p2.pgName||"-", p2.pg, p2.dvs||"", p2.vlan, String(p2.ports), p2.aliases||""]); } }
   // datastores
   var st=readMember("commands/localcli_storage-filesystem-list--i.txt"); if(!trimStr(st)) st=readMember("commands/localcli_storage-filesystem-list.txt");
   if(trimStr(st)){ var s3=specSec("Datastores / volumes","tbl"); s3.head=["Volume","Type","Size","Free","Mounted"];
@@ -2138,7 +2293,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; LOG_TRUNC=[]; }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -2248,6 +2403,7 @@ function triageFleet(){
   var root=trimStr($("inPath").value);
   if(!folderExists(root)){ setStatus("Fleet mode: point the Bundle field (or Pick folder) at a FOLDER that contains the bundles.","err"); return; }
   try{ FLEET_REUSE = !!$("fleetReuse").checked; }catch(e){ FLEET_REUSE=true; }
+  try{ DEEPROT = !!$("deepRot").checked; }catch(eDR){ DEEPROT=false; }
   appendLog("=== FLEET discovery under "+root+" ==="+(FLEET_REUSE?" (reuse cached analysis where source unchanged)":" (forced fresh re-analysis)"));
   FLEET_CANDS=discoverBundles(root); FLEET=[]; FLEET_HOSTS={}; FLEET_I=0;
   if(!FLEET_CANDS.length){ setStatus("No bundle archives or extracted bundle folders found under that folder.","err"); return; }
