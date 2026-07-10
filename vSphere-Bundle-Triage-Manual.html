@@ -85,7 +85,7 @@
 <header class="top">
   <h1>vSphere Support Bundle Triage Tool</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles — one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.9</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v0.9.10</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -123,7 +123,7 @@
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
   <!-- header -->
   <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
-  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.9</tspan></text>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v0.9.10</tspan></text>
   <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
   <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
   <!-- tabs -->
@@ -182,6 +182,7 @@
 <ul>
   <li><b>Patch state</b> — build number vs the tracked CVE fix-builds (summarises the Overview CVE panel; advisory, verify against the VMSA).</li>
   <li><b>Hardening controls</b> (ESXi) — VIB acceptance, host encryption mode / <code>execInstalledOnly</code> / Require Secure Boot, TPM &amp; measured boot, MOB, account lockout, password policy, shell/SSH idle timeouts, DCUI access, remote syslog, NTP. Settings checks read <code>advanced-list -d</code> (options <i>changed from default</i>), so "at default" is provable, not assumed. vCenter: SSO identity sources, rsyslog forwarding, NTP.</li>
+  <li><b>Installed VIBs (software integrity)</b> — parses <code>software-vib-list</code> (Name / Version / Vendor / Acceptance / Install date) and flags the rogue-VIB persistence tells: any <b>CommunitySupported (unsigned)</b> package, VIBs from a vendor that isn't VMware or a known hardware OEM, and VIBs <b>installed after the base image</b> (highlighted if within the case window). A <b>Third-party &amp; non-standard VIBs</b> table lists every non-VMware / non-Certified package with its full metadata, risk-sorted.</li>
   <li><b>Log-corroborated controls</b> — what the logs show actually happened: SSH logins and ESXi Shell usage observed, logons from public IPs, failed-login volume, and log-integrity gaps. Config claims and observed behaviour are graded separately, so a "disabled" control that the logs show being used still surfaces.</li>
 </ul>
 <div class="note">Support bundles are targeted: a control whose source file isn't captured is graded <b>n/a</b> — never assumed compliant. Lockdown mode on ESXi 7+ lives in the ConfigStore, which <code>vm-support</code> does not capture. The checks are <b>version-aware</b>: patch-state verdicts select the fix line by the host's version and update level; capture-driven checks degrade to n/a on versions that lack a capture; and the "at default" claims are the documented 7.x/8.x defaults — on other versions the check still proves the setting is <i>unchanged</i>, but flags the default value for verification.</div>
@@ -419,7 +420,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Triage Tool — Field Manual for v0.9.9. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Triage Tool — Field Manual for v0.9.10. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>

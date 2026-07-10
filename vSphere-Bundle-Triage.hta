@@ -105,6 +105,9 @@
   .tag.persist{background:#3a1416;color:#ff8b8b;border:1px solid #8b3a3a}
   .tag.cmd{background:#21262d;color:#8b949e;border:1px solid #30363d}
   .tag.danger{background:#3a1416;color:#ff6b6b;border:1px solid #b83030;font-weight:700}
+  .tag.sus{background:#3a1416;color:#ff8b8b;border:1px solid #8b3a3a}
+  .hl-ioc{color:#ff6b6b;font-weight:600}
+  tr.hl-ioc td{color:#ff8b8b}
   .pgood{color:#3fb950;font-weight:600}.pmiss{color:#8b949e}.pkey{color:#e3b341;font-weight:700}
   .dl{font-family:Consolas,"Courier New",monospace;font-size:11px;max-height:340px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px;margin:4px 0;white-space:pre-wrap;word-break:break-word;width:100%;box-sizing:border-box}
   .lnk{cursor:pointer;color:#58a6ff}
@@ -392,7 +395,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.9";
+var APP_VERSION = "0.9.10";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -1316,7 +1319,7 @@ function writeAnalysisOutputs(){ try{
 /* ============================================================
    DROP-2: ransomware indicators + CVE exposure + case-note report
    ============================================================ */
-var INDIC=[], CVES=[], PERSIST=[], SPEC=[], VMS=[], SECPOST=[];
+var INDIC=[], CVES=[], PERSIST=[], SPEC=[], VMS=[], SECPOST=[], VIBS=[], VIBS_NOTABLE=[];
 function actCount(sub){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;j<ACTIONS[i].reasons.length;j++){ if(ACTIONS[i].reasons[j].indexOf(sub)>=0){ n++; break; } } } return n; }
 function logonExternal(){ var n=0,ips={}; for(var i=0;i<LOGON.length;i++){ var r=LOGON[i]; if(r.ip && !ipIsLocal(r.ip)){ n++; ips[r.ip]=1; } } var list=[]; for(var k in ips){ if(ips.hasOwnProperty(k)) list.push(k); } return {n:n, ips:list}; }
 function logonFail(){ var n=0; for(var i=0;i<LOGON.length;i++) if(LOGON[i].result==="FAIL") n++; return n; }
@@ -1498,6 +1501,60 @@ function advChangedMap(){
 }
 function secShellCount(){ var n=0; for(var i=0;i<ACTIONS.length;i++){ if(/shell/i.test(ACTIONS[i].akind||"")) n++; } return n; }
 function secLogIntegrity(){ var n=0; for(var i=0;i<PERSIST.length;i++){ var f=PERSIST[i]; if(f.cat==="Log integrity" && f.verdict==="suspect") n++; } return n; }
+/* ---- VIB (installed package) inventory: rogue/unsigned-VIB persistence check ----
+   commands/localcli_software-vib-list.txt = fixed-width: Name / Version / Vendor / Acceptance Level / Install Date.
+   Malicious ESXi persistence (e.g. VirtualPita/VirtualGate) ships as CommunitySupported VIBs from odd vendors,
+   often installed long after the base image. All three columns are the tell. */
+var VIB_KNOWN_VENDORS={ "vmw":1,"vmware":1,"del":1,"dell":1,"dellemc":1,"emc":1,"bcm":1,"broadcom":1,"int":1,"intel":1,
+  "mel":1,"mlx":1,"nvd":1,"nvidia":1,"qlc":1,"qlogic":1,"mrvl":1,"marvell":1,"hpe":1,"hp":1,"len":1,"lenovo":1,
+  "cis":1,"cisco":1,"mscc":1,"microsemi":1,"atto":1,"elx":1,"emulex":1,"vxrail":1,"fts":1,"fujitsu":1,"hit":1,
+  "hitachi":1,"pensando":1,"amd":1,"nec":1,"sup":1,"supermicro":1 };
+function vibTrust(a){ a=lc(a); if(a.indexOf("certified")>=0) return 3; if(a.indexOf("accepted")>=0) return 2; if(a.indexOf("partner")>=0) return 1; if(a.indexOf("community")>=0) return 0; return 1; }
+function vibCol(ln, spans, k){ var s=spans[k]; var end=(k===spans.length-1)?ln.length:spans[k+1][0]; if(s[0]>=ln.length) return ""; return trimStr(ln.substring(s[0], Math.min(end, ln.length))); }
+function parseVibs(){
+  var t=readMember("commands/localcli_software-vib-list.txt"); if(!trimStr(t)) return [];
+  var lines=String(t).split("\n"), di=-1, i;
+  for(i=0;i<lines.length;i++){ if(/^[\-\s]+$/.test(lines[i]) && lines[i].indexOf("--")>=0){ di=i; break; } }
+  if(di<1) return [];
+  var spans=[], m, re=/-+/g, dl=lines[di]; while((m=re.exec(dl))){ spans.push([m.index, m.index+m[0].length]); }
+  if(spans.length<5) return [];
+  var out=[];
+  for(i=di+1;i<lines.length;i++){ var ln=lines[i]; if(!trimStr(ln)) continue;
+    var name=vibCol(ln,spans,0); if(!name || /^name$/i.test(name)) continue;
+    var vend=vibCol(ln,spans,2), acc=vibCol(ln,spans,3);
+    out.push({ name:name, ver:vibCol(ln,spans,1), vendor:vend, acc:acc, date:vibCol(ln,spans,4),
+      vmware:/^vmw(are)?$/i.test(vend), known:(VIB_KNOWN_VENDORS[lc(vend)]===1), trust:vibTrust(acc) });
+  }
+  return out;
+}
+function vibBaseDate(list){ var freq={}, best="", bc=-1; for(var i=0;i<list.length;i++){ var d=list[i].date; if(!/^\d{4}-\d{2}-\d{2}/.test(d)) continue; freq[d]=(freq[d]||0)+1; if(freq[d]>bc){ bc=freq[d]; best=d; } } return best; }
+function buildVibChecks(GH){
+  VIBS=parseVibs(); VIBS_NOTABLE=[];
+  if(!VIBS.length){ secAdd(GH,"Installed VIBs (software integrity)","na","software-vib-list not captured"); return; }
+  var i, community=[], partner=0, accepted=0, certified=0, thirdParty=0, unknownV=[], vendors={};
+  var base=vibBaseDate(VIBS), added=[];
+  for(i=0;i<VIBS.length;i++){ var v=VIBS[i];
+    if(v.trust===0) community.push(v.name); else if(v.trust===1) partner++; else if(v.trust===2) accepted++; else certified++;
+    if(!v.vmware){ thirdParty++; vendors[v.vendor]=1; }
+    if(!v.known && !v.vmware) unknownV.push(v.name+" ["+v.vendor+"]");
+    if(base && /^\d{4}-\d{2}-\d{2}/.test(v.date) && v.date>base) added.push(v);
+    if(v.trust<=1 || !v.known) VIBS_NOTABLE.push(v);   // community/partner OR unrecognized vendor -> show in detail table
+  }
+  // also surface every non-VMware VIB in the detail table (Ben asked to list non-VMware VIBs) - dedup by name
+  var have={}; for(i=0;i<VIBS_NOTABLE.length;i++) have[VIBS_NOTABLE[i].name]=1;
+  for(i=0;i<VIBS.length;i++){ if(!VIBS[i].vmware && !have[VIBS[i].name]){ VIBS_NOTABLE.push(VIBS[i]); have[VIBS[i].name]=1; } }
+  VIBS_NOTABLE.sort(function(a,b){ if(a.trust!==b.trust) return a.trust-b.trust; return a.name<b.name?-1:1; });
+  var vlist=[]; for(var vk in vendors){ if(vendors.hasOwnProperty(vk)) vlist.push(vk); }
+  secAdd(GH,"Unsigned VIBs (CommunitySupported)", community.length?"fail":"pass",
+    community.length?(community.length+" CommunitySupported VIB(s) - UNSIGNED, the classic rogue-VIB persistence tell: "+community.slice(0,8).join(", ")):"none - no unsigned/CommunitySupported packages");
+  secAdd(GH,"Unrecognized VIB vendor", unknownV.length?"review":"pass",
+    unknownV.length?(unknownV.length+" VIB(s) from a vendor not VMware/known-OEM - verify legitimacy: "+unknownV.slice(0,6).join(", ")):"all VIB vendors are VMware or known hardware OEMs");
+  var addNote=""; if(added.length && (DFROM||DTO)){ var inW=0; for(i=0;i<added.length;i++){ var dd=dayNum(added[i].date); if((!DFROM||dd>=DFROM)&&(!DTO||dd<=DTO)) inW++; } if(inW) addNote=" ("+inW+" within the case window - HIGH interest)"; }
+  secAdd(GH,"VIBs added after the base image", added.length?"review":"pass",
+    added.length?(added.length+" VIB(s) installed after the "+base+" base image"+addNote+" - often legitimate (patches/OEM add-ons) but confirm each, especially any CommunitySupported: "+added.slice(0,6).map(function(v){return v.name+" ("+v.date+", "+v.acc+")";}).join("; ")):"all VIBs date to the "+base+" base image");
+  secAdd(GH,"VIB inventory", "pass",
+    VIBS.length+" VIBs: "+certified+" VMwareCertified / "+accepted+" VMwareAccepted / "+partner+" PartnerSupported / "+community.length+" CommunitySupported; "+thirdParty+" non-VMware"+(vlist.length?(" ("+vlist.sort().join(", ")+")"):""));
+}
 function buildSecurity(){
   SECPOST=[];
   var GP="Patch state", GH="Hardening controls", GL="Log-corroborated controls";
@@ -1512,8 +1569,9 @@ function buildSecurity(){
     // --- hardening (config captures) ---
     var adv=advChangedMap();
     var acc=lc(NODE.acceptance||"");
-    if(!acc) secAdd(GH,"VIB acceptance level","na","acceptance capture missing");
-    else secAdd(GH,"VIB acceptance level", acc.indexOf("communitysupported")>=0?"fail":"pass", NODE.acceptance+(acc.indexOf("communitysupported")>=0?" - unsigned community VIBs allowed (rogue-VIB risk)":""));
+    if(!acc) secAdd(GH,"VIB acceptance level (host policy)","na","acceptance capture missing");
+    else secAdd(GH,"VIB acceptance level (host policy)", acc.indexOf("communitysupported")>=0?"fail":"pass", NODE.acceptance+(acc.indexOf("communitysupported")>=0?" - unsigned community VIBs allowed (rogue-VIB risk)":""));
+    buildVibChecks(GH);
     var enc=readMember("commands/localcli_system-settings-encryption-get.txt");
     if(!trimStr(enc)) secAdd(GH,"Host encryption mode","na","encryption capture missing");
     else { var mode=(enc.match(/Mode:\s*(\S+)/i)||[])[1]||"?";
@@ -1889,7 +1947,12 @@ function buildReportHtml(){
     h.push('<table><tr><th>Group</th><th>Control</th><th>Status</th><th>Detail</th></tr>');
     for(i=0;i<SECPOST.length;i++){ var sp=SECPOST[i]; var scls=sp.status==="fail"?"hit":(sp.status==="warn"?"warn":(sp.status==="na"?"na":"clear"));
       h.push('<tr><td>'+rEsc(sp.grp)+'</td><td>'+rEsc(sp.name)+'</td><td class="'+scls+'">'+rEsc(sp.status==="na"?"n/a":sp.status.toUpperCase())+'</td><td>'+rEsc(sp.detail)+'</td></tr>'); }
-    h.push('</table>'); }
+    h.push('</table>');
+    if(VIBS_NOTABLE.length){ h.push('<h3>Third-party &amp; non-standard VIBs ('+VIBS_NOTABLE.length+' of '+VIBS.length+')</h3>');
+      h.push('<table><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr>');
+      for(i=0;i<VIBS_NOTABLE.length;i++){ var vb=VIBS_NOTABLE[i]; var vc=vb.trust===0?"hit":((vb.trust===1||!vb.known)?"warn":"");
+        h.push('<tr><td class="mono">'+rEsc(vb.name)+'</td><td class="mono">'+rEsc(vb.ver)+'</td><td class="mono'+(vc?" "+vc:"")+'">'+rEsc(vb.vendor)+(vb.known||vb.vmware?"":" (unknown)")+'</td><td class="'+vc+'">'+rEsc(vb.acc)+'</td><td class="mono">'+rEsc(vb.date)+'</td></tr>'); }
+      h.push('</table>'); } }
   // logon summary
   var ext=logonExternal();
   h.push('<h2>Logon summary</h2><p>'+LOGON.length+' login event(s); '+logonFail()+' failed; '+ext.n+' from external IP'+(ext.ips.length?(' ('+rEsc(ext.ips.slice(0,8).join(", "))+')'):'')+'.</p>');
@@ -2017,7 +2080,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; LOG_TRUNC=[]; }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -2463,6 +2526,14 @@ function renderSecurity(){
     for(i=0;i<SECPOST.length;i++){ var r=SECPOST[i]; if(r.grp!==grp) continue;
       h+='<div class="ind"><span class="dot '+secDotCls(r.status)+'"></span><span class="nm">'+esc(r.name)+'</span><span class="st '+secStCls(r.status)+'">'+esc(r.status==="na"?"n/a":r.status.toUpperCase())+'</span><span class="dt">'+esc(r.detail)+'</span></div>'; }
     h+='</div>'; }
+  if(VIBS_NOTABLE.length){
+    h+='<div class="panel" style="margin-bottom:10px"><h4>Third-party &amp; non-standard VIBs <span class="sub" style="font-weight:400;text-transform:none;color:#8b949e">- '+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages (VMwareCertified VMware VIBs omitted). Confirm any unsigned / unrecognized-vendor / recently-added entry.</span></h4>';
+    h+='<div class="scroll" style="max-height:34vh"><table><thead><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr></thead><tbody>';
+    for(var v=0;v<VIBS_NOTABLE.length;v++){ var vb=VIBS_NOTABLE[v];
+      var tint=vb.trust===0?' class="hl-ioc"':(vb.trust===1||!vb.known?' style="color:#e3b341"':'');
+      h+='<tr'+tint+'><td class="mono">'+esc(vb.name)+'</td><td class="mono muted">'+esc(vb.ver)+'</td><td class="mono">'+esc(vb.vendor)+(vb.known||vb.vmware?'':' <span class="tag sus">unknown</span>')+'</td><td class="mono">'+esc(vb.acc)+'</td><td class="mono">'+esc(vb.date)+'</td></tr>'; }
+    h+='</tbody></table></div></div>';
+  }
   $("secBody").innerHTML=h;
 }
 
