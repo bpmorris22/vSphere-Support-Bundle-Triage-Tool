@@ -318,7 +318,8 @@
           <label style="font-size:12px" title="Pair Login/Logout into one row per API session. vCenter: vpxd SessionManager calls keyed by session ID (user from the SAML token; source IP time-joined from the envoy access log when unambiguous). ESXi: hostd session events (logout carries API-call count and client agent). An API session is ANY client session (vSphere Client, managed hosts, solutions) - not only humans."><input type="checkbox" id="sessView"> Login sessions (paired)</label>
           <span id="sessOpts" class="hide"> &middot;
             <label style="font-size:12px" title="Hide sessions whose source IP is loopback (127.0.0.1 / ::1) - the appliance's own internal services, not remote clients. On by default; a session whose IP could not be resolved is kept."><input type="checkbox" id="sessLoop" checked> hide loopback</label> &middot;
-            <label style="font-size:12px" title="Hide brief sessions below the threshold - the short automated API sessions (often 0s, a few invocations). Sessions with no logout (unknown duration) are always kept."><input type="checkbox" id="sessMinOn"> hide brief &lt;</label> <input class="txt mono" id="sessMinSec" value="5" style="width:40px" title="Minimum session duration, seconds"> s</span></span>
+            <label style="font-size:12px" title="Hide brief sessions below the threshold - the short automated API sessions (often 0s, a few invocations). Sessions with no logout (unknown duration) are always kept."><input type="checkbox" id="sessMinOn"> hide brief &lt;</label> <input class="txt mono" id="sessMinSec" value="5" style="width:40px" title="Minimum session duration, seconds"> s &middot;
+            <label style="font-size:12px" title="Hide unpaired rows - sessions missing a login or logout in the captured window (blank duration: still active at capture, pre-window, or a failed login). The brief filter deliberately keeps these; tick this to drop them too."><input type="checkbox" id="sessNoUnp"> hide unpaired</label></span></span>
         <span id="actFilt" class="hide"><span class="sep"></span>
           <span style="font-size:12px">actor <select id="actActor" class="txt" style="max-width:160px" title="Filter Actions by actor"></select> &middot; kind <select id="actKind" class="txt" style="max-width:170px" title="Filter Actions by kind"></select></span></span>
         <span id="timeFilt" class="hide"><span class="sep"></span>
@@ -416,7 +417,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.2.0";
+var APP_VERSION = "1.2.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -440,6 +441,7 @@ var SESS_VIEW=false;    // Logons tab: false=raw login events, true=paired sessi
 var SESS_HIDELOOP=true; // sessions view: hide loopback-source (internal-service) sessions - ON by default
 var SESS_MINON=false;   // sessions view: hide brief sessions (< SESS_MINSEC)
 var SESS_MINSEC=5;      // brief-session threshold, seconds
+var SESS_NOUNP=false;   // sessions view: hide unpaired rows (no login or no logout in window = blank duration)
 var LISTEN_HIDELOOP=true; // Network tab: hide loopback-only listeners - ON by default
 var ACT_ACTOR="", ACT_KIND="";  // Actions tab: actor + kind dropdown filters
 var TIME_KIND="";               // Timeline tab: kind dropdown filter
@@ -3317,14 +3319,15 @@ var SESSCOLS=[
   {h:"Log", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
 ];
 function renderSessions(){
-  var rows=[], hidLoop=0, hidBrief=0; for(var i=0;i<SESSIONS.length;i++){ var r=SESSIONS[i];
+  var rows=[], hidLoop=0, hidBrief=0, hidUnp=0; for(var i=0;i<SESSIONS.length;i++){ var r=SESSIONS[i];
     if(TQUERY && r.blob.indexOf(TQUERY)<0) continue;
     if((DFROM||DTO) && r.epoch && !inWin(r.epoch)) continue;
     if(SESS_HIDELOOP && r.ip && /^127\.|^::1$/.test(r.ip)){ hidLoop++; continue; }   // loopback = appliance's own services
     if(SESS_MINON && r.dur>=0 && r.dur<SESS_MINSEC){ hidBrief++; continue; }          // keep unknown-duration (no logout) rows
+    if(SESS_NOUNP && r.dur<0){ hidUnp++; continue; }                                  // unpaired = blank duration (login-only / logout-only)
     rows.push(r); }
   sortRows(rows,SESSCOLS,SORT.sess); drawTable(SESSCOLS,rows,SORT.sess,"sess");
-  var hid=[]; if(hidLoop) hid.push(hidLoop+" loopback"); if(hidBrief) hid.push(hidBrief+" brief (<"+SESS_MINSEC+"s)");
+  var hid=[]; if(hidLoop) hid.push(hidLoop+" loopback"); if(hidBrief) hid.push(hidBrief+" brief (<"+SESS_MINSEC+"s)"); if(hidUnp) hid.push(hidUnp+" unpaired");
   if(hid.length && SESSIONS.length) $("tcount").innerHTML+=' <span class="muted">&middot; '+hid.join(", ")+" hidden</span>";
   if(!SESSIONS.length) $("tbl").innerHTML='<thead><tr><th>Login sessions</th></tr></thead><tbody><tr><td class="muted">No pairable session events parsed ('+(BTYPE==="vcsa"?"vpxd SessionManager login/logout - note vpxd.log often covers only a few hours":"hostd \"logged in/out\" events")+'). The raw Logons view (untick the checkbox) may still have login events from other logs.</td></tr></tbody>'; }
 var ACOLS=[
@@ -3694,6 +3697,7 @@ function init(){
   $("sessView").onclick=function(){ SESS_VIEW=!!this.checked; showEl("sessOpts",TAB==="logon"&&SESS_VIEW); showEl("scoreFilt",(TAB==="logon"&&!SESS_VIEW)||TAB==="act"||TAB==="time"); render(); };
   $("sessLoop").onclick=function(){ SESS_HIDELOOP=!!this.checked; render(); };
   $("sessMinOn").onclick=function(){ SESS_MINON=!!this.checked; render(); };
+  $("sessNoUnp").onclick=function(){ SESS_NOUNP=!!this.checked; render(); };
   $("sessMinSec").onchange=function(){ var v=parseInt(this.value,10); SESS_MINSEC=(isNaN(v)||v<0)?5:v; this.value=SESS_MINSEC; if(SESS_MINON) render(); };
   $("actActor").onchange=function(){ ACT_ACTOR=this.value; render(); };
   $("actKind").onchange=function(){ ACT_KIND=this.value; render(); };

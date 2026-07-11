@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vSphere Support Bundle Triage Tool — Field Manual</title>
+<title>vSphere Support Bundle Triage Tool - Field Manual</title>
 <style>
   :root{--blue:#58a6ff;--ink:#e6edf3;--mut:#8b949e;--line:#30363d;--bg:#0d1117;--card:#161b22;--code:#1c2330}
   *{box-sizing:border-box}
@@ -85,12 +85,12 @@
 <main>
 <header class="top">
   <h1>vSphere Support Bundle Triage Tool</h1>
-  <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles — one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.2.0</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles - one HTA, no dependencies, never touches the source host.</div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.2.1</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
-<p>This tool ingests a VMware <b>ESXi</b> or <b>vCenter (VCSA)</b> support bundle and turns it into a fast, scored investigation surface for two questions: <b>what is this node</b> (configuration, VMs, storage) and <b>what happened on it</b> (logins, actions, persistence, ransomware/intrusion indicators). It runs as a single Windows HTA — no install, no runtime — and reads the bundle read-only. It never runs <code>vm-support</code>/<code>vc-support</code> and never contacts the source host.</p>
+<p>This tool ingests a VMware <b>ESXi</b> or <b>vCenter (VCSA)</b> support bundle and turns it into a fast, scored investigation surface for two questions: <b>what is this node</b> (configuration, VMs, storage) and <b>what happened on it</b> (logins, actions, persistence, ransomware/intrusion indicators). It runs as a single Windows HTA - no install, no runtime - and reads the bundle read-only. It never runs <code>vm-support</code>/<code>vc-support</code> and never contacts the source host.</p>
 <div class="grid2">
 <div class="card"><b>Auto-detects the bundle type</b><br><span class="muted">ESXi vs vCenter is decided from the tree (<code>etc/vmware/esx.conf</code> vs <code>var/log/vmware/vpxd/</code>) with README / name-prefix fallbacks. The tab set adapts.</span></div>
 <div class="card"><b>Single node or a whole fleet</b><br><span class="muted">Triage one bundle, or point at a folder of bundles (a cluster) and get a roster + cross-host correlation and the vCenter&rarr;ESXi task chain.</span></div>
@@ -100,9 +100,9 @@
 <ul>
   <li><b>Extraction engine:</b> Windows' built-in <code>C:\Windows\System32\tar.exe</code> (bsdtar). No 7-Zip needed for <code>.tgz</code>/<code>.tar</code>.</li>
   <li><b>Table-of-contents first:</b> the bundle index is read once (<code>bsdtar -tvf</code>, cached to <code>toc.tsv</code>) so the Key Files board and node summary paint <em>without</em> unpacking gigabytes. Individual files are extracted on demand.</li>
-  <li><b>Compressed logs:</b> <code>.gz</code> inner logs decompress automatically; <code>.zst</code> (vCenter) needs <code>zstd.exe</code> — the tool probes <code>tools\</code> and PATH and, if missing, offers to fetch the official build from the facebook/zstd GitHub release.</li>
+  <li><b>Compressed logs:</b> <code>.gz</code> inner logs decompress automatically; <code>.zst</code> (vCenter) needs <code>zstd.exe</code> - the tool probes <code>tools\</code> and PATH and, if missing, offers to fetch the official build from the facebook/zstd GitHub release.</li>
   <li><b>Deep vSAN paths:</b> vSAN datastore paths contain <code>:</code> (illegal on NTFS); the tool handles bsdtar's <code>:</code>&rarr;<code>_</code> rewrite and reads deep files via stdout to stay under the 260-char path limit.</li>
-  <li><b>Output:</b> everything lands under <code>_Processed\&lt;host&gt;\vSphere\</code> next to the app — TOC cache, extracted files, <code>runinfo.json</code>, <code>inventory.json</code>, CSVs and reports.</li>
+  <li><b>Output:</b> everything lands under <code>_Processed\&lt;host&gt;\vSphere\</code> next to the app - TOC cache, extracted files, <code>runinfo.json</code>, <code>inventory.json</code>, CSVs and reports.</li>
 </ul>
 <div class="note"><b>Requirements:</b> Windows 10/11 (ships bsdtar), run the <code>.hta</code> from a <b>local</b> path (network paths trigger Windows zone restrictions on the UTF-8 reader). Analysis runs read-only against a copy of the bundle.</div>
 
@@ -110,7 +110,7 @@
 <ol>
   <li>Put the <code>.hta</code> in a working folder (e.g. <code>Documents\Claude\Artifacts\vSphere-Bundle-Triage\</code>) and double-click it.</li>
   <li><b>Bundle field:</b> point at the nested archive that holds the tree (ESXi <code>&lt;host&gt;.tar</code> / vCenter <code>&lt;host&gt;.tgz</code>), the outer <code>.tgz</code>, or an already-extracted folder. <b>Browse…</b> or <b>Pick folder…</b> help.</li>
-  <li><b>Target hostname</b> is required — it names the output folder. It is guessed from the bundle name; correct it if needed.</li>
+  <li><b>Target hostname</b> is required - it names the output folder. It is guessed from the bundle name; correct it if needed.</li>
   <li>Click <b>Analyze bundle</b>. The button turns blue when the field points at a single bundle; <b>Triage fleet folder…</b> turns blue when it points at a folder holding two or more bundles.</li>
 </ol>
 <p>Log analysis (Logons / Actions / Timeline / Persistence / IOC) runs automatically after Analyze. Use <b>Show log</b> to see extraction and per-log line counts.</p>
@@ -119,13 +119,13 @@
 <p>Every table in the app keeps its <b>header row pinned</b> while you scroll, and columns are drag-resizable (double-click a grip to reset).</p>
 
 <h3 id="overview-tab">Overview</h3>
-<p>Node configuration summary + key-file coverage, the <b>intrusion / ransomware indicator</b> panel, and the <b>CVE exposure</b> panel. The stat bubbles at the bottom (Logons, Actions, Timeline, IOC hits) are <b>clickable</b> — they jump to the matching tab. Buttons: <b>Re-run log analysis</b> and <b>Case-note report</b> (green).</p>
+<p>Node configuration summary + key-file coverage, the <b>intrusion / ransomware indicator</b> panel, and the <b>CVE exposure</b> panel. The stat bubbles at the bottom (Logons, Actions, Timeline, IOC hits) are <b>clickable</b> - they jump to the matching tab. Buttons: <b>Re-run log analysis</b> and <b>Case-note report</b> (green).</p>
 <figure>
 <svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
   <!-- header -->
   <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
-  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v1.2.0</tspan></text>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v1.2.1</tspan></text>
   <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
   <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
   <!-- tabs -->
@@ -157,7 +157,7 @@
     <circle cx="526" cy="234" r="4" fill="#3fb950"/><text x="538" y="238" fill="#e6edf3">Ransom notes / encrypted files</text><text x="700" y="238" fill="#3fb950">clear</text>
     <circle cx="526" cy="254" r="4" fill="#3fb950"/><text x="538" y="258" fill="#e6edf3">External source IP on login</text><text x="700" y="258" fill="#3fb950">clear</text>
   </g>
-  <text x="520" y="282" fill="#8b949e" font-size="10.5" letter-spacing="0.5">CVE EXPOSURE — advisory</text>
+  <text x="520" y="282" fill="#8b949e" font-size="10.5" letter-spacing="0.5">CVE EXPOSURE - advisory</text>
   <g font-size="10.5"><text x="520" y="300" fill="#79c0ff">CVE-2021-21974</text><text x="612" y="300" fill="#8b949e">VMSA-2021-0002</text><text x="920" y="300" fill="#3fb950" font-weight="700">PATCHED</text></g>
   <!-- analysis + bubbles -->
   <rect x="14" y="322" width="972" height="1" fill="#30363d"/>
@@ -171,30 +171,30 @@
     <rect x="314" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#30363d"/><text x="326" y="400" fill="#e6edf3" font-size="17" font-weight="700">93</text><text x="326" y="414" fill="#8b949e">TIMELINE</text>
     <rect x="408" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#30363d"/><text x="420" y="400" fill="#e6edf3" font-size="17" font-weight="700">0</text><text x="420" y="414" fill="#8b949e">IOC HITS</text>
   </g>
-  <text x="14" y="446" fill="#8b949e" font-size="10">Bubbles are clickable — jump to the matching tab.</text>
+  <text x="14" y="446" fill="#8b949e" font-size="10">Bubbles are clickable - jump to the matching tab.</text>
 </svg>
-<figcaption>Overview — node summary, key-file coverage, ransomware indicators, CVE panel, clickable stat bubbles (synthetic data).</figcaption>
+<figcaption>Overview - node summary, key-file coverage, ransomware indicators, CVE panel, clickable stat bubbles (synthetic data).</figcaption>
 </figure>
 
 <h3 id="spec-tab">Specification</h3>
-<p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, <b>serial / service tag</b>, model/PSNT, <b>management IP + ESXi Host Client URL</b>, and the <b>iDRAC / BMC IP</b> when in-band IPMI exposes it), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>port groups &amp; VLANs</b> (standard vSwitch port groups plus distributed port groups with their VLANs, parsed from <code>esxcfg-vswitch -l</code> and <code>net-dvs -l</code>), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage — for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, <b>management IP + vSphere Client &amp; VAMI (:5480) URLs</b>, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document. (The same identity fields — serial, management IP, web URLs, iDRAC — also appear on the <b>Overview → Node configuration</b> pane.)</p>
+<p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, <b>serial / service tag</b>, model/PSNT, <b>management IP + ESXi Host Client URL</b>, and the <b>iDRAC / BMC IP</b> when in-band IPMI exposes it), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>port groups &amp; VLANs</b> (standard vSwitch port groups plus distributed port groups with their VLANs, parsed from <code>esxcfg-vswitch -l</code> and <code>net-dvs -l</code>), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage - for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, <b>management IP + vSphere Client &amp; VAMI (:5480) URLs</b>, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document. (The same identity fields - serial, management IP, web URLs, iDRAC - also appear on the <b>Overview → Node configuration</b> pane.)</p>
 
 <h3 id="security-tab">Security</h3>
 <p>A graded review of <b>patch state and recommended security controls</b>, checked against the bundle's config captures <b>and</b> the parsed log evidence, scored as <i>N of M checkable controls at best practice</i> (a bubble on Overview jumps here; the case-note report gets a matching section). Three groups:</p>
 <ul>
-  <li><b>Patch state</b> — build number vs the tracked CVE fix-builds (summarises the Overview CVE panel; advisory, verify against the VMSA).</li>
-  <li><b>Hardening controls</b> (ESXi) — VIB acceptance, host encryption mode / <code>execInstalledOnly</code> / Require Secure Boot, TPM &amp; measured boot, MOB, account lockout, password policy, shell/SSH idle timeouts, DCUI access, remote syslog, NTP. Settings checks read <code>advanced-list -d</code> (options <i>changed from default</i>), so "at default" is provable, not assumed. vCenter: SSO identity sources, rsyslog forwarding, NTP.</li>
-  <li><b>Installed VIBs (software integrity)</b> — parses <code>software-vib-list</code> (Name / Version / Vendor / Acceptance / Install date) and flags the rogue-VIB persistence tells: any <b>CommunitySupported (unsigned)</b> package, VIBs from a vendor that isn't VMware or a known hardware OEM, and VIBs <b>installed after the base image</b> (highlighted if within the case window). A <b>Third-party &amp; non-standard VIBs</b> table lists every non-VMware / non-Certified package with its full metadata, risk-sorted.</li>
-  <li><b>Log-corroborated controls</b> — what the logs show actually happened: SSH logins and ESXi Shell usage observed, logons from public IPs, failed-login volume, and log-integrity gaps. Config claims and observed behaviour are graded separately, so a "disabled" control that the logs show being used still surfaces.</li>
+  <li><b>Patch state</b> - build number vs the tracked CVE fix-builds (summarises the Overview CVE panel; advisory, verify against the VMSA).</li>
+  <li><b>Hardening controls</b> (ESXi) - VIB acceptance, host encryption mode / <code>execInstalledOnly</code> / Require Secure Boot, TPM &amp; measured boot, MOB, account lockout, password policy, shell/SSH idle timeouts, DCUI access, remote syslog, NTP. Settings checks read <code>advanced-list -d</code> (options <i>changed from default</i>), so "at default" is provable, not assumed. vCenter: SSO identity sources, rsyslog forwarding, NTP.</li>
+  <li><b>Installed VIBs (software integrity)</b> - parses <code>software-vib-list</code> (Name / Version / Vendor / Acceptance / Install date) and flags the rogue-VIB persistence tells: any <b>CommunitySupported (unsigned)</b> package, VIBs from a vendor that isn't VMware or a known hardware OEM, and VIBs <b>installed after the base image</b> (highlighted if within the case window). A <b>Third-party &amp; non-standard VIBs</b> table lists every non-VMware / non-Certified package with its full metadata, risk-sorted.</li>
+  <li><b>Log-corroborated controls</b> - what the logs show actually happened: SSH logins and ESXi Shell usage observed, logons from public IPs, failed-login volume, and log-integrity gaps. Config claims and observed behaviour are graded separately, so a "disabled" control that the logs show being used still surfaces.</li>
 </ul>
-<p>The green <b>Export &rarr; HTML</b> button writes a self-contained <b>security report</b>: an executive summary (posture score with fail/warn/pass counts and the top findings), patch state &amp; CVE exposure, ransomware/intrusion indicators, the full control matrix, the third-party VIB table, and the security-relevant persistence/tampering findings — a standalone deliverable distinct from the full Case-note report.</p>
-<div class="note">Support bundles are targeted: a control whose source file isn't captured is graded <b>n/a</b> — never assumed compliant. Lockdown mode on ESXi 7+ lives in the ConfigStore, which <code>vm-support</code> does not capture. The checks are <b>version-aware</b>: patch-state verdicts select the fix line by the host's version and update level; capture-driven checks degrade to n/a on versions that lack a capture; and the "at default" claims are the documented 7.x/8.x defaults — on other versions the check still proves the setting is <i>unchanged</i>, but flags the default value for verification.</div>
+<p>The green <b>Export &rarr; HTML</b> button writes a self-contained <b>security report</b>: an executive summary (posture score with fail/warn/pass counts and the top findings), patch state &amp; CVE exposure, ransomware/intrusion indicators, the full control matrix, the third-party VIB table, and the security-relevant persistence/tampering findings - a standalone deliverable distinct from the full Case-note report.</p>
+<div class="note">Support bundles are targeted: a control whose source file isn't captured is graded <b>n/a</b> - never assumed compliant. Lockdown mode on ESXi 7+ lives in the ConfigStore, which <code>vm-support</code> does not capture. The checks are <b>version-aware</b>: patch-state verdicts select the fix line by the host's version and update level; capture-driven checks degrade to n/a on versions that lack a capture; and the "at default" claims are the documented 7.x/8.x defaults - on other versions the check still proves the setting is <i>unchanged</i>, but flags the default value for verification.</div>
 
 <h3 id="network-tab">Network</h3>
-<p>A point-in-time snapshot from the bundle's socket + process captures (ESXi <code>localcli network ip connection list</code> / <code>ps</code>; vCenter <code>netstat -anp</code> / <code>ps auwwx</code>). Three views: <b>listening services</b> (with the owning process and whether the bind is loopback-only or network-facing — an all-interfaces bind from an unexpected process is the review target; a <b>hide loopback</b> checkbox, <b>on by default</b>, hides the loopback-only listeners so the network-facing ones stand out — network-facing listeners are never hidden, and the header counts what was filtered), <b>external connections</b> (established sessions to non-private public IPs — management plane talking to the internet), and a <b>suspicious-process scan</b> (attacker-tool / reverse-shell patterns: <code>nc</code>/<code>socat</code>, <code>/tmp</code> or <code>/dev/shm</code> execs, <code>bash -i</code>, one-liner interpreters, <code>base64 -d</code>, miners). These feed matching Security-tab checks. On vCenter, non-routine appliance shell commands from Linux <b>auditd</b> also appear in the Actions tab (routine VMware automation filtered). A <b>Web access summary</b> panel (vCenter) aggregates the <b>envoy front-proxy</b> access log — the vSphere Client / API request stream — by <b>client source IP</b> (with request/error counts and external-vs-private scope), and scans request paths for web-attack patterns (traversal, injection, exploit/JNDI). Below it, a <b>Recent web requests</b> table lists the newest individual requests (time, source IP, method, response code, path, and the SOAP operation / user-agent), with a <b>25 / 50 / 100</b> row selector, a <b>Simplified (login/logoff)</b> checkbox that hides the noisy API/query traffic and shows only <code>Login</code>/<code>Logout</code> events (collected across the whole captured window, not just the newest rows), a <b>hide loopback</b> checkbox to drop <code>127.0.0.1</code>/<code>::1</code> and focus on real remote clients (it filters the whole panel — the per-IP summary table <i>and</i> this table, with a note of how many clients/requests are hidden; the checkbox appears in both places and stays in sync), and clickable paths / <i>open raw log</i> links to the source file. These logs are large, so the newest ~12&nbsp;MB is read from the tail; external client IPs and any attack-pattern hits raise Security checks. <b>ESXi hosts get the equivalent</b> — a <b>Web / API connections</b> panel built from <code>rhttpproxy.log</code> (the reverse proxy in front of the Host Client / API): client source IPs, protocol, and the accessed service, aggregated and listed newest-first, with the same <b>hide loopback</b> filter (most host-proxy traffic is loopback, so hiding it surfaces the real remote clients).</p>
+<p>A point-in-time snapshot from the bundle's socket + process captures (ESXi <code>localcli network ip connection list</code> / <code>ps</code>; vCenter <code>netstat -anp</code> / <code>ps auwwx</code>). Three views: <b>listening services</b> (with the owning process and whether the bind is loopback-only or network-facing - an all-interfaces bind from an unexpected process is the review target; a <b>hide loopback</b> checkbox, <b>on by default</b>, hides the loopback-only listeners so the network-facing ones stand out - network-facing listeners are never hidden, and the header counts what was filtered), <b>external connections</b> (established sessions to non-private public IPs - management plane talking to the internet), and a <b>suspicious-process scan</b> (attacker-tool / reverse-shell patterns: <code>nc</code>/<code>socat</code>, <code>/tmp</code> or <code>/dev/shm</code> execs, <code>bash -i</code>, one-liner interpreters, <code>base64 -d</code>, miners). These feed matching Security-tab checks. On vCenter, non-routine appliance shell commands from Linux <b>auditd</b> also appear in the Actions tab (routine VMware automation filtered). A <b>Web access summary</b> panel (vCenter) aggregates the <b>envoy front-proxy</b> access log - the vSphere Client / API request stream - by <b>client source IP</b> (with request/error counts and external-vs-private scope), and scans request paths for web-attack patterns (traversal, injection, exploit/JNDI). Below it, a <b>Recent web requests</b> table lists the newest individual requests (time, source IP, method, response code, path, and the SOAP operation / user-agent), with a <b>25 / 50 / 100</b> row selector, a <b>Simplified (login/logoff)</b> checkbox that hides the noisy API/query traffic and shows only <code>Login</code>/<code>Logout</code> events (collected across the whole captured window, not just the newest rows), a <b>hide loopback</b> checkbox to drop <code>127.0.0.1</code>/<code>::1</code> and focus on real remote clients (it filters the whole panel - the per-IP summary table <i>and</i> this table, with a note of how many clients/requests are hidden; the checkbox appears in both places and stays in sync), and clickable paths / <i>open raw log</i> links to the source file. These logs are large, so the newest ~12&nbsp;MB is read from the tail; external client IPs and any attack-pattern hits raise Security checks. <b>ESXi hosts get the equivalent</b> - a <b>Web / API connections</b> panel built from <code>rhttpproxy.log</code> (the reverse proxy in front of the Host Client / API): client source IPs, protocol, and the accessed service, aggregated and listed newest-first, with the same <b>hide loopback</b> filter (most host-proxy traffic is loopback, so hiding it surfaces the real remote clients).</p>
 
 <h3 id="vms-tab">VMs</h3>
-<p>(ESXi) Every registered VM parsed from its <code>.vmx</code>: name, guest OS, vCPU, vRAM, vDisk count/names, datastore/vSAN, and running status. <b>Click a VM to open its activity timeline</b> — power, <b>snapshot</b> (take/delete/consolidate), migration (vMotion), and guest-op events parsed from the VM's <code>vmware.log</code> (plus rotations with <i>incl. rotated logs</i>). Each event shows its <b>opID</b> and initiator: an <code>lro-*</code> opID means the operation came from <b>vCenter</b>, and that opID joins <code>vpxa.log</code>/<code>vpxd.log</code> — the vCenter&rarr;host&rarr;VM chain. <b>Snapshot delete/consolidate right before an encryption window is the ransomware pre-destruction tell.</b> From the timeline, <i>view .vmx config</i> for the full disk paths (recovery). A <b>Guest IP</b> column appears only when a vCenter in the fleet supplied it (ESXi bundles do not carry guest IPs). A <b>Guest OS</b> dropdown (auto-populated from the inventory) narrows the table to one OS — e.g. every Windows Server VM at a glance — and combines with the free-text filter. Green <b>Export VMs &rarr; CSV</b>.</p>
+<p>(ESXi) Every registered VM parsed from its <code>.vmx</code>: name, guest OS, vCPU, vRAM, vDisk count/names, datastore/vSAN, and running status. <b>Click a VM to open its activity timeline</b> - power, <b>snapshot</b> (take/delete/consolidate), migration (vMotion), and guest-op events parsed from the VM's <code>vmware.log</code> (plus rotations with <i>incl. rotated logs</i>). Each event shows its <b>opID</b> and initiator: an <code>lro-*</code> opID means the operation came from <b>vCenter</b>, and that opID joins <code>vpxa.log</code>/<code>vpxd.log</code> - the vCenter&rarr;host&rarr;VM chain. <b>Snapshot delete/consolidate right before an encryption window is the ransomware pre-destruction tell.</b> From the timeline, <i>view .vmx config</i> for the full disk paths (recovery). A <b>Guest IP</b> column appears only when a vCenter in the fleet supplied it (ESXi bundles do not carry guest IPs). A <b>Guest OS</b> dropdown (auto-populated from the inventory) narrows the table to one OS - e.g. every Windows Server VM at a glance - and combines with the free-text filter. Green <b>Export VMs &rarr; CSV</b>.</p>
 <figure>
 <svg viewBox="0 0 1000 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
   <rect width="1000" height="340" rx="10" fill="#0d1117"/>
@@ -221,7 +221,7 @@
   <text x="28" y="300" fill="#79c0ff" font-size="11" font-family="Consolas,monospace">scsi0:0.fileName = "vm-dc01.vmdk"    scsi0:1.fileName = "vm-dc01_1.vmdk"</text>
   <text x="28" y="268" fill="#c9d1d9" font-size="11" font-weight="700">▸ vm-dc01.vmx preview</text>
 </svg>
-<figcaption>VMs — per-VM inventory with guest IP (from a fleet vCenter) and click-to-preview .vmx disk paths (synthetic data).</figcaption>
+<figcaption>VMs - per-VM inventory with guest IP (from a fleet vCenter) and click-to-preview .vmx disk paths (synthetic data).</figcaption>
 </figure>
 
 <h3 id="keyfiles-tab">Key Files</h3>
@@ -229,15 +229,15 @@
 
 <h3 id="logons-tab">Logons</h3>
 <p>Authentication events. <b>ESXi:</b> <code>auth.log</code> SSH, <code>hostd</code> SOAP logins, <code>shell.log</code> shell-enable. <b>vCenter:</b> <code>websso</code> SSO logins (user + client IP), appliance SSH, and <b>vpxd SAML human logins</b>. Scored for external source IPs, failures, and privileged accounts. Case-window (<code>from</code>/<code>to</code>) filters this tab.</p>
-<p><b>Login sessions (paired) view.</b> Tick the <b>Login sessions (paired)</b> checkbox in the toolbar to switch from raw login events to <b>one row per API session</b>: login time, logout time, duration, user, source IP, session ID, and the client/user-agent. <b>vCenter:</b> built from vpxd <code>SessionManager</code> login/logout calls paired by <b>session GUID</b>; the user comes from the SAML token on the same operation, and the <b>source IP is time-joined from the envoy access log</b> — only when exactly one candidate IP sits within &plusmn;3&nbsp;s (ambiguous matches are left blank with a tooltip, never guessed). <b>ESXi:</b> built from hostd's <i>logged in / logged out</i> events (the logout line carries the API-invocation count and client agent); pairing uses the opID chain, falling back to the login time the logout line itself quotes. Rows are honest about gaps: a session with <b>no logout</b> is still active at capture, past the window end, or a failed login — and is <b>never</b> hidden by the duration filter; a <b>logout with no login</b> means the login pre-dates the captured window. Two noise filters: <b>hide loopback</b> (<b>on by default</b> — drops sessions sourced from <code>127.0.0.1</code>/<code>::1</code>, the appliance's own services; sessions with an unresolved IP are kept) and <b>hide brief &lt;N&nbsp;s</b> (off by default, threshold editable — drops the 0-second automated API polls). The row count reports what each filter hid. An <span class="tag">svc</span> tag marks solution/service accounts. Row-click opens the full detail; CSV export and Copy-for-notes follow this view. <b>Note:</b> an API session is <i>any</i> client session — the vSphere Client, managed hosts re-authenticating, solution users — not only interactive humans; <code>vpxd.log</code> typically covers only a few hours, so treat the window accordingly.</p>
+<p><b>Login sessions (paired) view.</b> Tick the <b>Login sessions (paired)</b> checkbox in the toolbar to switch from raw login events to <b>one row per API session</b>: login time, logout time, duration, user, source IP, session ID, and the client/user-agent. <b>vCenter:</b> built from vpxd <code>SessionManager</code> login/logout calls paired by <b>session GUID</b>; the user comes from the SAML token on the same operation, and the <b>source IP is time-joined from the envoy access log</b> - only when exactly one candidate IP sits within &plusmn;3&nbsp;s (ambiguous matches are left blank with a tooltip, never guessed). <b>ESXi:</b> built from hostd's <i>logged in / logged out</i> events (the logout line carries the API-invocation count and client agent); pairing uses the opID chain, falling back to the login time the logout line itself quotes. Rows are honest about gaps: a session with <b>no logout</b> is still active at capture, past the window end, or a failed login - and is <b>never</b> hidden by the duration filter; a <b>logout with no login</b> means the login pre-dates the captured window. Three noise filters: <b>hide loopback</b> (<b>on by default</b> - drops sessions sourced from <code>127.0.0.1</code>/<code>::1</code>, the appliance's own services; sessions with an unresolved IP are kept), <b>hide brief &lt;N&nbsp;s</b> (off by default, threshold editable - drops the 0-second automated API polls), and <b>hide unpaired</b> (off by default - drops the blank-duration rows the brief filter deliberately keeps, i.e. sessions missing a login or logout in the window). The row count reports what each filter hid. An <span class="tag">svc</span> tag marks solution/service accounts. Row-click opens the full detail; CSV export and Copy-for-notes follow this view. <b>Note:</b> an API session is <i>any</i> client session - the vSphere Client, managed hosts re-authenticating, solution users - not only interactive humans; <code>vpxd.log</code> typically covers only a few hours, so treat the window accordingly.</p>
 
 <h3 id="actions-tab">Actions</h3>
-<p>Privileged operations. <b>ESXi:</b> <code>shell.log</code> command history (attacker-typed commands), the <b>vobd audit-event stream</b> (<code>esx.audit.*</code>: SSH/shell enable, account events, lockdown, non-routine firewall disables — boot-replay and patching churn filtered out; rotations always read since the live file often doesn't exist), and <b>esxupdate software changes</b> (image-profile/VIB add-remove batches, with recurring agent re-stages collapsed into one row). <b>vCenter:</b> meaningful <code>vpxd</code> tasks (VM lifecycle, permission/role changes, sessions) <b>attributed to a user</b> (nearest-preceding human login — labelled <em>user approx</em>), appliance <code>sudo</code> commands, and <b>SSO identity events</b> (<code>sso-events/audit_events.log</code>: user/group creation, membership adds, password resets — with acting user and client IP, retention far beyond websso).</p>
-<p><b>Filtering:</b> beside the text/score filters, two dropdowns narrow the table by <b>actor</b> and by <b>kind</b> — each auto-populated with the distinct values present in this bundle (e.g. actor <code>root</code> + kind <i>shell command</i> isolates one operator's typed commands). The toolbar's <b>clear</b> resets them.</p>
-<p><b>Rotated logs:</b> the <i>incl. rotated logs</i> checkbox (next to Analyze) also reads <code>hostd.0.gz</code>, <code>auth.1.gz</code>, … — weeks of extra logon/action history instead of just the live file, at the cost of decompressing each rotation. vobd rotations are always read; vpxd keeps its largest-rotation behaviour.</p>
+<p>Privileged operations. <b>ESXi:</b> <code>shell.log</code> command history (attacker-typed commands), the <b>vobd audit-event stream</b> (<code>esx.audit.*</code>: SSH/shell enable, account events, lockdown, non-routine firewall disables - boot-replay and patching churn filtered out; rotations always read since the live file often doesn't exist), and <b>esxupdate software changes</b> (image-profile/VIB add-remove batches, with recurring agent re-stages collapsed into one row). <b>vCenter:</b> meaningful <code>vpxd</code> tasks (VM lifecycle, permission/role changes, sessions) <b>attributed to a user</b> (nearest-preceding human login - labelled <em>user approx</em>), appliance <code>sudo</code> commands, and <b>SSO identity events</b> (<code>sso-events/audit_events.log</code>: user/group creation, membership adds, password resets - with acting user and client IP, retention far beyond websso).</p>
+<p><b>Filtering:</b> beside the text/score filters, two dropdowns narrow the table by <b>actor</b> and by <b>kind</b> - each auto-populated with the distinct values present in this bundle (e.g. actor <code>root</code> + kind <i>shell command</i> isolates one operator's typed commands). The toolbar's <b>clear</b> resets them.</p>
+<p><b>Rotated logs:</b> the <i>incl. rotated logs</i> checkbox (next to Analyze) also reads <code>hostd.0.gz</code>, <code>auth.1.gz</code>, … - weeks of extra logon/action history instead of just the live file, at the cost of decompressing each rotation. vobd rotations are always read; vpxd keeps its largest-rotation behaviour.</p>
 
 <h3 id="timeline-tab">Timeline</h3>
-<p>Merged logons + actions, time-ordered. The <b>Score / tags</b> column is colour-coded, and the <b>Kind</b> column colours <span class="tag t-red">shell command</span> red, sudo orange, vpxd/task blue. A multiselect <b>Score</b> filter (<span class="tag t-red">&ge;5</span> <span class="tag t-amb">3-4</span> <span class="tag t-grn">1-2</span> <span class="muted">0</span>) narrows to the bands you tick, and a <b>kind</b> dropdown (auto-populated from the bundle) shows a single event kind — e.g. only logons, or only shell commands. Case-window filters this tab.</p>
+<p>Merged logons + actions, time-ordered. The <b>Score / tags</b> column is colour-coded, and the <b>Kind</b> column colours <span class="tag t-red">shell command</span> red, sudo orange, vpxd/task blue. A multiselect <b>Score</b> filter (<span class="tag t-red">&ge;5</span> <span class="tag t-amb">3-4</span> <span class="tag t-grn">1-2</span> <span class="muted">0</span>) narrows to the bands you tick, and a <b>kind</b> dropdown (auto-populated from the bundle) shows a single event kind - e.g. only logons, or only shell commands. Case-window filters this tab.</p>
 <figure>
 <svg viewBox="0 0 1000 320" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
   <rect width="1000" height="320" rx="10" fill="#0d1117"/>
@@ -279,28 +279,28 @@
   </g>
   <text x="28" y="228" fill="#8b949e" font-size="10">Row tint = score (red ≥5, amber 3-4); red left-border = IOC hit. Kind: shell command in red = attacker-typed.</text>
 </svg>
-<figcaption>Timeline — colour-coded Score/tags and Kind, with the multiselect Score-band filter (synthetic data).</figcaption>
+<figcaption>Timeline - colour-coded Score/tags and Kind, with the multiselect Score-band filter (synthetic data).</figcaption>
 </figure>
 
 <h3 id="persist-tab">Persistence &amp; tampering</h3>
-<p style="margin:4px 0"><span class="muted">ESXi checks now include <b>VM autostart</b> (<code>vmAutoStart.xml</code> — a rogue VM set to auto-start survives host reboots), and the Specification's distributed port groups show their <b>human names</b> (from <code>hostd/dvportgroups.xml.gz</code>) alongside the dvportgroup IDs.</span></p>
-<p>File-inspection findings (verdict: suspect / review / clean / n-a). <b>ESXi:</b> DCUI welcome banner (ransom-note check), <code>rc.local.d/local.sh</code>, remote-syslog state, VIB acceptance, SSH keys, key-log integrity. <b>vCenter:</b> <code>ld.so.preload</code>, rsyslog forwarding, admin systemd units, cron, log integrity. Bundles are <em>targeted</em> — items the bundle does not capture are marked "not captured", not "clean".</p>
+<p style="margin:4px 0"><span class="muted">ESXi checks now include <b>VM autostart</b> (<code>vmAutoStart.xml</code> - a rogue VM set to auto-start survives host reboots), and the Specification's distributed port groups show their <b>human names</b> (from <code>hostd/dvportgroups.xml.gz</code>) alongside the dvportgroup IDs.</span></p>
+<p>File-inspection findings (verdict: suspect / review / clean / n-a). <b>ESXi:</b> DCUI welcome banner (ransom-note check), <code>rc.local.d/local.sh</code>, remote-syslog state, VIB acceptance, SSH keys, key-log integrity. <b>vCenter:</b> <code>ld.so.preload</code>, rsyslog forwarding, admin systemd units, cron, log integrity. Bundles are <em>targeted</em> - items the bundle does not capture are marked "not captured", not "clean".</p>
 
 <h3 id="ioc-tab">IOC hits</h3>
-<p>An <code>IOC.txt</code> (one term per line — IPs, users, hashes, filenames) placed next to the app is swept across the key logs on analysis; hits are listed here with file, line, and excerpt. Use the orange <b>Create IOC list</b> button (left of <b>Analyze bundle</b>) to build or edit it in a structured editor: <code>IOC.csv</code> holds <b>Value / Type / Note / Case</b> and is the editable source; on <b>Save</b> it is flattened to <code>IOC.txt</code> — the file this tool (and every wrapper in the family) auto-loads at launch. Hash/IPv4 values are auto-typed, and any existing plain <code>IOC.txt</code> is imported on first edit so nothing is lost.</p>
+<p>An <code>IOC.txt</code> (one term per line - IPs, users, hashes, filenames) placed next to the app is swept across the key logs on analysis; hits are listed here with file, line, and excerpt. Use the orange <b>Create IOC list</b> button (left of <b>Analyze bundle</b>) to build or edit it in a structured editor: <code>IOC.csv</code> holds <b>Value / Type / Note / Case</b> and is the editable source; on <b>Save</b> it is flattened to <code>IOC.txt</code> - the file this tool (and every wrapper in the family) auto-loads at launch. Hash/IPv4 values are auto-typed, and any existing plain <code>IOC.txt</code> is imported on first edit so nothing is lost.</p>
 
 <h2 id="indicators">5. Ransomware / intrusion indicators (Overview)</h2>
-<p>ESXi kill-chain checklist derived from the parsed data — each is <b>TRIGGERED</b>, <b>clear</b>, or <b>n/a</b> with evidence:</p>
+<p>ESXi kill-chain checklist derived from the parsed data - each is <b>TRIGGERED</b>, <b>clear</b>, or <b>n/a</b> with evidence:</p>
 <ul>
   <li>SSH / ESXi Shell used &middot; external source IP on login &middot; failed-login burst</li>
   <li>Host-encryption change / recovery-key access &middot; mass VM power-off / process kill &middot; firewall disabled</li>
   <li>Payload staged in <code>/tmp</code> or <code>/scratch</code> &middot; download / decoder / reverse-shell &middot; bulk VMDK/VMX manipulation</li>
   <li>VIB acceptance downgraded (allows unsigned VIBs)</li>
-  <li><b>Ransom notes / encrypted files on datastore</b> — scans <code>vmfs/volumes</code> for ransom-note files and known ransomware extensions (low false-positive; legitimate appliance disks are not flagged)</li>
+  <li><b>Ransom notes / encrypted files on datastore</b> - scans <code>vmfs/volumes</code> for ransom-note files and known ransomware extensions (low false-positive; legitimate appliance disks are not flagged)</li>
 </ul>
 
 <h2 id="cve">6. CVE exposure (Overview)</h2>
-<p>Advisory panel mapping the parsed build to high-impact vSphere CVEs, with clickable links to <b>NVD</b> and the <b>VMSA</b> advisory. Cross-checks: ESXi SLP running state (OpenSLP/ESXiArgs), AD integration (AD auth-bypass). Tracked advisories include VMSA-2021-0002, VMSA-2024-0013, <b>VMSA-2025-0004</b> (exploited in the wild) and <b>VMSA-2025-0013</b> for ESXi, and VMSA-2023-0023, VMSA-2024-0019 and <b>VMSA-2025-0010</b> for vCenter. <b>ESXi checks are version-aware</b>: the fix line is selected by the host's version <i>and</i> update level (build numbers are not monotonic across trains — e.g. 8.0&nbsp;U3f&nbsp;24784735 &lt; 8.0&nbsp;U2e&nbsp;24789317); a train the tool doesn't track is graded <b>verify</b>, and ESX 9.x hosts are pointed at the VMSA rather than guessed.</p>
+<p>Advisory panel mapping the parsed build to high-impact vSphere CVEs, with clickable links to <b>NVD</b> and the <b>VMSA</b> advisory. Cross-checks: ESXi SLP running state (OpenSLP/ESXiArgs), AD integration (AD auth-bypass). Tracked advisories include VMSA-2021-0002, VMSA-2024-0013, <b>VMSA-2025-0004</b> (exploited in the wild) and <b>VMSA-2025-0013</b> for ESXi, and VMSA-2023-0023, VMSA-2024-0019 and <b>VMSA-2025-0010</b> for vCenter. <b>ESXi checks are version-aware</b>: the fix line is selected by the host's version <i>and</i> update level (build numbers are not monotonic across trains - e.g. 8.0&nbsp;U3f&nbsp;24784735 &lt; 8.0&nbsp;U2e&nbsp;24789317); a train the tool doesn't track is graded <b>verify</b>, and ESX 9.x hosts are pointed at the VMSA rather than guessed.</p>
 <div class="caveat"><b>vCenter CVEs are conservative advisories.</b> vCenter exposes only a build number, and 7.0/8.0 build ranges overlap, so the verdict is: <b>patched</b> only if the build is at/above the highest known fix, <b>review</b> if below the lowest, else <b>verify</b>. Always confirm against the linked VMSA and your exact release. Fix builds are dated to the manual's build (2026-07) and should be spot-checked over time.</div>
 
 <h2 id="scoring">7. Scoring &amp; tags</h2>
@@ -346,20 +346,20 @@
   </g>
   <text x="28" y="224" fill="#8b949e" font-size="10.5">Sorted by risk. Grouped by cluster (vSAN sub-cluster UUID). Click a host to open its full triage.</text>
 </svg>
-<figcaption>Fleet roster — hosts grouped by cluster, worst-first, with the vCenter tied to its cluster (synthetic data).</figcaption>
+<figcaption>Fleet roster - hosts grouped by cluster, worst-first, with the vCenter tied to its cluster (synthetic data).</figcaption>
 </figure>
 
 <h2 id="clusters">9. Clusters</h2>
 <p>ESXi hosts are grouped by their <b>vSAN Sub-Cluster UUID</b> (from <code>vsan-cluster-get</code>), which also names all cluster members. A vCenter is tied to a cluster when it <b>manages</b> a member host (from vpxd's <code>host-N,&lt;fqdn&gt;</code> map) or shares task opIDs with one. Nodes with no vSAN membership are labelled <b>standalone</b>. This lets a mixed folder of cluster nodes + standalone hosts + a vCenter self-organise.</p>
 
 <h2 id="correlation">10. Correlation &amp; the vCenter&rarr;ESXi chain</h2>
-<p>The <b>Correlation</b> button on the roster opens cross-host analysis (computed from the in-memory snapshots — no re-parse):</p>
+<p>The <b>Correlation</b> button on the roster opens cross-host analysis (computed from the in-memory snapshots - no re-parse):</p>
 <ul>
-  <li><b>Clusters</b> — members present vs named-but-absent.</li>
-  <li><b>Source IPs across hosts</b> — an IP on &gt;1 host suggests lateral movement / shared attacker infra.</li>
-  <li><b>Accounts on multiple hosts</b> — credential spread.</li>
+  <li><b>Clusters</b> - members present vs named-but-absent.</li>
+  <li><b>Source IPs across hosts</b> - an IP on &gt;1 host suggests lateral movement / shared attacker infra.</li>
+  <li><b>Accounts on multiple hosts</b> - credential spread.</li>
   <li><b>IOC hits across hosts</b> and <b>coordinated indicators</b> (the same tell on N hosts = a mass action).</li>
-  <li><b>vCenter&rarr;ESXi task chain</b> — an <code>opID</code> shared between a vCenter <code>vpxd</code> task and the host <code>vpxa</code> that executed it, reconstructing "which vCenter action ran on which host".</li>
+  <li><b>vCenter&rarr;ESXi task chain</b> - an <code>opID</code> shared between a vCenter <code>vpxd</code> task and the host <code>vpxa</code> that executed it, reconstructing "which vCenter action ran on which host".</li>
   <li><b>Unified cross-host flagged-event timeline</b>, merged and time-ordered.</li>
 </ul>
 <figure>
@@ -369,7 +369,7 @@
   <text x="200" y="30" fill="#8b949e" font-size="11">1 cluster · 2 IP(s) on &gt;1 host · 1 shared account · 6 chain link(s)</text>
   <!-- shared IPs panel -->
   <rect x="14" y="42" width="480" height="150" rx="8" fill="#0f141b" stroke="#30363d"/>
-  <text x="28" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Source IPs across hosts <tspan fill="#8b949e" font-weight="400">— &gt;1 host = possible lateral movement</tspan></text>
+  <text x="28" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Source IPs across hosts <tspan fill="#8b949e" font-weight="400"> - &gt;1 host = possible lateral movement</tspan></text>
   <rect x="28" y="72" width="452" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="36" y="86">Source IP</text><text x="200" y="86"># hosts</text><text x="280" y="86">Hosts</text></g>
   <g font-size="11" font-family="Consolas,monospace">
     <rect x="28" y="92" width="452" height="22" fill="#2a1416"/><text x="36" y="107" fill="#ff6b6b">203.0.113.66</text><text x="200" y="107" fill="#e6edf3">3</text><text x="280" y="107" fill="#e6edf3">esxi-lab01, esxi-lab02, esxi-lab03</text>
@@ -378,7 +378,7 @@
   </g>
   <!-- coordinated indicators -->
   <rect x="506" y="42" width="480" height="150" rx="8" fill="#0f141b" stroke="#30363d"/>
-  <text x="520" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Coordinated indicators <tspan fill="#8b949e" font-weight="400">— same tell on N hosts</tspan></text>
+  <text x="520" y="62" fill="#c9d1d9" font-size="11.5" font-weight="700">Coordinated indicators <tspan fill="#8b949e" font-weight="400"> - same tell on N hosts</tspan></text>
   <rect x="520" y="72" width="452" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="528" y="86">Indicator</text><text x="820" y="86"># hosts</text><text x="880" y="86">Hosts</text></g>
   <g font-size="10.5">
     <rect x="520" y="92" width="452" height="22" fill="#2a1416"/><text x="528" y="107" fill="#e6edf3">SSH / ESXi Shell used</text><text x="828" y="107" fill="#ff6b6b" font-family="Consolas,monospace">3</text><text x="880" y="107" fill="#8b949e" font-family="Consolas,monospace">lab01-03</text>
@@ -387,7 +387,7 @@
   </g>
   <!-- chain -->
   <rect x="14" y="204" width="972" height="140" rx="8" fill="#0f141b" stroke="#30363d"/>
-  <text x="28" y="224" fill="#c9d1d9" font-size="11.5" font-weight="700">vCenter → ESXi task chain <tspan fill="#8b949e" font-weight="400">— opID shared between a vpxd task and the host vpxa that executed it</tspan></text>
+  <text x="28" y="224" fill="#c9d1d9" font-size="11.5" font-weight="700">vCenter → ESXi task chain <tspan fill="#8b949e" font-weight="400"> - opID shared between a vpxd task and the host vpxa that executed it</tspan></text>
   <rect x="28" y="234" width="944" height="20" fill="#1c2330"/><g font-size="10.5" fill="#c9d1d9"><text x="36" y="248">When (UTC)</text><text x="180" y="248">vCenter</text><text x="290" y="248">Task (vim method)</text><text x="560" y="248">opID</text><text x="760" y="248">Executed on host</text></g>
   <g font-size="10.5" font-family="Consolas,monospace" fill="#e6edf3">
     <text x="36" y="270">2026-05-12 09:41:10</text><text x="180" y="270">vcsa-lab01</text><text x="290" y="270">vim.VirtualMachine.PowerOffVM_Task</text><text x="560" y="270" fill="#8b949e">opID=5b4a8771-2f</text><text x="760" y="270">esxi-lab03</text>
@@ -397,7 +397,7 @@
     <text x="36" y="318">2026-05-12 09:42:02</text><text x="180" y="318">vcsa-lab01</text><text x="290" y="318">vim.Datastore.DeleteDatastoreFile_Task</text><text x="560" y="318" fill="#8b949e">opID=13449918-a7</text><text x="760" y="318">esxi-lab01</text>
   </g>
 </svg>
-<figcaption>Correlation — shared IPs, coordinated indicators, and the vCenter→ESXi task chain (synthetic data).</figcaption>
+<figcaption>Correlation - shared IPs, coordinated indicators, and the vCenter→ESXi task chain (synthetic data).</figcaption>
 </figure>
 
 <h2 id="exports">11. Exports &amp; reports</h2>
@@ -413,16 +413,16 @@
 
 <h2 id="caveats">12. Caveats &amp; limitations</h2>
 <div class="caveat"><b>Guest IPs</b> are not in ESXi bundles (they are guest-side). The VMs tab shows a Guest IP column only when a <b>vCenter in the same fleet</b> reported them and the VM names match. In single-bundle mode the column is hidden.</div>
-<div class="caveat"><b>vCenter task&rarr;user attribution</b> is <b>approximate</b> — tasks are attributed to the nearest-preceding human SAML login, not an exact session-to-user binding. Treat "user approx" as a lead, corroborate with the Logons tab.</div>
+<div class="caveat"><b>vCenter task&rarr;user attribution</b> is <b>approximate</b> - tasks are attributed to the nearest-preceding human SAML login, not an exact session-to-user binding. Treat "user approx" as a lead, corroborate with the Logons tab.</div>
 <div class="caveat"><b>The vCenter&rarr;ESXi chain</b> needs a vCenter and ESXi bundle from the <b>same cluster</b> in the fleet; different environments correctly show no shared opIDs.</div>
-<div class="warn"><b>CVE verdicts are advisory</b> (see §6). <b>Support bundles are targeted</b>, not disk images — some persistence artefacts (cron, systemd-admin, authorized_keys, passwd) are simply not captured and are shown as "not captured".</div>
+<div class="warn"><b>CVE verdicts are advisory</b> (see §6). <b>Support bundles are targeted</b>, not disk images - some persistence artefacts (cron, systemd-admin, authorized_keys, passwd) are simply not captured and are shown as "not captured".</div>
 
 <h2 id="workflow">13. Suggested DFIR workflow</h2>
 <ol>
-  <li><b>Scope:</b> open the bundle (or fleet). Read the Overview — indicator panel, CVE panel, key-file coverage. On a fleet, sort the roster by risk.</li>
+  <li><b>Scope:</b> open the bundle (or fleet). Read the Overview - indicator panel, CVE panel, key-file coverage. On a fleet, sort the roster by risk.</li>
   <li><b>Know the node:</b> Specification for config, networking, and (for recovery) vSAN/disk layout; VMs for the guest inventory.</li>
-  <li><b>Access:</b> Logons — external IPs, failed→success bursts, privileged and off-hours logins.</li>
-  <li><b>Actions:</b> what was done — shell commands (ESXi) / attributed vpxd tasks (vCenter). Watch the red <span class="tag t-red">shell command</span> and <span class="tag t-red">SUSPECT</span>/<span class="tag t-red">DESTRUCTIVE</span> rows.</li>
+  <li><b>Access:</b> Logons - external IPs, failed→success bursts, privileged and off-hours logins.</li>
+  <li><b>Actions:</b> what was done - shell commands (ESXi) / attributed vpxd tasks (vCenter). Watch the red <span class="tag t-red">shell command</span> and <span class="tag t-red">SUSPECT</span>/<span class="tag t-red">DESTRUCTIVE</span> rows.</li>
   <li><b>Persistence &amp; tampering:</b> boot scripts, syslog forwarding, ransom-note scan, log-integrity gaps.</li>
   <li><b>IOCs:</b> drop your <code>IOC.txt</code> in and re-analyse to sweep the logs.</li>
   <li><b>Fleet:</b> Correlation for shared IPs/users/IOCs, coordinated indicators, and the vCenter&rarr;ESXi chain. Export the cross-host timeline.</li>
@@ -430,7 +430,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Triage Tool — Field Manual for v1.2.0. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Triage Tool - Field Manual for v1.2.1. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>
