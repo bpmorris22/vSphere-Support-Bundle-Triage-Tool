@@ -417,7 +417,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.2.1";
+var APP_VERSION = "1.2.2";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -1269,6 +1269,8 @@ function ipIsLocal(ip){ ip=String(ip||""); if(ip===""||ip==="*"||ip==="::"||ip==
   if(/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
   var l=ip.toLowerCase(); if(l==="::1"||l.indexOf("fe80")===0) return true; if(l.charAt(0)==="f"&&(l.charAt(1)==="c"||l.charAt(1)==="d")) return true;
   return false; }
+/* loopback-only address (127.0.0.0/8 or IPv6 ::1, incl. the ::ffff:127.x IPv4-mapped form) - not reachable off-host */
+function isLoopback(ip){ ip=String(ip||""); return /^127\./.test(ip)||ip==="::1"||/^::ffff:127\./i.test(ip); }
 function isPrivUser(u){ u=lc(u); return u==="root"||u.indexOf("administrator@")===0||u==="administrator"||u==="vpxuser"===false&&/admin/.test(u); }
 /* ESXi attacker/ransomware command tells */
 function susCmd(c){ c=lc(c);
@@ -1419,13 +1421,15 @@ function parseActions(){
     var vp=logLines(resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"));
     // pass 1: vpxd SAML logins -> human-login timeline (for task attribution) + Logons (deduped, humans only)
     var humans=[], lastPush={};
-    for(i=0;i<vp.length;i++){ var lm=vp[i].match(/^(\S+Z).*Login token:.*subject=\{Name:\s*([^;]+);\s*Domain:\s*([^}]+)\}/);
+    for(i=0;i<vp.length;i++){ if(vp[i].indexOf("Login token:")<0) continue;   // cheap prefilter before the heavy regex
+      var lm=vp[i].match(/^(\S+Z).*Login token:.*subject=\{Name:\s*([^;]+);\s*Domain:\s*([^}]+)\}/);
       if(!lm) continue; if(/isSolution=true/.test(vp[i])) continue;   // skip solution/service-user auth (automated)
       var usr=trimStr(lm[2])+"@"+trimStr(lm[3]), lep=toEpoch(lm[1]); humans.push({ep:lep,user:usr});
       if(!lastPush[lc(usr)] || (lep-lastPush[lc(usr)])>60){ var lg=mkLogon(lep,lm[1],"OK",usr,"","vpxd/SAML","vpxd.log"); scoreLogon(lg); LOGON.push(lg); lastPush[lc(usr)]=lep; } }
     humans.sort(function(a,b){ return a.ep-b.ep; });
     // pass 2: meaningful tasks, attributed to the nearest-preceding human login (approximate)
-    for(i=0;i<vp.length;i++){ m=vp[i].match(/^(\S+Z).*opID=(\S+)\].*\[VpxLRO\] -- BEGIN (?:lro-\d+|task-\d+)(?:\s+--\s+session\[[^\]]*\]\S*)?\s+--\s+(?:\S+\s+--\s+)?(vim\.\S+)\s+--/);
+    for(i=0;i<vp.length;i++){ if(vp[i].indexOf("[VpxLRO] -- BEGIN")<0) continue;   // cheap prefilter before the heavy regex
+      m=vp[i].match(/^(\S+Z).*opID=(\S+)\].*\[VpxLRO\] -- BEGIN (?:lro-\d+|task-\d+)(?:\s+--\s+session\[[^\]]*\]\S*)?\s+--\s+(?:\S+\s+--\s+)?(vim\.\S+)\s+--/);
       if(!m) continue; var method=m[3]; if(!ACT_METHOD.test(method)) continue;
       ep=toEpoch(m[1]); var who=nearestBefore(humans,ep);
       ACTIONS.push(mkAct(ep,m[1],who||"vpxd",method,"vpxd.log", who?"vpxd task (user approx)":"vpxd task")); }
@@ -1562,7 +1566,7 @@ function isoFromEpoch(ep){ if(!ep) return ""; var d=new Date(ep*1000); function 
 var SUS_PROC=/\b(nc|ncat|netcat|socat)\b|\/tmp\/|\/dev\/shm\/|\bbash\s+-i\b|python[0-9.]*\s+-c\b|perl\s+-e\b|\bsh\s+-i\b|base64\s+-d|xmrig|minerd|cryptonight|\/dev\/tcp\/|mkfifo|msfvenom|meterpreter|powershell|certutil|wget\s+http|curl\s+http.*\|/i;
 function dashSpans(line){ var spans=[], m, re=/-+/g; while((m=re.exec(line))){ spans.push([m.index,m.index+m[0].length]); } return spans; }
 function netScope(addr){ var ip=String(addr).replace(/:\d+$/,"").replace(/^\[|\]$/g,"");
-  if(/^127\.|^::1$/.test(ip)) return "loopback";                         // loopback-only, not reachable off-host
+  if(isLoopback(ip)) return "loopback";                                  // loopback-only, not reachable off-host
   if(/^0\.0\.0\.0$|^::$|^\*$/.test(ip)) return "network (all interfaces)"; // any-interface bind = exposed
   return ipIsLocal(ip)?"network (private)":"network"; }
 function splitHostPort(ap){ ap=String(ap); var i=ap.lastIndexOf(":"); if(i<0) return {h:ap,p:""}; return {h:ap.substring(0,i).replace(/^\[|\]$/g,""), p:ap.substring(i+1)}; }
@@ -1640,12 +1644,14 @@ function parseEnvoy(){
     if(!ips[cip]) ips[cip]={n:0, ext:!ipIsLocal(cip), err:0, m:{}}; ips[cip].n++; ips[cip].m[meth]=1;
     codes[code]=(codes[code]||0)+1; if(/^[45]/.test(code)){ err++; ips[cip].err++; }
     var op=(ln.match(/"([^"]{1,80})"\s*$/)||[])[1]||"";       // trailing SOAP operation / user-agent
-    var rec={ts:isoShort(ts), ep:toEpoch(ts), ip:cip, meth:meth, path:path, code:code, op:op, ext:!ipIsLocal(cip)};
-    recent.push(rec); if(recent.length>1000) recent.splice(0, recent.length-1000);   // bounded window for the full view
-    if(/^(Login|Logout|Logoff)/i.test(op)){ auth.push(rec); if(auth.length>3000) auth.splice(0, auth.length-3000); }   // login/logout kept separately so Simplified spans the whole window
+    var rec={ts:isoShort(ts), ip:cip, meth:meth, path:path, code:code, op:op, ext:!ipIsLocal(cip)};
+    recent.push(rec);
+    if(/^(Login|Logout|Logoff)/i.test(op)){ rec.ep=toEpoch(ts); auth.push(rec); }   // ep only needed for the sessions IP-join; login/logout kept separately so Simplified spans the whole window
     var suspect=false, dp=path; try{ dp=decodeURIComponent(path.replace(/\+/g," ")); }catch(e){} if(SUS_PATH.test(dp)||SUS_PATH.test(path)) suspect=true;
     if(suspect && sus.length<25) sus.push({ip:cip, meth:meth, code:code, path:trunc(path,110)});
   }
+  if(recent.length>1000) recent=recent.slice(recent.length-1000);   // bounded windows: one slice beats a per-line splice (O(n) shift each)
+  if(auth.length>3000) auth=auth.slice(auth.length-3000);
   var arr=[]; for(var k in ips){ if(ips.hasOwnProperty(k)){ var mm=[]; for(var mk in ips[k].m) if(ips[k].m.hasOwnProperty(mk)) mm.push(mk); arr.push({ip:k, n:ips[k].n, ext:ips[k].ext, err:ips[k].err, methods:mm.sort().join(",")}); } }
   arr.sort(function(a,b){ return b.n-a.n; });
   var ext=[]; for(i=0;i<arr.length;i++){ if(arr[i].ext) ext.push(arr[i]); }
@@ -1666,8 +1672,8 @@ function parseRhttp(){
     var proto=(lport==="443")?"HTTPS":(lport==="80"?"HTTP":(":"+lport));
     if(!ips[cip]) ips[cip]={n:0, ext:!ipIsLocal(cip), err:0, m:{}}; ips[cip].n++; ips[cip].m[proto]=1;
     recent.push({ts:isoShort(ts), ip:cip, meth:proto, path:(svc[reqN]||"(connection)"), code:"", op:"", ext:!ipIsLocal(cip)});
-    if(recent.length>1200) recent.splice(0, recent.length-1200);
   }
+  if(recent.length>1200) recent=recent.slice(recent.length-1200);   // one slice, not a per-line splice
   if(!reqs) return null;
   var arr=[]; for(var k in ips){ if(ips.hasOwnProperty(k)){ var mm=[]; for(var mk in ips[k].m) if(ips[k].m.hasOwnProperty(mk)) mm.push(mk); arr.push({ip:k, n:ips[k].n, ext:ips[k].ext, err:0, methods:mm.sort().join(",")}); } }
   arr.sort(function(a,b){ return b.n-a.n; });
@@ -1709,23 +1715,30 @@ function sweepIocs(){
       IOCHITS.push({file:baseName(rel),line:(L+1),ioc:IOCS[k],excerpt:trimStr(trunc(lines[L],300)),blob:low}); if(IOCHITS.length>8000) return; break; } } }
   }
 }
+var ANALYSIS_ERRS=[];
+/* run one analysis stage isolated: a malformed log fails only its own stage, not the whole pass */
+function safeStep(name, fn){ try{ fn(); }catch(e){ ANALYSIS_ERRS.push(name); appendLog("  ["+name+"] FAILED: "+(e&&e.message?e.message:e)); } }
 function runAnalysis(){
   if(!BTYPE){ setStatus("Detect a bundle first.","err"); return; }
   if(BUSY){ setStatus("Busy - wait for the current run.","err"); return; }
-  BUSY=true; $("anBtn").disabled=true; LOG_TRUNC=[];
+  BUSY=true; $("anBtn").disabled=true; LOG_TRUNC=[]; ANALYSIS_ERRS=[];
   appendLog("=== log analysis: "+typeLabel()+" bundle, mode="+MODE+" ===");
   $("anStatus").innerHTML="Parsing logs (decompressing on demand)…"; setStatus("Parsing logs…","muted");
-  window.setTimeout(function(){ try{
-    parseLogons(); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
+  window.setTimeout(function(){
+    safeStep("logons", parseLogons); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
     window.setTimeout(function(){ try{
-      parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); parseNetwork(); finalizeSessions(); buildSecurity(); buildSpec(); parseVms(); ANALYZED=true;
+      safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
+      safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence);
+      safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity);
+      safeStep("spec", buildSpec); safeStep("vms", parseVms); ANALYZED=true;
       writeAnalysisOutputs();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
-      $("anStatus").innerHTML=msg+(LOG_TRUNC.length?("  (capped: "+LOG_TRUNC.join("; ")+")"):"");
-      setStatus("Log analysis complete - "+msg,"ok"); renderAnStats();
+      var warn=ANALYSIS_ERRS.length?("  ("+ANALYSIS_ERRS.length+" stage(s) failed: "+ANALYSIS_ERRS.join(", ")+" - see Show log)"):"";
+      $("anStatus").innerHTML=msg+warn+(LOG_TRUNC.length?("  (capped: "+LOG_TRUNC.join("; ")+")"):"");
+      setStatus((ANALYSIS_ERRS.length?"Log analysis finished with "+ANALYSIS_ERRS.length+" partial failure(s) - ":"Log analysis complete - ")+msg, ANALYSIS_ERRS.length?"err":"ok"); renderAnStats();
       BUSY=false; $("anBtn").disabled=false; if(TAB!=="overview"&&TAB!=="inv") render();
-    }catch(e2){ BUSY=false; $("anBtn").disabled=false; setStatus("Action/IOC parse failed: "+e2.message,"err"); } }, 30);
-  }catch(e){ BUSY=false; $("anBtn").disabled=false; setStatus("Logon parse failed: "+e.message,"err"); } }, 30);
+    }catch(e2){ BUSY=false; $("anBtn").disabled=false; setStatus("Analysis phase failed: "+e2.message,"err"); } }, 30);
+  }, 30);
 }
 function rescoreAnalysis(){ var i; for(i=0;i<LOGON.length;i++) scoreLogon(LOGON[i]); for(i=0;i<ACTIONS.length;i++) scoreAction(ACTIONS[i]); buildTimeline(); }
 function writeAnalysisOutputs(){ try{
@@ -2313,12 +2326,11 @@ function fleetGuestIp(name){ name=lc(name); for(var i=0;i<FLEET.length;i++){ var
 function renderVms(){
   if(BTYPE!=="esxi"){ $("vmsTbl").innerHTML='<thead><tr><th>VMs</th></tr></thead><tbody><tr><td class="muted">VM inventory is parsed from ESXi host bundles (.vmx files). A vCenter bundle does not carry the hosts’ VM configs - open the ESXi host bundles for their VMs.</td></tr></tbody>'; $("vmsInfo").innerHTML=""; return; }
   fillFilterSel("vmOs", mapField(VMS,"os"), VM_OS);
-  var q=lc(trimStr($("vmq").value||"")), rows=[]; for(var i=0;i<VMS.length;i++){ var vv=VMS[i];
-    if(q && vv.blob.indexOf(q)<0) continue; if(VM_OS && (vv.os||"")!==VM_OS) continue; rows.push(vv); }
+  var rows=vmsFiltered(), i;
   var run=0,vcpu=0,mem=0,vsan=0; for(i=0;i<VMS.length;i++){ if(VMS[i].running) run++; vcpu+=VMS[i].vcpu; mem+=VMS[i].memMB; if(VMS[i].vsan) vsan++; }
   var nip=0; for(i=0;i<VMS.length;i++) if(fleetGuestIp(VMS[i].name)) nip++;
   var showIp = nip>0;   // guest IP only comes from a vCenter in the loaded fleet - hide the column otherwise
-  $("vmsInfo").innerHTML=nf(VMS.length)+" VMs &middot; "+run+" running &middot; "+nf(vcpu)+" vCPU &middot; "+fmtMB(mem)+" vRAM &middot; "+vsan+" on vSAN"+(showIp?(" &middot; "+nip+" guest IP (from vCenter)"):"");
+  $("vmsInfo").innerHTML=nf(VMS.length)+" VMs &middot; "+run+" running &middot; "+nf(vcpu)+" vCPU &middot; "+fmtMB(mem)+" vRAM &middot; "+vsan+" on vSAN"+(showIp?(" &middot; "+nip+" guest IP (from vCenter)"):"")+(rows.length<VMS.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'):'');
   var h='<thead><tr><th>VM</th><th>Guest OS</th>'+(showIp?'<th>Guest IP</th>':'')+'<th style="text-align:center">vCPU</th><th style="text-align:center">vRAM</th><th>vDisks</th><th>Storage</th><th>Status</th></tr></thead><tbody>';
   if(!VMS.length) h+='<tr><td colspan="'+(showIp?8:7)+'" class="muted">No .vmx files found in this bundle.</td></tr>';
   else if(!rows.length) h+='<tr><td colspan="'+(showIp?8:7)+'" class="muted">No VMs match the current filter'+(VM_OS?' (Guest OS: '+esc(VM_OS)+')':'')+'.</td></tr>';
@@ -2402,13 +2414,20 @@ function openVm(cfgRel, vmName){
   try{ $("detailCard").scrollIntoView(); }catch(e){}
   setStatus(r.events.length+" activity event(s) for "+(vmName||baseName(cfgRel))+(del?(" - "+del+" snapshot delete/consolidate (review vs any encryption window)"):""), del?"err":"ok");
 }
+/* the VMs displayed right now (same predicate as renderVms): free-text + Guest-OS filters */
+function vmsFiltered(){ var q=lc(trimStr($("vmq").value||"")), out=[];
+  for(var i=0;i<VMS.length;i++){ var v=VMS[i]; if(q && v.blob.indexOf(q)<0) continue; if(VM_OS && (v.os||"")!==VM_OS) continue; out.push(v); }
+  return out; }
 function vmsExport(){
   if(!VMS.length){ setStatus("No VMs to export - open an ESXi bundle and let analysis finish (VMs tab shows the list).","err"); return; }
   if(!trimStr(LASTOUTDIR)){ setStatus("No output directory set - Analyze a bundle first.","err"); return; }
+  var sel=vmsFiltered();   // export what the table shows, consistent with the analysis-tab CSV exports
+  if(!sel.length){ setStatus("No VMs match the current filter - clear it to export.","err"); return; }
   var out=["Name,GuestOS,GuestIP,vCPU,vRAM_MB,DiskCount,Disks,Storage,Running,ConfigPath"];
-  for(var i=0;i<VMS.length;i++){ var v=VMS[i]; out.push([cq(v.name),cq(v.os),cq(fleetGuestIp(v.name)),cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(v.running?"running":"registered"),cq(v.cfg)].join(",")); }
+  for(var i=0;i<sel.length;i++){ var v=sel[i]; out.push([cq(v.name),cq(v.os),cq(fleetGuestIp(v.name)),cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(v.running?"running":"registered"),cq(v.cfg)].join(",")); }
   var p=LASTOUTDIR+"\\vms_"+nowStamp()+".csv";
-  try{ ensureDir(LASTOUTDIR); writeUtf8(p,out.join("\r\n")); setStatus("Exported "+nf(VMS.length)+" VMs → "+p,"ok"); appendLog("VMs CSV: "+p); openInExplorer(p); }
+  var lbl=(sel.length<VMS.length)?(nf(sel.length)+" of "+nf(VMS.length)+" VMs (filtered)"):(nf(VMS.length)+" VMs");
+  try{ ensureDir(LASTOUTDIR); writeUtf8(p,out.join("\r\n")); setStatus("Exported "+lbl+" → "+p,"ok"); appendLog("VMs CSV: "+p); openInExplorer(p); }
   catch(e){ setStatus("VMs export failed: "+e.message,"err"); appendLog("VMs export error: "+e.message); } }
 
 /* ---------- case-note report (self-contained HTML) ---------- */
@@ -2676,7 +2695,11 @@ function processHostSync(path){
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
   buildInventory(); parseNode();
-  parseLogons(); parseActions(); buildTimeline(); sweepIocs(); buildIndicators(); buildCves(); buildPersistence(); parseNetwork(); finalizeSessions(); buildSecurity(); buildSpec(); parseVms();
+  ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
+  safeStep("logons", parseLogons); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
+  safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
+  safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity); safeStep("spec", buildSpec); safeStep("vms", parseVms);
+  if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
   var snap=snapshotHost(dispHost, path);
@@ -3107,7 +3130,7 @@ function renderNetwork(){
     var unit=esxiWeb?"connection":"request";
     // loopback split: the checkbox filters BOTH the per-IP summary table and the recent table below
     var sumIps=[], loopIps=0, loopReqs=0;
-    for(i=0;i<w.ips.length;i++){ if(/^127\.|^::1$/.test(w.ips[i].ip)){ loopIps++; loopReqs+=w.ips[i].n; if(WEB_HIDELOOP) continue; } sumIps.push(w.ips[i]); }
+    for(i=0;i<w.ips.length;i++){ if(isLoopback(w.ips[i].ip)){ loopIps++; loopReqs+=w.ips[i].n; if(WEB_HIDELOOP) continue; } sumIps.push(w.ips[i]); }
     h+='<div class="panel" style="margin-bottom:10px"><h4>'+esc(w.title||"WEB ACCESS SUMMARY")+' <span class="sub">- '+nf(w.reqs)+' '+unit+'(s)'+(w.truncated?" (newest ~12MB sampled)":"")+' from '+w.ips.length+' client IP(s), '+w.external.length+' external'+(esxiWeb?'':(', '+w.err+' 4xx/5xx'))+', via '+(w.path?('<span class="lnk" data-raw="'+esc(w.path)+'" title="Open the raw log file">'+esc(w.file)+'</span>'):esc(w.file))+(WEB_HIDELOOP&&loopIps?(' - hiding '+loopIps+' loopback client(s) / '+nf(loopReqs)+' '+unit+'(s)'):'')+'</span>'
       +'<span style="float:right;font-weight:400;text-transform:none"><label title="Hide loopback (127.0.0.1 / ::1) clients - the appliance\'s own internal services - from both tables in this panel"><input type="checkbox" id="webHideLoop"'+(WEB_HIDELOOP?" checked":"")+'> hide loopback</label></span></h4>';
     if(w.sus.length){ h+='<div style="color:#ff8b8b;font-size:12px;margin-bottom:4px"><b>'+w.sus.length+' request(s) match web-attack patterns:</b></div><div class="dl" style="max-height:18vh">';
@@ -3120,7 +3143,7 @@ function renderNetwork(){
     if((w.recent && w.recent.length)||(w.auth && w.auth.length)){
       var simp = (!esxiWeb) && ENVOY_SIMPLE;
       var base = simp ? (w.auth||[]) : (w.recent||[]);
-      var rows=[]; for(i=0;i<base.length;i++){ var rr=base[i]; if(WEB_HIDELOOP && /^127\.|^::1$/.test(rr.ip)) continue; rows.push(rr); }
+      var rows=[]; for(i=0;i<base.length;i++){ var rr=base[i]; if(WEB_HIDELOOP && isLoopback(rr.ip)) continue; rows.push(rr); }
       var shown=Math.min(ENVOY_ROWS, rows.length);
       h+='<div class="panel" style="margin-bottom:10px"><h4>'+(esxiWeb?"Recent connections":"Recent web requests")+' <span class="sub">- newest '+shown+' of '+nf(rows.length)+(simp?" login/logout":"")+(WEB_HIDELOOP?", non-loopback":"")+' shown</span>'
         +'<span style="float:right;font-weight:400;text-transform:none">'
@@ -3281,8 +3304,8 @@ function drawTable(cols, rows, st, key){
   var ths=$("tbl").getElementsByTagName("th");
   for(var j=0;j<ths.length;j++){ ths[j].onclick=function(e){ e=e||window.event; var t=e.target||e.srcElement; if(t&&/\bcgrip\b/.test(t.className+"")) return;
     var kk=parseInt(this.getAttribute("data-k"),10); if(st.k===kk) st.d*=-1; else { st.k=kk; st.d=1; } render(); }; }
-  var trs=$("tbl").getElementsByTagName("tr");
-  for(var g=0;g<trs.length;g++){ if(trs[g].getAttribute("data-i")!=null){ trs[g].onclick=function(){ anDetail(rows[parseInt(this.getAttribute("data-i"),10)]); }; } }
+  // row clicks are handled by one delegated listener on #tbl (wired once in init) reading window.__anRows -
+  // avoids assigning up to ANMAXROWS onclick closures on every sort/filter re-render
   applyFreezeTbl(); setupColResizeFor($("tbl"), key); window.__anRows=rows;
 }
 function sortRows(rows,cols,st){ var sk=cols[st.k].sk, dir=st.d; rows.sort(function(a,b){ var x=sk(a),y=sk(b);
@@ -3322,7 +3345,7 @@ function renderSessions(){
   var rows=[], hidLoop=0, hidBrief=0, hidUnp=0; for(var i=0;i<SESSIONS.length;i++){ var r=SESSIONS[i];
     if(TQUERY && r.blob.indexOf(TQUERY)<0) continue;
     if((DFROM||DTO) && r.epoch && !inWin(r.epoch)) continue;
-    if(SESS_HIDELOOP && r.ip && /^127\.|^::1$/.test(r.ip)){ hidLoop++; continue; }   // loopback = appliance's own services
+    if(SESS_HIDELOOP && r.ip && isLoopback(r.ip)){ hidLoop++; continue; }   // loopback = appliance's own services
     if(SESS_MINON && r.dur>=0 && r.dur<SESS_MINSEC){ hidBrief++; continue; }          // keep unknown-duration (no logout) rows
     if(SESS_NOUNP && r.dur<0){ hidUnp++; continue; }                                  // unpaired = blank duration (login-only / logout-only)
     rows.push(r); }
@@ -3396,7 +3419,7 @@ function renderPersist(){
   for(var s=0;s<sp.length;s++){ if(/\blnk\b/.test(sp[s].className+"")){ sp[s].onclick=function(){ onOpen("file", this.getAttribute("data-popen"), false); }; } }
   applyFreezeTbl(); setupColResizeFor($("tbl"),"persist"); window.__anRows=rows;
 }
-function applyFreezeTbl(){ var sc=$("tblScroll"); if(!sc) return; var ths=$("tbl").getElementsByTagName("th"); var y=sc.scrollTop; for(var i=0;i<ths.length;i++) ths[i].style.top=y+"px"; }
+function applyFreezeTbl(){ freezeThs($("tblScroll")); }
 /* generic sticky-header for any .scroll>table (mshta/Trident has no position:sticky, so we track scrollTop) */
 function freezeThs(sc){ if(!sc) return; var t=sc.getElementsByTagName("table")[0]; if(!t||!t.tHead) return;
   var ths=t.tHead.getElementsByTagName("th"), y=sc.scrollTop; for(var i=0;i<ths.length;i++) ths[i].style.top=y+"px"; }
@@ -3549,8 +3572,7 @@ function gripReset(e){ e=e||window.event; document.onmousemove=null; document.on
   var tbl=gripTable(this); var key=tbl?(tbl.getAttribute("data-colwkey")||"inv"):"inv";
   COLW[key]=null; try{ saveColw(); }catch(er){} if(tbl){ tbl.style.tableLayout=""; tbl.style.width=""; } render();
   setStatus("Column widths reset","ok"); if(e){ if(e.stopPropagation) e.stopPropagation(); e.cancelBubble=true; } return false; }
-function applyFreeze(){ var sc=$("invScroll"); if(!sc) return; var ths=$("invTbl").getElementsByTagName("th"); var y=sc.scrollTop;
-  for(var i=0;i<ths.length;i++){ ths[i].style.top=y+"px"; } }
+function applyFreeze(){ freezeThs($("invScroll")); }
 
 /* ---------- self-update (family) ---------- */
 var SELF_LATEST="", SELF_ASSET_URL="";
@@ -3631,6 +3653,11 @@ function init(){
   $("tblScroll").onscroll=applyFreezeTbl;
   $("vmsScroll").onscroll=function(){ freezeThs($("vmsScroll")); };
   $("fleetScroll").onscroll=function(){ freezeThs($("fleetScroll")); };
+  // delegated row-click for the analysis table (#tbl persists across innerHTML rebuilds; rows carry data-i)
+  $("tbl").onclick=function(e){ e=e||window.event; var el=e.target||e.srcElement;
+    while(el && el!==this && el.nodeName!=="TR") el=el.parentNode;
+    if(!el || el===this) return; var di=el.getAttribute("data-i"); if(di==null) return;
+    var rws=window.__anRows||[]; anDetail(rws[parseInt(di,10)]); };
   $("anMaxLbl").innerHTML=nf(ANMAXROWS);
   resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadToolkitIoc(); iocBtnLabel();
   try{ var hf=htaFolder(); if(hf && isNetworkPath(hf)){ showEl("netwarn",true); } }catch(e){}
