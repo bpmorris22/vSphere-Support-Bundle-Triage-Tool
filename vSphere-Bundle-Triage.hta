@@ -141,11 +141,14 @@
   .ind{display:flex;align-items:flex-start;padding:4px 0;border-bottom:1px solid #1c222b;font-size:12px}
   .ind:last-child{border-bottom:none}
   .dot{width:9px;height:9px;border-radius:50%;margin:4px 8px 0 0;flex:0 0 auto;background:#3fb950}
-  .dot.hit{background:#f85149}.dot.warn{background:#e3b341}.dot.na{background:#484f58}
+  .dot.hit{background:#f85149}.dot.warn{background:#e3b341}.dot.na{background:#484f58}.dot.vfy{background:#f0883e}
   .ind .nm{width:230px;flex:0 0 auto;color:#e6edf3}
   .ind .dt{color:#8b949e}
   .ind .st{width:70px;flex:0 0 auto;font-weight:600}
-  .st.hit{color:#ff6b6b}.st.clear{color:#3fb950}.st.na{color:#8b949e}.st.warn{color:#e3b341}
+  /* vfy = ORANGE, and deliberately NOT green: "verify" means the tool could not decide, which must never
+     wear the same colour as "patched". It is also kept distinct from warn/amber ("review" = your build is
+     below the vendor's fix, i.e. a finding) because an unknown and a finding are different things. */
+  .st.hit{color:#ff6b6b}.st.clear{color:#3fb950}.st.na{color:#8b949e}.st.warn{color:#e3b341}.st.vfy{color:#f0883e}
   .advisory{font-size:11px;color:#e3b341;margin-bottom:6px}
 </style>
 </head>
@@ -452,7 +455,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.11.0";
+var APP_VERSION = "1.11.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -4163,7 +4166,7 @@ function buildReportHtml(){
     +'h3{font-size:13px;margin:10px 0 3px;color:#0b2a5b}h2 .sub{font-size:11px;font-weight:400;color:#6a7686;text-transform:none}'
     +'table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}'
     +'th{background:#eef2f7}.k{color:#5a6675;width:200px}.hit{color:#b00020;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}'
-    +'.warn{color:#9a6700;font-weight:700}.mono{font-family:Consolas,monospace}.nw{white-space:nowrap}.sev{font-weight:700}.muted{color:#6a7686}'
+    +'.warn{color:#9a6700;font-weight:700}.vfy{color:#c2410c;font-weight:700}.mono{font-family:Consolas,monospace}.nw{white-space:nowrap}.sev{font-weight:700}.muted{color:#6a7686}'
     +'code{background:#f0f3f7;padding:1px 4px;border-radius:3px}'
     /* navigation pane: fixed rail on screen, plain contents list on paper (a case note gets printed) */
     +'.nav{position:fixed;top:0;left:0;bottom:0;width:206px;overflow-y:auto;background:#f7f9fc;border-right:1px solid #ccd2da;padding:14px 10px;font-size:12px;box-sizing:border-box}'
@@ -4370,7 +4373,7 @@ function buildReportHtml(){
        404s. State where the numbers came from, how old they are, and that nothing was auto-checked. */
     h.push('<p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
     h.push('<table><tr><th>CVE</th><th>Exploited</th><th>Severity</th><th>Advisory</th><th>Summary</th><th>Status</th><th>Basis</th><th>Source</th></tr>');
-    for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=(cv.verdict==="exposed")?"hit":(cv.verdict==="review"?"warn":(cv.verdict==="na"?"na":"clear"));
+    for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=cveCls(cv.verdict);
       var advU=cv.url||vmsaUrl(cv.vmsa), advL=cv.vmsa||(cv.url?"advisory":"-");
       h.push('<tr'+(cv.kev?' class="rf"':(cv.verdict==="exposed"?' class="rf"':(cv.verdict==="review"?' class="rw"':'')))+'>'
         +'<td class="mono nw"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
@@ -4378,9 +4381,14 @@ function buildReportHtml(){
         +'<td class="nw'+((cv.sev==="CRITICAL"||cv.sev==="HIGH")?' hit':' muted')+'">'+rEsc(cv.sev||"-")+'</td>'
         +'<td class="mono nw">'+(advL!=="-"?('<a href="'+rEsc(advU)+'" target="_blank">'+rEsc(advL)+'</a>'):'-')+'</td>'
         +'<td>'+rEsc(cv.title)+'</td>'
-        +'<td class="'+vc+' nw">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td>'
+        +'<td class="'+vc+' nw" title="'+rEsc(cveVerdictTip(cv.verdict))+'">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td>'
         +'<td class="muted nw" style="font-size:10px">'+rEsc(cv.src||"cve.json")+'</td></tr>'); }
-    h.push('</table><p class="muted">Source column: <b>NVD (vendor CNA)</b> = the fix build came from Broadcom\'s own advisory data, fetched live. <b>cve.json</b> = local hand-maintained data, because the vendor filed no machine-readable fix for that CVE. KEV = in CISA\'s Known Exploited Vulnerabilities catalog.</p>'); }
+    h.push('</table>');
+    h.push('<p class="muted"><b>Verdicts:</b> <span class="hit">EXPOSED</span> = below the vendor\'s fixed build AND known-exploited. '
+      +'<span class="warn">REVIEW</span> = below the vendor\'s fixed build for this release line. '
+      +'<span class="vfy">VERIFY</span> = <b>MANUAL CHECK NEEDED</b>: the tool could not decide, because the vendor published no build number for this line (or the host build could not be read) - there was nothing to compare, so this is an UNKNOWN, not a pass. '
+      +'<span class="clear">PATCHED</span> = at or above the fixed build. <span class="na">n/a</span> = does not apply to this host.</p>');
+    h.push('<p class="muted">Source column: <b>NVD (vendor CNA)</b> = the fix build came from Broadcom\'s own advisory data, fetched live. <b>cve.json</b> = local hand-maintained data, because the vendor filed no machine-readable fix for that CVE. KEV = in CISA\'s Known Exploited Vulnerabilities catalog.</p>'); }
 
   /* ---- security posture ---- */
   if(SECPOST.length){ var ssc=secScoreOf();
@@ -4566,13 +4574,30 @@ function specExport(){
   catch(e){ setStatus("Spec export failed: "+e.message,"err"); appendLog("Spec export error: "+e.message); }
 }
 /* ---- security-focused standalone HTML report ---- */
-function cveCls(v){ return v==="exposed"?"hit":((v==="review"||v==="verify")?"warn":(v==="na"?"na":"clear")); }
+/* ONE function decides a CVE verdict's colour, for the panel and BOTH reports. There used to be three
+   copies of this ternary - the panel's, the case report's, and this one - and they drifted: two of them
+   had no branch for "verify", so it fell through to "clear" and rendered the SAME GREEN as "patched".
+   A verdict meaning "I could not determine this" was painted as "you are fine". Never duplicate the
+   mapping from a state to how it looks. */
+function cveCls(v){ return v==="exposed"?"hit":(v==="review"?"warn":(v==="verify"?"vfy":(v==="na"?"na":"clear"))); }
+/* what the dot (not the label) shows: clean states get no dot tint */
+function cveDotCls(v){ return v==="exposed"?"hit":(v==="review"?"warn":(v==="verify"?"vfy":(v==="na"?"na":""))); }
+/* Answers "what am I supposed to do about this row?" - the question VERIFY provokes. */
+function cveVerdictTip(v){
+  if(v==="exposed")   return "EXPOSED: this host's build is below the vendor's fixed build AND the CVE is known to be exploited in the wild. Treat as actionable now.";
+  if(v==="review")    return "REVIEW: this host's build is below the vendor's fixed build for its release line, so it looks affected. Confirm against the advisory and your exact release.";
+  if(v==="verify")    return "VERIFY = MANUAL CHECK NEEDED. The tool could NOT decide: the vendor published no build number for this release line (or the host's build/version could not be read), so there is nothing to compare. This is an UNKNOWN, not a pass - open the advisory and check it by hand.";
+  if(v==="patched")   return "PATCHED: this host's build is at or above the vendor's fixed build for its release line.";
+  if(v==="mitigated") return "MITIGATED: the build is below the fix, but a captured config makes it not exploitable here (e.g. the vulnerable service is not running). Verify the mitigation is permanent.";
+  if(v==="na")        return "n/a: this CVE does not apply to this host (e.g. it needs a feature or integration this host does not use).";
+  return "";
+}
 function buildSecurityHtml(){
   var d=new Date(); function p(x){return x<10?("0"+x):x;}
   var gen=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
   var sc=secScoreOf(), i;
   var h=['<!doctype html><html><head><meta charset="utf-8"><title>Security Report - '+rEsc(NODE.host||"")+'</title>',
-    '<style>:root{color-scheme:light}body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#fff;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:20px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:12px 0 4px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:210px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}.hit{color:#b00020;font-weight:700}.warn{color:#9a6700;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}.box{border:1px solid #ccd2da;border-radius:8px;padding:10px 14px;margin:8px 0;background:#f7f9fc}.score{font-size:22px;font-weight:700}.pill{display:inline-block;border-radius:12px;padding:1px 9px;font-size:11px;font-weight:700;margin-right:6px}.pf{background:#fde8e8;color:#b00020}.pw{background:#fdf4e3;color:#9a6700}.pp{background:#e6f4ea;color:#1a7f37}</style></head><body>',
+    '<style>:root{color-scheme:light}body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#fff;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:20px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:12px 0 4px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:210px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}.hit{color:#b00020;font-weight:700}.warn{color:#9a6700;font-weight:700}.vfy{color:#c2410c;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}.box{border:1px solid #ccd2da;border-radius:8px;padding:10px 14px;margin:8px 0;background:#f7f9fc}.score{font-size:22px;font-weight:700}.pill{display:inline-block;border-radius:12px;padding:1px 9px;font-size:11px;font-weight:700;margin-right:6px}.pf{background:#fde8e8;color:#b00020}.pw{background:#fdf4e3;color:#9a6700}.pp{background:#e6f4ea;color:#1a7f37}</style></head><body>',
     '<h1>vSphere Security Report - '+rEsc(NODE.host||"?")+'</h1>',
     '<div class="muted">'+rEsc(NODE.type||"")+' &middot; '+rEsc((NODE.product||"")+" "+(NODE.version||"")+" build "+(NODE.build||""))+(NODE.serial?(' &middot; serial '+rEsc(NODE.serial)):'')+' &middot; captured '+rEsc(NODE.captured||"?")+' &middot; report generated '+gen+' &middot; tool v'+APP_VERSION+'</div>'];
   // executive summary
@@ -5165,16 +5190,25 @@ function renderCves(){
   else if(NVD.state==="err") h+='<div class="ind"><span class="dot warn"></span><span class="nm">Live NVD check FAILED</span><span class="st warn">offline?</span><span class="dt">'+esc(NVD.err)+' - the rows below come from cve.json only ('+(stale?"which is STALE":"reviewed "+(CVEDATA.reviewed||"never"))+'), so they may be incomplete or out of date. <b>Check manually:</b> <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'">VMware security advisories</span></span></div>';
   else if(NVD.state==="off") h+='<div class="ind"><span class="dot na"></span><span class="nm">Live NVD check OFF</span><span class="st na">offline mode</span><span class="dt">rows are from cve.json only ('+(stale?"STALE - ":"reviewed "+(CVEDATA.reviewed||"never")+" - ")+'it lists only the CVEs someone added, so absence here is not evidence of absence). Tick "live NVD check" to ask the vendor data, or verify manually.</span></div>';
   else if(NVD.state==="ok" && NVD.conflicted) h+='<div class="ind"><span class="dot hit"></span><span class="nm">cve.json DISAGREES with the vendor</span><span class="st hit">'+NVD.conflicted+'</span><span class="dt">the vendor\'s fix build differs from the one in cve.json on '+NVD.conflicted+' CVE(s) - the vendor is authoritative and has been used; correct cve.json (see the rows marked CONFLICTS)</span></div>';
-  for(var i=0;i<CVES.length;i++){ var c=CVES[i]; var v=c.verdict; var dc=(v==="exposed")?"hit":(v==="review"?"warn":(v==="na"?"na":"")); var sc=(v==="exposed")?"hit":(v==="review"?"warn":(v==="na"?"na":"clear"));
+  for(var i=0;i<CVES.length;i++){ var c=CVES[i]; var v=c.verdict; var dc=cveDotCls(v), sc=cveCls(v);
     var adv=c.url||vmsaUrl(c.vmsa), advLbl=c.vmsa||(c.url?"advisory":"");
     h+='<div class="ind"><span class="dot '+dc+'"></span><span class="nm mono">'
       +'<span class="lnk" data-url="'+esc(cveUrl(c.id))+'" title="Open '+esc(c.id)+' on NVD">'+esc(c.id)+'</span>'
       +(c.kev?' <span class="tag ioc" title="In CISA\'s Known Exploited Vulnerabilities catalog - this is being used against real estates, not a theoretical finding">KEV</span>':'')
       +(c.sev?' <span class="tag '+(c.sev==="CRITICAL"||c.sev==="HIGH"?"sus":"info")+'" title="CVSS base severity from NVD">'+esc(c.sev)+'</span>':'')
       +(advLbl?(' <span class="lnk dt" data-url="'+esc(adv)+'" title="Open the vendor advisory'+(c.url?" (link supplied by NVD)":" index - search this VMSA id")+'">'+esc(advLbl)+'</span>'):'')
-      +'</span><span class="st '+sc+'">'+esc(v.toUpperCase())+'</span>'
+      +'</span><span class="st '+sc+'" title="'+esc(cveVerdictTip(v))+'">'+esc(v.toUpperCase())+'</span>'
       +'<span class="dt" title="'+esc("source: "+(c.src||"cve.json"))+'">'+esc(c.title)+' - '+esc(c.basis)
       +' <i>['+esc(c.src||"cve.json")+']</i></span></div>'; }
+  /* A legend, because the panel's whole job is telling you which rows need YOU. */
+  h+='<div class="ind" style="border-top:1px solid #30363d;margin-top:4px;padding-top:6px"><span class="dot"></span>'
+    +'<span class="nm muted" style="font-size:11px">What the verdicts mean</span><span class="st"></span>'
+    +'<span class="dt" style="font-size:11px">'
+    +'<span class="st hit" style="width:auto">EXPOSED</span> = below the fix AND exploited in the wild &middot; '
+    +'<span class="st warn" style="width:auto">REVIEW</span> = below the vendor\'s fix build &middot; '
+    +'<span class="st vfy" style="width:auto">VERIFY</span> = <b>manual check needed</b> - the tool could not decide (no build published for this line), so it is an UNKNOWN, not a pass &middot; '
+    +'<span class="st clear" style="width:auto">PATCHED</span> = at or above the fix &middot; '
+    +'<span class="st na" style="width:auto">n/a</span> = does not apply to this host</span></div>';
   h+='</div>'; $("ovCve").innerHTML=h;
   var cb=$("nvdOn"); if(cb){ cb.onclick=function(){ NVD_ON=!!this.checked; savePrefs();
     if(NVD_ON){ safeStep("cves", buildCves); nvdStart(); } else { safeStep("cves", buildCves); NVD={state:"off",err:"",n:0,added:0,corroborated:0,conflicted:0}; renderCves(); } }; }
