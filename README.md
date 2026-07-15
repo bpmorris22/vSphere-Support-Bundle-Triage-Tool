@@ -10,7 +10,7 @@ No install, no runtime, no dependencies beyond what Windows ships. It reads the 
 
 _Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NET IPs)._
 
-**Overview** - node summary, key-file coverage, ransomware indicators, CVE panel, clickable stat bubbles
+**Overview** - node summary, key-file coverage, CVE panel, clickable stat bubbles
 ![Overview](screenshots/overview.svg)
 
 **VMs** - per-VM inventory with guest IP and click-to-preview `.vmx`
@@ -27,9 +27,14 @@ _Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NE
 
 ## Features
 
-- **Overview** - node summary, key-file coverage, an ESXi **ransomware / intrusion indicator** panel, and a **CVE-exposure** panel (links to NVD + the VMSA).
+- **Overview** - node summary, key-file coverage, and a **CVE-exposure** panel (links to NVD + the VMSA).
+- **Security** - opens with the **ransomware / intrusion indicator** panel, then a graded posture review: VIB integrity (unsigned / CommunitySupported / added after the base image), acceptance level, host encryption mode, Secure Boot / TPM, MOB, lockout + password policy, DCUI access list.
 - **Specification** - deep config: identity, networking (VMkernel adapters, physical NICs, DNS/NTP), **datastores + vSAN & physical-disk layout** (for vDisk recovery scoping), security posture (AD join, VIB acceptance, syslog), and for vCenter the SSO identity sources / AD integration and **managed ESXi hosts**.
-- **VMs** (ESXi) - every registered VM from its `.vmx`: guest OS, vCPU, vRAM, vDisks, datastore/vSAN, running status; click to preview the `.vmx` disk paths. Guest IP is enriched from a vCenter in the fleet.
+- **VMs** - the hosted VM inventory, **including when the VMs are ransomware-encrypted**:
+  - *ESXi* - every registered VM from its `.vmx`: guest OS, vCPU, vRAM, vDisks, datastore/vSAN, running status; click to preview the `.vmx`. A VM whose `.vmx` is **missing or ransom-renamed** (`web.vmx.locked`, `disk.vmdk.8base`) is **still listed and tagged "possibly encrypted"**, with its name recovered from `vmInventory.xml`, a sibling `.vmdk`, or the folder.
+  - *vCenter* - a `vc-support` bundle contains **no `.vmx` at all**, so the list is **reconstructed from logs**: names + MoRefs from `vpxd`, powered-on placement, vCPU and vRAM from the **DRS dumps**, and a historical baseline recovered from the vSAN cloud-health data. VMs restored from backup, re-registered under a new MoRef, or present in the baseline but gone from current logs are flagged for review.
+  - **vSAN GUID Path** (`/vmfs/volumes/vsan:<datastore-uuid>/<vm-uuid>`) - the recovery handle that survives a `.vmx` rename - plus **VMDK disk extents** (start/end sector + vSAN object backing) where the descriptor was captured.
+  - **Simplified** view (default) shows just the VMs with an identified host; untick it for the full evidence columns. CSV exports exactly what the view shows.
 - **Key Files** - a curated inventory of high-value artifacts (presence, size, open folder/file); an absent critical artifact is itself a finding.
 - **Logons / Actions / Timeline** - parsed, scored, colour-coded events (ESXi `shell.log`/`auth.log`/`hostd`; vCenter `websso`/`vpxd`/`auth.log`) with a multiselect score filter, case-window, and **actor / kind dropdown filters**. vCenter tasks are attributed to a user (nearest human SAML login).
 - **Login sessions (paired)** - one row per API session: login &rarr; logout paired by session ID (vCenter `vpxd` SessionManager GUIDs; ESXi `hostd` session events), with duration, user (from the SAML token), source IP (time-joined from the envoy access log when unambiguous), and client/user-agent. Noise filters for loopback (on by default), brief automated sessions, and unpaired rows; unpaired rows are kept by default and labelled (active at capture / pre-window / failed login).

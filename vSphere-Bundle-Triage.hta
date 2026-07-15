@@ -62,7 +62,12 @@
   #apppill{cursor:default}
   .wrap{padding:12px 14px}
   .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
-  .card h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
+  /* Heading ladder (was inverted: the pane title was 11px, SMALLER than the 12px headings inside it).
+   pane title 14px  >  heading inside a pane 12px (.panel h4 / a section <h3> in the card body)  >
+   table column header 10px (th). ".card > h3" = the card's OWN title (direct child); a nested <h3>
+   rendered into a body div (e.g. "Top findings" in #secBody) is NOT a direct child and stays 12px. */
+.card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
+.card > h3{font-size:14px;margin:0 0 10px}
   label.fld{display:block;margin:6px 0 2px;font-size:11px;color:#8b949e}
   input.txt,select,textarea{background:#1c2330;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:5px 8px;font-size:13px;font-family:Consolas,monospace}
   input.wide{width:62%}
@@ -227,17 +232,17 @@
   <div id="results" class="hide">
     <div class="card">
       <div class="row" id="tabbar" style="margin-bottom:2px">
-        <button class="btn on" id="tabOverview" data-tab="overview">Overview</button>
-        <button class="btn" id="tabSpec" data-tab="spec">Specification</button>
-        <button class="btn" id="tabSec" data-tab="sec">Security</button>
-        <button class="btn" id="tabNet" data-tab="net">Network</button>
-        <button class="btn" id="tabVms" data-tab="vms">VMs</button>
-        <button class="btn" id="tabInv" data-tab="inv">Key Files</button>
-        <button class="btn" id="tabLogon" data-tab="logon">Logons</button>
-        <button class="btn" id="tabAct" data-tab="act">Actions</button>
-        <button class="btn" id="tabTime" data-tab="time">Timeline</button>
-        <button class="btn" id="tabPersist" data-tab="persist">Persistence</button>
-        <button class="btn" id="tabIoc" data-tab="ioc">IOC hits</button>
+        <button class="btn on" id="tabOverview" data-tab="overview" title="Start here. Node summary (product / build / host / capture time), key-file coverage with any absent critical artifacts, and the advisory CVE-exposure card. The stat bubbles are clickable - they jump to the Logons / Actions / Timeline / IOC tabs. The intrusion &amp; ransomware indicators live on the Security tab.">Overview</button>
+        <button class="btn" id="tabInv" data-tab="inv" title="The curated inventory board of forensically high-value files for this bundle type - present/absent, size, category and why each matters. A MISSING key log is itself a finding (blue left border = critical artifact). Open the file or reveal its folder; .gz/.zst are decompressed on demand.">Key Files</button>
+        <button class="btn" id="tabSpec" data-tab="spec" title="What this node IS, parsed from its config (not an incident view). Identity, product/build, networking (VMkernel adapters, physical NICs, gateway/DNS/NTP), datastores, vSAN &amp; disk layout, and - on vCenter - the managed ESXi inventory and SSO identity sources. Exports a standalone specification HTML.">Specification</button>
+        <button class="btn" id="tabSec" data-tab="sec" title="Opens with the intrusion &amp; ransomware indicator panel (derived from the parsed Logons/Actions + node config - SSH/shell use, external source IPs, host-encryption or recovery-key access, mass power-off, firewall disabled, payloads in /tmp, bulk VMDK/VMX ops, ransom-note scan). Below it, the graded security posture: installed VIBs (unsigned / CommunitySupported / unrecognized vendor / added after the base image), VIB acceptance level, host encryption mode, Secure Boot / TPM / execInstalledOnly, MOB, account lockout and password policy, shell/SSH idle timeout, DCUI access list, plus the advisory known-CVE exposure.">Security</button>
+        <button class="btn" id="tabNet" data-tab="net" title="Socket snapshot at capture time (ESXi: localcli network ip connection list; vCenter: netstat -anp) - listeners, which are network-facing vs loopback-only, established external connections, and suspicious processes holding sockets. Also the web/proxy request summary by source IP.">Network</button>
+        <button class="btn" id="tabVms" data-tab="vms" title="The hosted VM inventory. ESXi: parsed from each registered .vmx, and VMs whose .vmx is missing or ransom-renamed are still listed and tagged 'possibly encrypted'. vCenter: reconstructed from vpxd + DRS dumps + the vSAN-health baseline (a vc-support bundle has no .vmx). Includes the vSAN GUID Path for recovery. Click a VM (ESXi) for its activity timeline.">VMs</button>
+        <button class="btn" id="tabLogon" data-tab="logon" title="Who authenticated, from where. ESXi: shell.log, auth.log (SSH/DCUI/PAM) and hostd SOAP logins. vCenter: SSO websso.log (the authoritative login source), OS auth.log/sudo, and human SAML logins from vpxd. Shows user, source IP, success/failure - scored for external/public IPs, failures, and privileged accounts.">Logons</button>
+        <button class="btn" id="tabAct" data-tab="act" title="What was DONE, and by whom. ESXi: shell command history and hostd tasks. vCenter: meaningful vpxd tasks (*_Task, permission/role changes) attributed to the nearest preceding human login. Scored for suspicious commands - SSH enable, host-encryption change, mass power-off, firewall disable, payloads in /tmp, bulk VMDK ops.">Actions</button>
+        <button class="btn" id="tabTime" data-tab="time" title="Logons and Actions merged into one time-ordered view - the sequence that turns isolated events into a story. Filter by score and by the case window (Set case window /from /to). Exports a Timeline-Explorer-friendly CSV.">Timeline</button>
+        <button class="btn" id="tabPersist" data-tab="persist" title="Persistence &amp; tampering checks against what the bundle actually captured (anything not collected is marked 'not captured' rather than passed). DCUI banner ransom-note scan, rc.local.d boot persistence, remote syslog forwarding changes, VIB acceptance, SSH authorized_keys, cron/systemd units, ld.so.preload, and key-log integrity (empty / truncated / time gaps).">Persistence</button>
+        <button class="btn" id="tabIoc" data-tab="ioc" title="Hits for your IOC list (shared toolkit IOC.txt / IOC.csv - use 'Create IOC list' to edit) swept across the key logs present in this bundle, not the whole tree. IPs, users, hashes, filenames, keywords. Any hit scores +3 wherever it appears.">IOC hits</button>
         <button class="btn orange hide" id="backRosterBtn" style="float:right" title="Return to the fleet roster (kept in memory - no re-scan)">&#9664; Fleet roster</button>
       </div>
       <div class="roadmap">Logons / Actions / Timeline / Persistence / IOC parse the key logs &amp; config automatically after Analyze (Re-run on Overview). Overview shows the ransomware-indicator &amp; CVE-exposure panels; Case-note report writes a self-contained HTML. Case window (/from /to) filters Timeline &amp; Logons, never scores. Next: fleet / multi-host mode.</div>
@@ -263,7 +268,6 @@
         <span class="muted" id="anStatus" style="margin-left:8px;font-size:12px">Runs automatically after Analyze.</span>
         <div id="anStats" style="margin-top:8px"></div>
       </div>
-      <div id="ovIndic" style="margin-top:12px"></div>
       <div id="ovCve" style="margin-top:12px"></div>
     </div>
 
@@ -273,13 +277,14 @@
         <b style="font-size:14px">Hosted VMs</b>
         <span class="muted" id="vmsInfo" style="margin-left:10px;font-size:12px"></span>
         <span style="float:right">
+          <label style="margin-right:8px;font-size:12px;cursor:pointer" title="Simplified view (default): show only VMs with an identified host, and just the VM / Host / Status columns. Untick for the full inventory incl. VMs with no resolved host (powered off, template, or baseline-only) and all detail columns."><input type="checkbox" id="vmSimple" checked> Simplified</label>
           <select id="vmOs" class="txt" style="max-width:200px" title="Filter by Guest OS"></select>
           <input class="txt" id="vmq" placeholder="filter VMs" style="width:200px">
           <button class="btn green" id="vmsExport">Export VMs &rarr; CSV</button>
         </span>
       </div>
       <div class="scroll" id="vmsScroll" style="max-height:56vh"><table id="vmsTbl"></table></div>
-      <div class="muted" style="font-size:11px;margin-top:6px">Parsed from the registered VMs' .vmx files. <b>Click a VM</b> to open its <b>activity timeline</b> (power / snapshot / migration / guest-op events from vmware.log, with the opID that joins the vCenter task chain) - snapshot delete/consolidate before an encryption window is the ransomware tell; then <i>view .vmx config</i> for disk paths. Guest IP is not captured in ESXi bundles. See Specification for the node's vSAN &amp; disk layout.</div>
+      <div class="muted" style="font-size:11px;margin-top:6px"><b>Simplified</b> (on by default) shows only VMs with an identified host, with just the VM / Host / Status columns - untick it for the full inventory (VMs with no resolved host: powered off, templates, or baseline-only) and every evidence column. Parsed from the registered VMs' .vmx files on an ESXi bundle; reconstructed from vpxd / DRS dumps / the vSAN-health baseline on a vCenter bundle. <b>Click a VM</b> to open its <b>activity timeline</b> (power / snapshot / migration / guest-op events from vmware.log, with the opID that joins the vCenter task chain) - snapshot delete/consolidate before an encryption window is the ransomware tell; then <i>view .vmx config</i> for disk paths. Guest IP is not captured in ESXi bundles. See Specification for the node's vSAN &amp; disk layout.</div>
     </div>
 
     <!-- SPECIFICATION -->
@@ -298,6 +303,11 @@
     </div>
 
     <!-- SECURITY POSTURE -->
+    <!-- intrusion / ransomware indicators - lives on the Security tab, above Security posture -->
+    <div class="card hide" id="secIndicCard">
+      <div id="ovIndic"></div>
+    </div>
+
     <div class="card hide" id="secCard">
       <h3>Security posture <span class="muted" style="text-transform:none;font-weight:400" id="secScore"></span>
         <button class="btn green" id="secExport" style="float:right" title="Export a security-focused report (posture score, patch state/CVEs, intrusion indicators, control matrix, VIB integrity, persistence) to a self-contained HTML.">Export &rarr; HTML</button>
@@ -417,7 +427,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.2.2";
+var APP_VERSION = "1.3.6";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -446,6 +456,7 @@ var LISTEN_HIDELOOP=true; // Network tab: hide loopback-only listeners - ON by d
 var ACT_ACTOR="", ACT_KIND="";  // Actions tab: actor + kind dropdown filters
 var TIME_KIND="";               // Timeline tab: kind dropdown filter
 var VM_OS="";                   // Hosted VMs tab: Guest-OS dropdown filter
+var VM_SIMPLE=true;             // Hosted VMs tab: Simplified view (default ON) - only VMs with an identified host, VM/Host/Status columns only
 /* analysis datasets (v0.2) */
 var LOGON=[], ACTIONS=[], TIMELINE=[], IOCHITS=[], IOCS=[];
 var ANALYZED=false, TQUERY="", FLAGONLY=false, DFROM=0, DTO=0, ANMAXROWS=8000;
@@ -730,6 +741,38 @@ var CAT_VCSA=[
    INPUT RESOLUTION
    ============================================================ */
 function isArchive(p){ return /\.(tar\.gz|tgz|tar|zip)$/i.test(String(p)); }
+/* read the first N bytes of a file as a byte-exact latin1 string (each charCodeAt === the raw byte).
+   ADODB binary -> flip Type to text with an 8859-1 charset at Position 0 (all 256 byte values map
+   1:1, no multibyte). Returns "" if it can't read (caller then falls through to the normal path -
+   never a false block). */
+function fileHeadLatin1(path, n){
+  var st=null;
+  try{ st=new ActiveXObject("ADODB.Stream"); st.Type=1; st.Open(); st.LoadFromFile(path);
+    var take=Math.min(n, st.Size); if(take<=0){ st.Close(); return ""; }
+    var bytes=st.Read(take); st.Close();
+    var out=new ActiveXObject("ADODB.Stream"); out.Type=1; out.Open(); out.Write(bytes); out.Position=0;
+    out.Type=2; out.Charset="iso-8859-1"; var s=out.ReadText(); out.Close(); return String(s);
+  }catch(e){ try{ if(st) st.Close(); }catch(e2){} return ""; }
+}
+/* identify the real container from magic bytes (extension lies - a VCSA .tgz is a plain tar; here a
+   Dell VxRail RASR recovery ISO was renamed .tgz). Returns: gzip|tar|pax|zip|iso9660|empty|"".
+   Only iso9660/empty are HARD failures the caller reports; everything else proceeds to bsdtar. */
+function sniffContainer(path){
+  var head=fileHeadLatin1(path, 34816); if(!head) return "";     // 34 KB: covers the ISO PVD at 0x8000
+  var b0=head.charCodeAt(0), b1=head.charCodeAt(1);
+  if(head.length>=2 && b0===0x1f && b1===0x8b) return "gzip";
+  if(head.length>=2 && b0===0x50 && b1===0x4b) return "zip";                 // PK
+  if(head.length>=262 && head.substr(257,5)==="ustar") return "tar";
+  if(head.indexOf("@PaxHeader")>=0 && head.indexOf("@PaxHeader")<1024) return "pax";
+  if(head.length>=32774 && head.substr(32769,5)==="CD001") return "iso9660"; // ISO 9660 primary volume descriptor
+  var allZero=true; for(var i=0;i<Math.min(head.length,512);i++){ if(head.charCodeAt(i)!==0){ allZero=false; break; } }
+  if(allZero && head.length>=512) return "empty";                            // 512+ leading zero bytes, no recognizable header
+  return "";
+}
+function isoVolumeLabel(path){
+  var head=fileHeadLatin1(path, 33000); if(head.length<32840) return "";
+  return trimStr(head.substr(32808,32).replace(/\u0000/g," "));
+}
 /* a bundle tree root has README and (commands OR var) directly under it */
 function looksLikeRoot(dir){ return folderExists(dir) && fileExists(dir+"\\README") && (folderExists(dir+"\\commands")||folderExists(dir+"\\var")||folderExists(dir+"\\etc")); }
 function findTreeRoot(dir){
@@ -777,18 +820,29 @@ function analyze(){
   if(!fileExists(inp)){ setStatus("Not found: "+inp,"err"); return; }
   if(!isArchive(inp)){ setStatus("Unrecognized input - expected a .tgz / .tar / .zip archive or an extracted folder.","err"); return; }
   if(!TAR){ setStatus("tar.exe not found (needs Windows 10 1803+).","err"); return; }
+  var fmt=sniffContainer(inp);
+  if(fmt==="iso9660"){ var lbl=isoVolumeLabel(inp);
+    appendLog("Magic-byte sniff: ISO 9660 CD-ROM image"+(lbl?(" (volume label '"+lbl+"')"):"")+" - NOT a vm-support/vc-support bundle.");
+    setStatus("This file is an ISO 9660 disc image"+(/rasr/i.test(lbl)?" (Dell VxRail RASR recovery ISO)":"")+", not a vSphere support bundle - despite the ."+((inp.match(/\.([^.\\/]+)$/)||[])[1]||"tgz")+" name. A vm-support/vc-support bundle is a gzip/tar of a hostname-rooted tree (README + var/ + commands/). Point the tool at the actual support bundle.","err");
+    return; }
+  if(fmt==="empty"){ appendLog("Magic-byte sniff: leading bytes are all zero - file is empty, sparse, or truncated (no archive header).");
+    setStatus("This file has no archive header (leading bytes all zero) - likely empty, still-copying, or a truncated download. Re-copy the bundle and retry.","err"); return; }
   MODE="toc"; ARCHIVE=inp; window.setTimeout(function(){ readToc(inp, inp); }, 40);
 }
 
 /* ---- TOC mode: read bundle index with bsdtar -tvf (cached to toc.tsv) ---- */
 function tocCachePath(){ return LASTOUTDIR+"\\toc.tsv"; }
 function tryTocCache(archive){
-  try{ var p=tocCachePath(); if(!fileExists(p)) return null;
+  try{ var p=tocCachePath(); if(!fileExists(p)){ appendLog("TOC cache: no toc.tsv at "+p+" - full index needed."); return null; }
     var sz=fileSize(archive); var head=readUtf8(p); var nl=head.indexOf("\n"); if(nl<0) return null;
-    var meta=head.substring(0,nl); var mm=meta.match(/^#\s*(.+?)\s*\|\s*(\d+)$/);
-    if(!mm || mm[1]!==archive || String(sz)!==mm[2]) return null;
+    /* meta line is CRLF-terminated (cacheToc joins with \r\n) - the \s* before $ eats the \r.
+       Without it the match always failed and the cache was silently dead (v1.2.3 fix, ported
+       from DataDomain-Bundle-Triage v0.11.3). */
+    var meta=head.substring(0,nl); var mm=meta.match(/^#\s*(.+?)\s*\|\s*(\d+)\s*$/);
+    if(!mm){ appendLog("TOC cache: unreadable meta line - re-indexing."); return null; }
+    if(lc(mm[1])!==lc(archive) || String(sz)!==mm[2]){ appendLog("TOC cache: stale (cached "+mm[1]+" | "+mm[2]+", current "+archive+" | "+sz+") - re-indexing."); return null; }
     return head.substring(nl+1);
-  }catch(e){ return null; }
+  }catch(e){ appendLog("TOC cache read failed ("+e.message+") - re-indexing."); return null; }
 }
 function readToc(archive, input){
   BUSY=true; $("procBtn").disabled=true;
@@ -806,7 +860,12 @@ function readToc(archive, input){
     try{ if(!fso.FileExists(raw)){ setStatus("Indexing produced no output - see log.","err"); return; }
       var txt=readUtf8(raw); try{ fso.DeleteFile(raw); }catch(e0){}
       parseTocRaw(txt);
-      if(!TOC.length){ setStatus("The archive index is empty - is this a support bundle? See log.","err"); return; }
+      if(!TOC.length){
+        var why="";
+        if(/Unrecognized archive format/i.test(log)) why=" bsdtar could not recognize the format (not a gzip/tar/zip). Check it is the real support bundle, not an ISO / installer / recovery image.";
+        else if(/Truncated input file|unexpected end of file|premature/i.test(log)) why=" bsdtar hit a truncated/short file - the bundle looks like an incomplete or still-copying download; re-copy it.";
+        else if(/CD001|ISO 9660|isolinux|RASRISO/i.test(log)) why=" the archive listing looks like an ISO disc image, not a vm-support/vc-support tree.";
+        setStatus("The archive index is empty - is this a support bundle?"+(why||" See log for the bsdtar error."),"err"); return; }
       cacheToc(archive); finishToc(input);
     }catch(e){ setStatus("Index parse failed: "+e.message,"err"); }
   };
@@ -850,7 +909,7 @@ function cacheToc(archive){
 function finishToc(input){
   detectType();
   buildInventory();
-  extractNodeFilesToc();
+  extractKeyFilesToc();
   parseNode();
   writeRunInfo(LASTOUTDIR, input);
   showResults();
@@ -940,8 +999,14 @@ function buildInventory(){
 function extractMembersToc(rels){    // batch-extract members into EXDIR (recreates PREFIX path)
   if(!rels.length) return;
   ensureDir(EXDIR);
-  var args=""; for(var i=0;i<rels.length;i++){ args+=' "'+batEsc(PREFIX+"/"+rels[i])+'"'; }
-  runBat(['"'+batEsc(TAR)+'" -xf "'+batEsc(ARCHIVE)+'" -C "'+batEsc(EXDIR)+'"'+args+' > "__LOG__" 2>&1'], false);
+  /* member names go via -T list file, not argv - the up-front batch (key files + full analysis
+     set) would blow the cmd.exe command-line limit. Plain FSO write, NO BOM - bsdtar would treat
+     a BOM as part of the first filename. Console shown for multi-file batches so a long pass has
+     visible progress; single on-demand extracts stay hidden as before. */
+  var fso=new ActiveXObject("Scripting.FileSystemObject"), lst=(fso.GetSpecialFolder(2)+"")+"\\vsbx_"+uid()+".lst";
+  var lf=fso.CreateTextFile(lst,true,false); for(var i=0;i<rels.length;i++){ lf.Write(PREFIX+"/"+rels[i]+"\n"); } lf.Close();
+  runBat(['"'+batEsc(TAR)+'" -xf "'+batEsc(ARCHIVE)+'" -C "'+batEsc(EXDIR)+'" -T "'+batEsc(lst)+'" > "__LOG__" 2>&1'], rels.length>1);
+  try{ fso.DeleteFile(lst); }catch(e){}
 }
 function extractedPath(rel){ return EXDIR+"\\"+winRel(PREFIX)+"\\"+winRel(rel); }
 function sourcePath(rel){ return MODE==="tree" ? (ROOT+"\\"+winRel(rel)) : extractedPath(rel); }
@@ -953,13 +1018,79 @@ function readMember(rel){
     return catMember(rel);   // deep / MAX_PATH fallback
   }catch(e){ return ""; }
 }
-function extractNodeFilesToc(){
+/* union of every file the analysis parsers read - resolved with the SAME helpers the parsers use
+   (resolveLog / rotationsOf / auditRotations / envoyFrontLog), so the up-front extract pass matches
+   what logLines/readMember will ask for. Missing a file here is only a perf miss (it falls back to
+   an on-demand single-file pass), never a correctness issue. Ported from DataDomain v0.11.3. */
+function analysisRels(){
+  var rels=[];
+  function add(r){ if(r) rels.push(r); }
+  function addAll(a){ for(var k=0;k<a.length;k++) rels.push(a[k]); }
+  function addLog(cands, pat){ var rel=resolveLog(cands, pat); if(!rel) return;
+    if(DEEPROT) addAll(rotationsOf(rel));
+    add(rel); }
+  if(BTYPE==="esxi"){
+    addLog(["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"]);          // parseLogons + IOC + integrity
+    addLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]);        // parseLogons/sessions
+    addLog(["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"]);        // parseActions
+    addLog(["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]);           // IOC sweep + integrity + host chain
+    addLog(["var/run/log/esxupdate.log","scratch/log/esxupdate.log","var/log/esxupdate.log"]);
+    addLog(["var/run/log/rhttpproxy.log","scratch/log/rhttpproxy.log","var/log/rhttpproxy.log"]);
+    addAll(rotationsOf("var/run/log/vobd.log"));                                          // vobd rotations are ALWAYS read (small)
+    add(resolveLog(["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]));
+    addAll(["etc/hosts","etc/vmsyslog.conf","etc/ntp.conf","etc/resolv.conf",             // parseNode / persistence / security / spec members
+      "etc/vmware/hostd/vmAutoStart.xml","etc/vmware/hostd/dvportgroups.xml.gz","etc/ssh/keys-root/authorized_keys",
+      "commands/smbiosDump.txt","commands/ifconfig_-a.txt","commands/localcli_hardware-ipmi-bmc-get.txt",
+      "commands/ps_-Cc---tree.txt","commands/lw-lsa_get-status.txt","commands/localcli_system-slp-stats-get.txt",
+      "commands/localcli_system-settings-advanced-list--d.txt","commands/localcli_system-settings-encryption-get.txt",
+      "commands/localcli_hardware-trustedboot-get.txt","commands/localcli_--formatterjson-system-ntp-get.txt",
+      "commands/localcli_--formatterjson-system-ntp-config-get.txt","commands/sso-config.txt",
+      "commands/esxcfg-vswitch_-l.txt","commands/esxcfg-route_-l.txt","commands/localcli_network-ip-dns-server-list.txt",
+      "commands/ntpq_-p.txt","commands/esxcfg-vmknic_-l.txt","commands/nicinfo.sh.txt",
+      "commands/localcli_storage-filesystem-list--i.txt","commands/localcli_storage-filesystem-list.txt",
+      "commands/localcli_vsan-datastore-list.txt","commands/localcli_vsan-storage-list.txt",
+      "commands/localcli_storage-core-device-capacity-list.txt","commands/localcli_vm-process-list.txt",
+      "commands/localcli_vsan-cluster-get.txt"]);
+  } else if(BTYPE==="vcsa"){
+    addLog(["var/log/auth.log"]);                                                         // parseLogons/sudo + IOC + integrity
+    addLog(["var/log/vmware/sso/websso.log"]);                                            // parseLogons + IOC + integrity
+    add(resolveLog(["var/log/vmware/sso/tokenservice.log"]));                             // IOC sweep
+    add(resolveLog(["var/log/vmware/vmdird/vmdird.log"]));                                // IOC sweep + integrity
+    add(resolveLog(["var/log/vmware/messages","var/log/messages"]));                      // IOC sweep
+    add(resolveLog(["var/log/audit/sso-events/audit_events.log"]));                       // parseSsoAudit
+    add(resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"));                        // parseActions/sessions/host chain
+    var rots=auditRotations(); if(rots.length){ if(DEEPROT) addAll(rots); else add(rots[rots.length-1]); }   // parseAuditd
+    add(envoyFrontLog());                                                                 // parseEnvoy (web access)
+    addAll(["etc/hosts","etc/rsyslog.conf","etc/crontab","etc/ntp.conf","etc/resolv.conf",
+      "etc/applmgmt/appliance/patching_backup_config.json","var/log/vmware/applmgmt/backupSchedulerCron.log",
+      "commands/ifconfig_-a.txt","commands/ps_auwwx---sort--rss.txt","commands/route.txt",
+      "commands/sso-config.txt","commands/lw-lsa_get-status.txt"]);
+    try{ var dsets=drmDumpSets(); addAll(dsets.latest||[]); addAll(dsets.earliest||[]); }catch(eD){}   // VMs-from-logs: DRS dumps
+    try{ var hp="var/log/vmware/vsan-health/", hn=listUnder(hp,/-cloud_health_check_data\.json\.gz$/i), ob=listUnder(hp,/_obfuscationTableForHuman\.json\.gz$/i);
+      if(hn.length) add(hp+hn[0]); for(var oo=0;oo<ob.length;oo++) add(hp+ob[oo]); }catch(eH){}        // VMs-from-logs: vSAN-health baseline
+  }
+  return rels;
+}
+/* batch-extract the node files, key files AND the analysis set up front - ONE archive pass for
+   everything (each ensureExtracted/readMember single-file miss during parse/analysis would
+   otherwise be its own full pass over the archive). Replaces extractNodeFilesToc. */
+function extractKeyFilesToc(){
   if(MODE!=="toc") return;
-  var want=["README"];
-  if(BTYPE==="esxi"){ want.push("commands/localcli_system-version-get.txt"); want.push("commands/localcli_software-acceptance-get.txt"); }
-  else if(BTYPE==="vcsa"){ want.push("etc/vmware-analytics/build.txt"); }
-  var have=[]; for(var i=0;i<want.length;i++){ if(TOCMAP[want[i]]!=null) have.push(want[i]); }
-  if(have.length) extractMembersToc(have);
+  var want=[], seen={}, CAP=6*1024*1024;
+  function need(r){ return !!(r && TOCMAP[r]!=null && !seen[r] && !fileExists(extractedPath(r))); }   // re-runs skip what is already on disk
+  var nodeFiles=["README","commands/localcli_system-version-get.txt","commands/localcli_software-acceptance-get.txt","etc/vmware-analytics/build.txt"];
+  for(var n=0;n<nodeFiles.length;n++){ if(need(nodeFiles[n])){ seen[nodeFiles[n]]=1; want.push(nodeFiles[n]); } }
+  for(var i=0;i<INVENTORY.length;i++){ var it=INVENTORY[i];
+    if(!it.present || it.dir || !it.rel) continue;
+    if(it.size>CAP) continue;                                 // large non-analysis logs stay on-demand (the analysis set below is uncapped)
+    if(need(it.rel)){ seen[it.rel]=1; want.push(it.rel); } }
+  var extra=analysisRels();
+  for(var j=0;j<extra.length;j++){ var r=extra[j]; if(need(r)){ seen[r]=1; want.push(r); } }
+  if(want.length){
+    appendLog("Extracting "+want.length+" file(s) up front - node/key files + the full log-analysis set (ONE archive pass)…");
+    setStatus("Extracting "+want.length+" key/analysis file(s) - one archive pass…","muted");
+    extractMembersToc(want);
+  }
 }
 
 /* ---------- node-config parse ---------- */
@@ -2290,9 +2421,13 @@ function catMember(rel){
    so the deep vSAN paths stay under MAX_PATH. Returns the temp base dir. */
 function extractStripToTemp(rels){
   var fso=new ActiveXObject("Scripting.FileSystemObject"), base=fso.GetSpecialFolder(2)+"\\vsbvmx_"+uid();
-  ensureDir(base); var B=25;
-  for(var s=0;s<rels.length;s+=B){ var args=""; for(var i=s;i<Math.min(s+B,rels.length);i++) args+=' "'+batEsc(PREFIX+"/"+rels[i])+'"';
-    runBat(['"'+batEsc(TAR)+'" -xf "'+batEsc(ARCHIVE)+'" -C "'+batEsc(base)+'" --strip-components=1'+args+' > "__LOG__" 2>&1'], false); }
+  ensureDir(base);
+  /* -T list file = ONE archive pass for all .vmx (the old argv batches of 25 cost one full
+     archive traversal EACH). Plain FSO write, NO BOM - bsdtar would eat it as a filename. */
+  var lst=(fso.GetSpecialFolder(2)+"")+"\\vsbvmx_"+uid()+".lst";
+  var lf=fso.CreateTextFile(lst,true,false); for(var i=0;i<rels.length;i++){ lf.Write(PREFIX+"/"+rels[i]+"\n"); } lf.Close();
+  runBat(['"'+batEsc(TAR)+'" -xf "'+batEsc(ARCHIVE)+'" -C "'+batEsc(base)+'" --strip-components=1 -T "'+batEsc(lst)+'" > "__LOG__" 2>&1'], false);
+  try{ fso.DeleteFile(lst); }catch(e){}
   return base;
 }
 function runningVms(){ var t=readMember("commands/localcli_vm-process-list.txt"), set={}, m;
@@ -2305,47 +2440,542 @@ function parseVmx(txt, rel, run){
   var disks=[], dre=/^\s*(?:scsi|sata|nvme|ide)\d+:\d+\.fileName\s*=\s*"([^"]+\.vmdk)"/img, dm; while((dm=dre.exec(txt))) disks.push(dm[1]);
   var vsan=/vsan:/i.test(rel), ds=vsan?"vSAN":((rel.match(/volumes\/([^\/]+)\//)||[])[1]||"");
   var running=!!(run[lc(rel)] || run["base:"+lc(baseName(rel))] || run["name:"+lc(name)]);
+  var gp=vsanPathFromRel(rel);
   return { name:name, os:pretty||gos, vcpu:parseInt(g(/^\s*numvcpus\s*=\s*"(\d+)"/im),10)||1, memMB:mem?parseInt(mem,10):0,
-    disks:disks, ndisk:disks.length, vsan:vsan, ds:ds, running:running, cfg:rel,
-    blob:lc(name+" "+gos+" "+pretty+" "+ds+" "+disks.join(" ")) };
+    disks:disks, ndisk:disks.length, vsan:vsan, ds:ds, running:running, cfg:rel, guidPath:gp,
+    blob:lc(name+" "+gos+" "+pretty+" "+ds+" "+disks.join(" ")+" "+gp) };
 }
-function parseVms(){ VMS=[]; if(BTYPE!=="esxi") return;
-  var rels=findVmxRels(); appendLog("  VMs: "+nf(rels.length)+" .vmx in bundle"); if(!rels.length) return;
-  var run=runningVms(), base = (MODE==="toc") ? extractStripToTemp(rels) : "", got=0;
-  for(var i=0;i<rels.length;i++){ var rel=rels[i];
-    var path = MODE==="tree" ? (ROOT+"\\"+winRel(rel)) : (base+"\\"+winRel(rel));
+/* ================= v1.3.0: VM identification when .vmx files are missing/renamed (ransomware)
+   and VM inventory for vCenter bundles (from vpxd + DRS dumps + vSAN-health baseline) ============ */
+
+/* compact SHA-256 (ES3-safe). vSAN cloud-health "obfuscated" entity names are plain unsalted
+   sha256(name) - confirmed by hashing a known VM's display name and matching the stored entry exactly.
+   Hashing a candidate dictionary recovers the real names. */
+function sha256hex(str){
+  var i, j, s=unescape(encodeURIComponent(String(str)));
+  var K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+         0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+         0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+         0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+         0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+         0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+         0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+         0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  var H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  var l=s.length, words=[], w=[];
+  for(i=0;i<l;i++) words[i>>2]=(words[i>>2]||0)|((s.charCodeAt(i)&0xff)<<(24-(i%4)*8));
+  words[l>>2]=(words[l>>2]||0)|(0x80<<(24-(l%4)*8));
+  var total=(((l+8)>>6)+1)*16;
+  for(i=0;i<total;i++) if(words[i]==null) words[i]=0;
+  words[total-1]=(l*8)|0; words[total-2]=Math.floor(l/536870912);
+  function rr(x,n){ return (x>>>n)|(x<<(32-n)); }
+  for(var b=0;b<total;b+=16){
+    var a2=H[0],b2=H[1],c2=H[2],d2=H[3],e2=H[4],f2=H[5],g2=H[6],h2=H[7];
+    for(i=0;i<64;i++){
+      if(i<16) w[i]=words[b+i]|0;
+      else { var s0=rr(w[i-15],7)^rr(w[i-15],18)^(w[i-15]>>>3), s1=rr(w[i-2],17)^rr(w[i-2],19)^(w[i-2]>>>10);
+        w[i]=(((w[i-16]+s0)|0)+((w[i-7]+s1)|0))|0; }
+      var S1=rr(e2,6)^rr(e2,11)^rr(e2,25), ch=(e2&f2)^((~e2)&g2);
+      var t1=(((((h2+S1)|0)+ch)|0)+((K[i]+w[i])|0))|0;
+      var S0=rr(a2,2)^rr(a2,13)^rr(a2,22), mj=(a2&b2)^(a2&c2)^(b2&c2), t2=(S0+mj)|0;
+      h2=g2; g2=f2; f2=e2; e2=(d2+t1)|0; d2=c2; c2=b2; b2=a2; a2=(t1+t2)|0;
+    }
+    H[0]=(H[0]+a2)|0; H[1]=(H[1]+b2)|0; H[2]=(H[2]+c2)|0; H[3]=(H[3]+d2)|0;
+    H[4]=(H[4]+e2)|0; H[5]=(H[5]+f2)|0; H[6]=(H[6]+g2)|0; H[7]=(H[7]+h2)|0;
+  }
+  var hex=""; for(i=0;i<8;i++){ for(j=28;j>=0;j-=4) hex+="0123456789abcdef".charAt((H[i]>>>j)&0xf); }
+  return hex;
+}
+
+/* ---- vSAN GUID path: /vmfs/volumes/vsan:<datastoreUuid>/<vmFolderUuid> ----
+   The on-host path to a vSAN-backed VM's folder - the recovery handle when the .vmx is gone.
+   <datastoreUuid> is the vSAN cluster UUID re-grouped as <16hex>-<16hex>; <vmFolderUuid> is the
+   VM's namespace-object UUID. The rule, using a placeholder UUID:
+     cluster  aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee   (dashed, as localcli reports Sub-Cluster UUID
+                                                      and as the vsan-health filename prefix carries it)
+     -> strip dashes -> aaaaaaaabbbbccccddddeeeeeeeeeeee
+     -> re-group 16/16 -> vsan:aaaaaaaabbbbcccc-ddddeeeeeeeeeeee   (as it appears in a vmfs path)
+   Cross-checked both ways on real bundles: an ESXi host's Sub-Cluster UUID reproduces its own
+   vmfs/volumes/vsan:... path, and a vCenter's vsan-health filename prefix reproduces the vsan: paths
+   logged by vpxd. */
+function vsanDsUuidFromCluster(u){
+  var hex=String(u||"").replace(/-/g,""); if(!/^[0-9a-f]{32}$/i.test(hex)) return "";
+  return lc(hex.substring(0,16)+"-"+hex.substring(16));
+}
+function vsanGuidPath(dsUuid, vmGuid){ return (dsUuid&&vmGuid) ? ("/vmfs/volumes/vsan:"+lc(dsUuid)+"/"+lc(vmGuid)) : ""; }
+/* derive the GUID path straight from a captured vmfs path. Accepts both 'vsan:' (archive/TOC rel and
+   real ESXi paths) and 'vsan_' (bsdtar rewrites ':' -> '_' when extracting to NTFS, so a tree-mode
+   rel carries the underscore) - output always uses the real colon form. */
+function vsanPathFromRel(rel){
+  var m=String(rel||"").match(/vmfs\/volumes\/vsan[:_]([0-9a-f]{16}-[0-9a-f]{16})\/([0-9a-f][0-9a-f-]{34}[0-9a-f])/i);
+  return m ? vsanGuidPath(m[1], m[2]) : "";
+}
+/* file extensions that legitimately live in a VM folder - anything APPENDED after these on a
+   vmx/vmdk/nvram is treated as a ransomware rename (e.g. web.vmx.locked, disk.vmdk.8base) */
+var VM_CORE_RE=/\.(vmx|vmdk|nvram|vmsd|vmxf)$/i;
+var VM_RENAMED_RE=/\.(vmx|vmdk|nvram|vmsd|vmxf)\.([A-Za-z0-9_\-]{1,16})$/i;
+
+/* registered-VM list from hostd's persistent inventory: survives datastore-side renames because
+   it records what WAS registered (vmx path per VM). */
+function vmInventoryEntries(){
+  var txt=readMember("etc/vmware/hostd/vmInventory.xml")||"", out=[], m;
+  var re=/<vmxCfgPath>([^<]+)<\/vmxCfgPath>/ig;
+  while((m=re.exec(txt))){ var p=trimStr(m[1]).replace(/^\/+/,""); if(p) out.push(p); }
+  return out;
+}
+function dirOfRel(rel){ return rel.replace(/\/[^\/]*$/,""); }
+
+/* scan the captured vmfs/volumes tree for VM folders whose .vmx is missing or renamed -
+   the ESXi-ransomware case ("VMX files renamed"). Returns extra VMS rows labeled enc. */
+function scanEsxiEncFolders(vmxRels){
+  var covered={}, i, m, out=[];
+  for(i=0;i<vmxRels.length;i++) covered[lc(dirOfRel(vmxRels[i]))]=1;
+  var folders={};   // folderRel -> {files:[], renamed:[], hasVmx:bool}
+  function addFile(rel){
+    var mm=rel.match(/^(vmfs\/volumes\/[^\/]+\/[^\/]+)\/([^\/]+)$/i); if(!mm) return;
+    var dir=mm[1], nm=mm[2];
+    if(!/\.(vmdk|nvram|vmsd|vmxf|vswp|vmss)(\.|$)/i.test(nm) && !/^vmware(-\d+)?\.log$/i.test(nm) && !/\.vmx(\.|$)/i.test(nm)) return;
+    var f=folders[lc(dir)]; if(!f){ f={dir:dir, files:[], renamed:[], hasVmx:false}; folders[lc(dir)]=f; }
+    f.files.push(nm);
+    if(/\.vmx$/i.test(nm)) f.hasVmx=true;
+    var rn=nm.match(VM_RENAMED_RE); if(rn) f.renamed.push(nm);
+  }
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++) addFile(TOC[i].rel); }
+  else { var fso=new ActiveXObject("Scripting.FileSystemObject"), budget={n:0};
+    (function walk(dir,depth){ if(depth>9||budget.n>40000) return; var fo; try{ fo=fso.GetFolder(dir); }catch(e){ return; }
+      try{ var e2=new Enumerator(fo.Files); for(;!e2.atEnd();e2.moveNext()){ budget.n++; var it=e2.item(); addFile((it.Path+"").substring(ROOT.length+1).replace(/\\/g,"/")); } }catch(e3){}
+      try{ var s=new Enumerator(fo.SubFolders); for(;!s.atEnd();s.moveNext()) walk(s.item().Path+"",depth+1); }catch(e4){}
+    })(ROOT+"\\vmfs",0); }
+  var invPaths=vmInventoryEntries(), invByDir={};
+  for(i=0;i<invPaths.length;i++){ var ip=invPaths[i]; invByDir[lc(dirOfRel(ip))]=baseName(ip); }
+  for(var k in folders){ if(!folders.hasOwnProperty(k)) continue; var f=folders[k];
+    if(f.hasVmx && !f.renamed.length) continue;          // healthy folder, parsed by the normal path
+    if(f.hasVmx && f.renamed.length){                    // vmx ok but sibling files renamed - flag on the parsed row later
+      out.push({dir:f.dir, renamed:f.renamed, partial:true}); continue; }
+    if(covered[k]) continue;
+    // VM folder with NO parseable .vmx: infer the name
+    var name="", src="";
+    var invName=invByDir[k]; if(invName){ name=invName.replace(/\.vmx$/i,""); src="vmInventory.xml"; }
+    if(!name){ for(i=0;i<f.files.length;i++){ m=f.files[i].match(/^(.+?)(?:-flat|-ctk|-sesparse|-delta|_\d+)?\.vmdk(\.|$)/i); if(m){ name=m[1]; src="vmdk name"; break; } } }
+    if(!name){ for(i=0;i<f.files.length;i++){ m=f.files[i].match(VM_RENAMED_RE); if(m){ name=f.files[i].replace(VM_RENAMED_RE,""); src="renamed file"; break; } } }
+    if(!name){ name=baseName(f.dir); src="folder name"; }
+    var disks=[]; for(i=0;i<f.files.length;i++){ if(/\.vmdk(\.|$)/i.test(f.files[i]) && !/-(flat|ctk|sesparse|delta)\./i.test(f.files[i])) disks.push(f.files[i]); }
+    var vsan=/vsan[:_]/i.test(f.dir), ds=vsan?"vSAN":((f.dir.match(/volumes\/([^\/]+)\//)||[])[1]||"");
+    var encKind=f.renamed.length?("renamed ("+f.renamed[0].replace(/^.*\.(vmx|vmdk|nvram|vmsd|vmxf)\./i,".")+")"):"no .vmx in folder";
+    var gpE=vsanPathFromRel(f.dir);   // the folder path survives the rename - still the recovery handle
+    out.push({ name:name, os:"", vcpu:0, memMB:0, disks:disks, ndisk:disks.length, vsan:vsan, ds:ds,
+      running:false, cfg:f.dir+"/(vmx missing)", guidPath:gpE, enc:encKind+" - name from "+src, encSrc:src, renamed:f.renamed,
+      blob:lc(name+" "+ds+" "+disks.join(" ")+" encrypted "+f.renamed.join(" ")+" "+gpE) });
+  }
+  return out;
+}
+
+/* ---- VMDK descriptor extents ("start/end disk pointers" for recovery scoping) ----
+   Descriptor RW lines: RW <sectors> <TYPE> "<backing>" [offset]. On vSAN the backing is the
+   vSAN object UUID (vsan://cluster/objUuid) - the recovery handle; on VMFS it is the -flat file. */
+function parseVmdkDesc(txt){
+  if(!txt || txt.length>131072 || txt.indexOf("Disk DescriptorFile")<0) return null;
+  var ex=[], m, cum=0, re=/^\s*(RW|RDONLY|NOACCESS)\s+(\d+)\s+(\S+)\s+"([^"]*)"(?:\s+(\d+))?/img;
+  while((m=re.exec(txt))){ var sec=parseInt(m[2],10)||0, off=(m[5]!=null&&m[5]!=="")?parseInt(m[5],10):cum;
+    ex.push({mode:m[1], sectors:sec, type:m[3], backing:m[4], start:off, end:off+sec-1}); cum=off+sec; }
+  if(!ex.length) return null;
+  var totSec=0; for(var i=0;i<ex.length;i++) totSec+=ex[i].sectors;
+  return { extents:ex, sectors:totSec, bytes:totSec*512 };
+}
+function extentSummary(d){ if(!d) return ""; var parts=[], i;
+  for(i=0;i<d.extents.length;i++){ var e=d.extents[i];
+    parts.push("sector "+e.start+"-"+e.end+" ("+(e.sectors/2097152).toFixed(1)+" GB) -> "+e.backing); }
+  return parts.join("  |  "); }
+
+/* batch-read the descriptor .vmdk files referenced by the parsed .vmx set - ONE archive pass */
+function attachVmdkExtents(){
+  var i, j, want=[], map={};
+  for(i=0;i<VMS.length;i++){ var v=VMS[i]; if(!v.disks||!v.disks.length) continue; v.diskDetail=[];
+    for(j=0;j<v.disks.length;j++){ var fn=v.disks[j]; if(/^\//.test(fn)) continue;   // absolute refs (other datastore) stay unresolved
+      var rel=dirOfRel(v.cfg)+"/"+fn;
+      var sz=(MODE==="toc")?TOCMAP[rel]:(fileExists(ROOT+"\\"+winRel(rel))?fileSize(ROOT+"\\"+winRel(rel)):null);
+      if(sz==null||sz>131072) continue;                    // descriptors are tiny; skip binary/absent
+      want.push(rel); if(!map[rel]) map[rel]=[]; map[rel].push({vm:v, file:fn}); } }
+  if(!want.length) return;
+  var base=(MODE==="toc")?extractStripToTemp(want):"";
+  var got=0;
+  for(var r in map){ if(!map.hasOwnProperty(r)) continue;
+    var path=(MODE==="tree")?(ROOT+"\\"+winRel(r)):(base+"\\"+winRel(r));
     var txt=""; try{ if(fileExists(path)) txt=readUtf8(path); }catch(e){}
-    if(!txt) txt=catMember(rel);                 // MAX_PATH / deep-path fallback via stdout
-    if(!txt) continue; got++; VMS.push(parseVmx(txt, rel, run)); }
-  appendLog("  VMs: parsed "+nf(got)+"/"+nf(rels.length));
-  VMS.sort(function(a,b){ if(a.running!==b.running) return a.running?-1:1; return a.name<b.name?-1:(a.name>b.name?1:0); });
+    if(!txt) txt=catMember(r);
+    var d=parseVmdkDesc(txt); if(!d) continue; got++;
+    for(i=0;i<map[r].length;i++){ var t=map[r][i]; t.vm.diskDetail.push({file:t.file, gb:(d.bytes/1073741824), sum:extentSummary(d)}); } }
+  if(got) appendLog("  VMs: parsed "+nf(got)+" vmdk descriptor(s) for disk extents");
+}
+
+/* ---------- vCenter (VCSA) VM inventory from logs ---------- */
+function drmDumpSets(){
+  var dirs={}, i, m, out={latest:null, earliest:null};
+  function track(rel){ m=rel.match(/^var\/log\/vmware\/vpxd\/drmdump\/([^\/]+)\/Plmt-(\d+)\.log(\.gz)?$/i); if(!m) return;
+    var dom=m[1]; if(lc(dom)==="fakepod") return; var n=parseInt(m[2],10);
+    var d=dirs[dom]; if(!d){ d={hi:-1,lo:1e15,hiRel:"",loRel:""}; dirs[dom]=d; }
+    if(n>d.hi){ d.hi=n; d.hiRel=rel; } if(n<d.lo){ d.lo=n; d.loRel=rel; } }
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++) track(TOC[i].rel); }
+  else { var base=ROOT+"\\"+winRel("var/log/vmware/vpxd/drmdump");
+    try{ var fso=new ActiveXObject("Scripting.FileSystemObject"), s=new Enumerator(fso.GetFolder(base).SubFolders);
+      for(;!s.atEnd();s.moveNext()){ var dom2=s.item().Name+"";
+        var names=listUnder("var/log/vmware/vpxd/drmdump/"+dom2+"/", /^Plmt-\d+\.log(\.gz)?$/i);
+        for(i=0;i<names.length;i++) track("var/log/vmware/vpxd/drmdump/"+dom2+"/"+names[i]); } }catch(e){} }
+  var hiRels=[], loRels=[];
+  for(var k in dirs){ if(dirs.hasOwnProperty(k)){ hiRels.push(dirs[k].hiRel); if(dirs[k].loRel!==dirs[k].hiRel) loRels.push(dirs[k].loRel); } }
+  out.latest=hiRels; out.earliest=loRels; return out;
+}
+/* DRS dump -> powered-on placement AND the VM's configured size.
+   'vm-N(host-N): VMData: Entitlement: 1 0 <vCPU> 0 0 <memMB> ...' - field[2] = numVcpus,
+   field[5] = memSize MB. This is a vc-support bundle's ONLY source of vCPU/vRAM (no .vmx exists).
+   Verified against ground truth by finding the vCenter appliance's OWN VM row in the dump and
+   comparing it to the same bundle's commands/cat_proccpuinfo.txt + cat_procmeminfo.txt: vCPU matched
+   exactly and memMB matched the configured size (MemTotal is a few % lower - kernel/firmware reserve).
+   Corroborated across every dump in the sample: no entry deviated from the fixed 1/0/_/0/0 field
+   pattern, all vCPU values were plausible and all memMB textbook sizes, and only 2 of 636 VMs ever
+   changed value (one real RAM bump) - a stable config field, not a utilisation counter. */
+function parseDrmPlacement(rel){
+  var lines=logLines(rel), place={}, spec={}, date="", i, m;
+  for(i=0;i<lines.length;i++){ var ln=lines[i];
+    if(!date){ m=ln.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/); if(m) date=m[1].replace("T"," "); }
+    var re=/(vm-\d+)\((host-\d+)\)/g; while((m=re.exec(ln))) place[m[1]]=m[2];
+    var sre=/(vm-\d+)\(host-\d+\): VMData: Entitlement:((?: \d+){6})/g;
+    while((m=sre.exec(ln))){ var ff=trimStr(m[2]).split(/\s+/);
+      var cpu=parseInt(ff[2],10), mb=parseInt(ff[5],10);
+      if(cpu>=1 && cpu<=128 && mb>=128 && mb<=4194304) spec[m[1]]={vcpu:cpu, memMB:mb}; } }
+  return {date:date, place:place, spec:spec};
+}
+/* vSAN cloud-health baseline: hashed vim.VirtualMachine/HostSystem entries + the human obfuscation
+   table (word-triple -> REAL string). The real strings feed the sha256 dictionary. */
+function vsanHealthBaseline(){
+  var pre="var/log/vmware/vsan-health/", res={vms:{}, hosts:{}, dict:[], stamp:"", clusterUuid:""};
+  var names=listUnder(pre, /-cloud_health_check_data\.json\.gz$/i);
+  var obf=listUnder(pre, /_obfuscationTableForHuman\.json\.gz$/i);
+  if(!names.length) return res;
+  /* the file is named <vsanClusterUuid>-cloud_health_check_data.json.gz - that cluster UUID is the
+     vSAN datastore UUID (re-grouped), a fallback when vpxd holds no literal vsan: path. */
+  var cm=names[0].match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-cloud_health/i);
+  if(cm) res.clusterUuid=lc(cm[1]);
+  if(MODE==="toc"){ /* archive mtime not in TOC parse - leave stamp blank */ }
+  else { try{ var fso=new ActiveXObject("Scripting.FileSystemObject");
+    var dt=fso.GetFile(ROOT+"\\"+winRel(pre+names[0])).DateLastModified; res.stamp=String(dt); }catch(e){} }
+  var txt=readMemberGz(pre+names[0])||"", m;
+  var re=/"@type":\s*"vim\.(VirtualMachine|HostSystem)",\s*"moId":\s*"((?:vm|host)-\d+)",\s*"name":\s*"([0-9a-f]{64})"/g;
+  while((m=re.exec(txt))){ if(m[1]==="VirtualMachine") res.vms[m[2]]=m[3]; else res.hosts[m[2]]=m[3]; }
+  for(var o=0;o<obf.length;o++){ var ot=readMemberGz(pre+obf[o])||"";
+    var vre=/"[a-z0-9\-]+":\s*"((?:[^"\\]|\\.){1,120})"/g;
+    while((m=vre.exec(ot))){ var val=m[1].replace(/\\(.)/g,"$1"); if(val && val.length<=90) res.dict.push(val); } }
+  return res;
+}
+function crackHashes(hashSets, dictArr){
+  var lut={}, i, j, cand={}, out={};
+  function addC(c){ if(c&&c.length<=90&&!cand[c]) cand[c]=1; }
+  for(i=0;i<dictArr.length;i++){ var c=dictArr[i]; addC(c);
+    var mm=c.match(/^(.*?)(\d{1,3})$/); if(mm&&mm[1].length<=60){ for(j=0;j<=40;j++) addC(mm[1]+j); } }
+  var n=0; for(var k in cand){ if(!cand.hasOwnProperty(k)) continue; lut[sha256hex(k)]=k; n++; if(n>25000) break; }
+  for(i=0;i<hashSets.length;i++){ var hs=hashSets[i];
+    for(var mo in hs){ if(hs.hasOwnProperty(mo) && lut[hs[mo]]!=null) out[mo]=lut[hs[mo]]; } }
+  return out;
+}
+/* Build the vCenter VM board: names+MoRefs from vpxd, powered-on placement from the newest DRS
+   dump, historical baseline from vSAN health (hashes cracked), backup/restore evidence from the
+   datastore /folder HTTP traffic. Labels are evidence-based - "possibly encrypted" only where a
+   recovery/restore signal exists. */
+function parseVcsaVms(){
+  var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel && MODE==="tree") rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
+  var lines=rel?logLinesRot(rel,false):[], i, m;
+  var vmName={}, hostName={}, span={first:"",last:""};
+  var folder={};   // vmx-base -> {gets,puts,files{},ds{},users{},firstGet,lastGet,putDs{},guid}
+  /* vSAN GUID-path sources, best first:
+     A) a LITERAL /vmfs/volumes/vsan:<ds>/<vmGuid>/<file> in vpxd (exact - no inference).
+     B) /folder/<vmGuid>/<name>.vmx?...&dsName=<name>, joined to a ds UUID via a folder GUID that
+        source A already resolved (that join teaches us dsName -> vsan UUID).
+     C) last resort: a vSAN-looking dsName + exactly one known vSAN cluster UUID (from the
+        vsan-health file prefix) - marked derived. */
+  var vsanByGuid={}, vsanByVm={}, dsPair=[], dsUuidsSeen={};
+  for(i=0;i<lines.length;i++){ var ln=lines[i];
+    var vre=/\[vim\.VirtualMachine:(vm-\d+),([^\]]{1,80})\]/g;
+    while((m=vre.exec(ln))){ if(!vmName[m[1]]) vmName[m[1]]=trimStr(m[2]); }
+    var hre=/\[vim\.HostSystem:(host-\d+),([^\]]{1,80})\]/g;
+    while((m=hre.exec(ln))){ if(!hostName[m[1]]) hostName[m[1]]=trimStr(m[2]); }
+    m=ln.match(/^(\d{4}-\d{2}-\d{2})T/); if(m){ if(!span.first) span.first=m[1]; span.last=m[1]; }
+    /* A) literal vSAN paths (ds:///vmfs/volumes/vsan:<ds>/<vmGuid>/<file> and the bare form) */
+    var vre=/\/vmfs\/volumes\/vsan:([0-9a-f]{16}-[0-9a-f]{16})\/([0-9a-f][0-9a-f-]{34}[0-9a-f])\/([^\s",;)]+)/ig;
+    while((m=vre.exec(ln))){ var vds=lc(m[1]), vguid=lc(m[2]), vfile=m[3];
+      dsUuidsSeen[vds]=1; vsanByGuid[vguid]=vds;
+      var vx=vfile.match(/^(.+)\.vmx$/i);
+      if(vx) vsanByVm[lc(vx[1])]={ds:vds, guid:vguid, via:"vpxd vsan path"};
+    }
+    m=ln.match(/Got HTTP (GET|PUT) request for \/folder\/([^?\s"]+)\?dcPath=([^&\s"]*)&dsName=([^&\s"]+)/);
+    if(m){ var verb=m[1], p=m[2], ds=m[4]; var segs=p.split("/"); var fn=segs[segs.length-1];
+      var bm=fn.match(/^(.+)\.vmx$/i); var user=(ln.match(/user=(\S+)\]/)||[])[1]||"";
+      var fguid=(segs.length>=2 && /^[0-9a-f][0-9a-f-]{34}[0-9a-f]$/i.test(segs[0])) ? lc(segs[0]) : "";
+      if(fguid) dsPair.push({guid:fguid, ds:ds});
+      var vmKey=""; if(bm) vmKey=bm[1];
+      else { var fb=fn.match(/^(.+?)(?:_\d+)?\.(vmdk|nvram|vmsd|vmxf)$/i); if(fb) vmKey=fb[1]; }
+      if(vmKey){ var fr=folder[lc(vmKey)]; if(!fr){ fr={name:vmKey, gets:0, puts:0, files:{}, ds:{}, putDs:{}, users:{}, guid:""}; folder[lc(vmKey)]=fr; }
+        if(verb==="GET") fr.gets++; else { fr.puts++; fr.putDs[ds]=1; }
+        fr.files[fn]=1; fr.ds[ds]=1; if(user) fr.users[user]=1;
+        if(fguid && !fr.guid){ fr.guid=fguid; fr.guidDs=ds; } } }
+  }
+  var drm=drmDumpSets(), placeNew={}, placeOld={}, specNew={}, dNew="", dOld="";
+  for(i=0;i<(drm.latest||[]).length;i++){ var r1=parseDrmPlacement(drm.latest[i]); dNew=dNew||r1.date;
+    for(var kk in r1.place) if(r1.place.hasOwnProperty(kk)) placeNew[kk]=r1.place[kk];
+    for(var ks in r1.spec) if(r1.spec.hasOwnProperty(ks)) specNew[ks]=r1.spec[ks]; }
+  for(i=0;i<(drm.earliest||[]).length;i++){ var r0=parseDrmPlacement(drm.earliest[i]); dOld=dOld||r0.date; for(var k0 in r0.place) if(r0.place.hasOwnProperty(k0)) placeOld[k0]=r0.place[k0]; }
+  var hb=vsanHealthBaseline(), baseNames={};
+  if(hb && (function(){ for(var x in hb.vms){ if(hb.vms.hasOwnProperty(x)) return true; } return false; })()){
+    var dict=[], dk;
+    for(dk in vmName) if(vmName.hasOwnProperty(dk)) dict.push(vmName[dk]);
+    for(dk in hostName) if(hostName.hasOwnProperty(dk)) dict.push(hostName[dk]);
+    for(dk in folder) if(folder.hasOwnProperty(dk)) dict.push(folder[dk].name);
+    for(i=0;i<hb.dict.length;i++) dict.push(hb.dict[i]);
+    baseNames=crackHashes([hb.vms, hb.hosts], dict);
+    var nb=0, nv=0; for(var c1 in hb.vms){ if(hb.vms.hasOwnProperty(c1)){ nv++; if(baseNames[c1]!=null) nb++; } }
+    appendLog("  VMs: vSAN-health baseline "+nf(nv)+" VM(s), "+nf(nb)+" name(s) recovered from sha256");
+    for(var hmo in hb.hosts){ if(hb.hosts.hasOwnProperty(hmo) && baseNames[hmo]!=null && !hostName[hmo]) hostName[hmo]=baseNames[hmo]; }
+  }
+  /* B) learn dsName -> vSAN datastore UUID by joining a /folder GUID that a literal vsan: path
+        already resolved. C) if that taught us nothing, fall back to the vsan-health cluster UUID,
+        but only when exactly one vSAN UUID is in play and the dsName actually looks like vSAN. */
+  var dsNameToUuid={}, learned=0, du;
+  for(i=0;i<dsPair.length;i++){ du=vsanByGuid[dsPair[i].guid]; if(du && !dsNameToUuid[dsPair[i].ds]){ dsNameToUuid[dsPair[i].ds]=du; learned++; } }
+  var uuidList=[]; for(var uk in dsUuidsSeen){ if(dsUuidsSeen.hasOwnProperty(uk)) uuidList.push(uk); }
+  var hbUuid=vsanDsUuidFromCluster(hb.clusterUuid||"");
+  if(hbUuid){ var known=false; for(i=0;i<uuidList.length;i++) if(uuidList[i]===hbUuid) known=true; if(!known) uuidList.push(hbUuid); }
+  var soleUuid = (uuidList.length===1) ? uuidList[0] : "";
+  function dsUuidFor(dsName){
+    if(!dsName) return {u:"", derived:false};
+    if(dsNameToUuid[dsName]) return {u:dsNameToUuid[dsName], derived:false};
+    if(soleUuid && /vsan|virtual[ -]?san/i.test(dsName)) return {u:soleUuid, derived:true};
+    return {u:"", derived:false};
+  }
+  appendLog("  VMs: vSAN datastore UUID(s) "+(uuidList.length?uuidList.join(", "):"none")+"; dsName->UUID joins learned: "+learned
+    +(hbUuid?("; vsan-health cluster UUID "+hbUuid):""));
+  var eph=/^(vCLS-|cp-template-|cp-replica-)/i;
+  var uuidName=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var byName={}, order=[];
+  function row(name){ var k=lc(name); var v=byName[k];
+    if(!v){ v={ name:name, os:"", vcpu:0, memMB:0, disks:[], ndisk:0, vsan:false, ds:"", running:false,
+      cfg:"", mo:[], moBase:"", host:"", status:"", enc:"", src:{}, guidPath:"", guidSrc:"", specSrc:"", blob:"" }; byName[k]=v; order.push(v); }
+    return v; }
+  for(var mo1 in vmName){ if(!vmName.hasOwnProperty(mo1)) continue; var v1=row(vmName[mo1]); v1.mo.push(mo1); v1.src["vpxd"]=1; }
+  for(var mo2 in hb.vms){ if(!hb.vms.hasOwnProperty(mo2)) continue;
+    var nm2=baseNames[mo2]; if(nm2==null){ var v2b=row("(unnamed "+mo2+")"); v2b.moBase=mo2; v2b.src["baseline"]=1; continue; }
+    var v2=row(nm2); v2.moBase=mo2; v2.src["baseline"]=1; }
+  for(var fk in folder){ if(!folder.hasOwnProperty(fk)) continue; var fr2=folder[fk];
+    var v3=row(fr2.name); v3.src["backup-io"]=1;
+    for(var fn2 in fr2.files){ if(fr2.files.hasOwnProperty(fn2) && /\.vmdk$/i.test(fn2) && v3.disks.length<24){ var seen=false;
+      for(i=0;i<v3.disks.length;i++) if(v3.disks[i]===fn2) seen=true; if(!seen) v3.disks.push(fn2); } }
+    v3.ndisk=v3.disks.length;
+    for(var d3 in fr2.ds){ if(fr2.ds.hasOwnProperty(d3) && !v3.ds){ v3.ds=d3; v3.vsan=/vsan|VxRail-Virtual-SAN/i.test(d3); } }
+    if(fr2.puts) v3.src["restored-files"]=1;
+    if(fr2.guid && !v3.guidPath){ var r3=dsUuidFor(fr2.guidDs||v3.ds);
+      if(r3.u){ v3.guidPath=vsanGuidPath(r3.u, fr2.guid); v3.guidSrc=r3.derived?"vpxd /folder GUID + vSAN datastore UUID derived from the vsan-health cluster UUID":"vpxd /folder GUID + dsName joined to a vSAN UUID seen in a vpxd vsan: path"; } }
+  }
+  /* A) exact literal vsan: paths win over any joined/derived value */
+  for(var vk in vsanByVm){ if(!vsanByVm.hasOwnProperty(vk)) continue; var hit=byName[vk]; if(!hit) continue;
+    hit.guidPath=vsanGuidPath(vsanByVm[vk].ds, vsanByVm[vk].guid); hit.guidSrc="literal /vmfs/volumes/vsan: path in vpxd"; hit.vsan=true; }
+  // status + encrypted labeling
+  for(i=0;i<order.length;i++){ var v=order[i];
+    var on=false, hostMo="", specMo="";
+    for(var q=0;q<v.mo.length;q++){ if(placeNew[v.mo[q]]){ on=true; hostMo=placeNew[v.mo[q]]; specMo=v.mo[q]; break; } }
+    if(!on && v.moBase && placeNew[v.moBase]){ on=true; hostMo=placeNew[v.moBase]; specMo=v.moBase; }
+    v.running=on; v.host=hostMo?(hostName[hostMo]||hostMo):"";
+    /* vCPU / vRAM from the DRS dump (the only source in a vc-support bundle). Powered-on VMs only -
+       which is exactly the Simplified set. Guest OS is NOT recoverable here: vpxd carries prettyName
+       only inside multi-line VMOMI dumps with no VM reference on the line (3 VMs in the sample), so
+       it stays blank rather than being guessed. */
+    var sp = specMo ? specNew[specMo] : null;
+    if(!sp){ for(var q2=0;q2<v.mo.length && !sp;q2++) sp=specNew[v.mo[q2]]; if(!sp && v.moBase) sp=specNew[v.moBase]; }
+    if(sp){ v.vcpu=sp.vcpu; v.memMB=sp.memMB; v.specSrc="DRS dump VMData (drmdump/Plmt-*)"; }
+    var restored = /-restore\d*$/i.test(v.name) || v.src["restored-files"];
+    var reReg = v.moBase && v.mo.length && v.mo[0]!==v.moBase && !eph.test(v.name) && !uuidName.test(v.name);
+    if(on) v.status="powered on";
+    else if(v.src["backup-io"]) v.status="registered (backup read its files in the log window)";
+    else if(v.src["baseline"] && !v.src["vpxd"]) v.status="in vSAN-health baseline only - powered off / template / removed since";
+    else v.status="seen in vpxd window; not powered on in newest DRS dump";
+    if(restored) v.enc="restored from backup - original likely encrypted/lost";
+    else if(reReg) v.enc="re-registered since baseline ("+v.moBase+" -> "+v.mo.join("/")+") - restored?";
+    else if(!v.running && v.src["baseline"] && !v.src["vpxd"] && !v.src["backup-io"] && !eph.test(v.name) && !uuidName.test(v.name)) v.enc="not seen in current logs - review (deleted, or encrypted before the log window)";
+    v.cfg=""; v.blob=lc(v.name+" "+v.mo.join(" ")+" "+v.moBase+" "+v.host+" "+v.status+" "+v.enc+" "+v.disks.join(" ")+" "+v.guidPath);
+  }
+  var nGp=0, nSp=0; for(i=0;i<order.length;i++){ if(order[i].guidPath) nGp++; if(order[i].vcpu) nSp++; }
+  appendLog("  VMs: vSAN GUID path resolved for "+nf(nGp)+"/"+nf(order.length)+" VM(s); vCPU/vRAM from DRS VMData for "+nf(nSp)+" VM(s) (powered-on only; guest OS not available in a vCenter bundle)");
+  // unresolved powered-on MoRefs (in DRS dump but never named in retained logs)
+  for(var mo3 in placeNew){ if(!placeNew.hasOwnProperty(mo3)) continue;
+    var found=false; for(i=0;i<order.length;i++){ var vv=order[i]; if(vv.moBase===mo3){ found=true; break; }
+      for(var q2=0;q2<vv.mo.length;q2++) if(vv.mo[q2]===mo3){ found=true; break; } if(found) break; }
+    if(!found){ var vu=row("(unresolved "+mo3+")"); vu.mo.push(mo3); vu.running=true; vu.host=hostName[placeNew[mo3]]||placeNew[mo3];
+      vu.status="powered on"; vu.src["drm"]=1;
+      var spu=specNew[mo3];   // these rows are built after the sizing loop - size them here too
+      if(spu){ vu.vcpu=spu.vcpu; vu.memMB=spu.memMB; vu.specSrc="DRS dump VMData (drmdump/Plmt-*)"; }
+      vu.blob=lc(vu.name+" "+vu.host); } }
+  VMS=order;
+  VMS.sort(function(a,b){ var ea=a.enc?0:1, eb=b.enc?0:1; if(ea!==eb) return ea-eb;
+    if(a.running!==b.running) return a.running?-1:1; return lc(a.name)<lc(b.name)?-1:(lc(a.name)>lc(b.name)?1:0); });
+  VCSA_VM_META={ span:span, drmNew:dNew, drmOld:dOld, baseStamp:hb.stamp||"" };
+  appendLog("  VMs (vCenter, from logs): "+nf(VMS.length)+" - vpxd names "+nf((function(){var n=0;for(var x in vmName)if(vmName.hasOwnProperty(x))n++;return n;})())
+    +", DRS powered-on "+nf((function(){var n=0;for(var x in placeNew)if(placeNew.hasOwnProperty(x))n++;return n;})())
+    +(dNew?(" @ "+dNew):""));
+}
+var VCSA_VM_META=null;
+
+function parseVms(){ VMS=[]; VCSA_VM_META=null;
+  if(BTYPE==="vcsa"){ try{ parseVcsaVms(); }catch(e){ appendLog("  VMs (vCenter) parse error: "+e.message); } return; }
+  if(BTYPE!=="esxi") return;
+  var rels=findVmxRels(); appendLog("  VMs: "+nf(rels.length)+" .vmx in bundle");
+  var run=runningVms(), got=0;
+  if(rels.length){
+    var base = (MODE==="toc") ? extractStripToTemp(rels) : "";
+    for(var i=0;i<rels.length;i++){ var rel=rels[i];
+      var path = MODE==="tree" ? (ROOT+"\\"+winRel(rel)) : (base+"\\"+winRel(rel));
+      var txt=""; try{ if(fileExists(path)) txt=readUtf8(path); }catch(e){}
+      if(!txt) txt=catMember(rel);                 // MAX_PATH / deep-path fallback via stdout
+      if(!txt) continue; got++; VMS.push(parseVmx(txt, rel, run)); }
+    appendLog("  VMs: parsed "+nf(got)+"/"+nf(rels.length));
+  }
+  /* ransomware fallback: VM folders whose .vmx is missing or renamed + renamed sibling files */
+  try{ var extra=scanEsxiEncFolders(rels), e2;
+    var partialByDir={};
+    for(e2=0;e2<extra.length;e2++){ if(extra[e2].partial) partialByDir[lc(extra[e2].dir)]=extra[e2]; }
+    for(e2=0;e2<VMS.length;e2++){ var pd=partialByDir[lc(dirOfRel(VMS[e2].cfg))];
+      if(pd){ VMS[e2].enc="sibling files renamed: "+pd.renamed.slice(0,3).join(", "); VMS[e2].blob+=" encrypted renamed"; } }
+    var nEnc=0;
+    for(e2=0;e2<extra.length;e2++){ if(!extra[e2].partial){ VMS.push(extra[e2]); nEnc++; } }
+    if(nEnc) appendLog("  VMs: +"+nf(nEnc)+" folder(s) with missing/renamed .vmx - POSSIBLY ENCRYPTED");
+  }catch(eE){ appendLog("  VMs enc-scan error: "+eE.message); }
+  try{ attachVmdkExtents(); }catch(eX){ appendLog("  VMs extent parse error: "+eX.message); }
+  VMS.sort(function(a,b){ var ea=a.enc?0:1, eb=b.enc?0:1; if(ea!==eb) return ea-eb;
+    if(a.running!==b.running) return a.running?-1:1; return a.name<b.name?-1:(a.name>b.name?1:0); });
 }
 function fmtMB(mb){ if(!mb) return "-"; return mb>=1024 ? ((mb/1024).toFixed(mb%1024?1:0)+" GB") : (mb+" MB"); }
 /* guest IP for a VM by name, sourced from any vCenter in the loaded fleet (ESXi bundles lack guest IPs) */
 function fleetGuestIp(name){ name=lc(name); for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; if(r.btype==="vcsa"&&r.guestIp&&r.guestIp[name]) return r.guestIp[name]; } return ""; }
+/* Simplified view (default, both bundle types): VM | Host | Status only, for the VMs that have an
+   identified host. Rows stay clickable on ESXi (activity timeline) exactly as in the full view. */
+function renderVmsSimple(rows){
+  var isVc=(BTYPE==="vcsa");
+  var h='<thead><tr>'
+    +'<th title="VM display name. On ESXi from the .vmx displayName (or recovered from vmInventory.xml / a sibling .vmdk / the folder when the .vmx is missing or ransom-renamed); on vCenter recovered from the vpxd logs and the vSAN-health baseline.">VM</th>'
+    +'<th title="'+(isVc
+        ? 'Not available in a vCenter bundle: guest OS lives in the .vmx / live guest info, and vpxd only logs prettyName inside multi-line VMOMI dumps with no VM reference on the line. Shown as &quot;-&quot; rather than guessed - open the ESXi host bundle for the real value.'
+        : 'VMware Tools prettyName if recorded in the .vmx, else the configured guestOS id. Blank for a VM whose .vmx is missing or ransom-renamed.')+'">Guest OS</th>'
+    +'<th style="text-align:center" title="'+(isVc
+        ? 'Configured vCPUs, read from the newest DRS dump (VMData Entitlement) - the only source in a vCenter bundle. Powered-on VMs only.'
+        : 'Configured virtual CPUs (numvcpus in the .vmx).')+'">vCPU</th>'
+    +'<th style="text-align:center" title="'+(isVc
+        ? 'Configured RAM, read from the newest DRS dump (VMData Entitlement) - the only source in a vCenter bundle. Powered-on VMs only.'
+        : 'Configured RAM (memSize in the .vmx).')+'">vRAM</th>'
+    +'<th title="'+(isVc
+        ? 'Disks inferred from PPDM backup .vmdk reads in the vpxd /folder traffic - only VMs that were backed up in the log window, and NOT necessarily the full disk list. A vCenter bundle has no .vmx.'
+        : 'Virtual disks declared in the .vmx. Hover for the .vmdk names and, where the descriptor was captured, each disk&#39;s size + start/end sector (disk pointers) and its vSAN/VMFS backing.')+'">vDisks</th>'
+    +'<th title="The ESXi host the VM is on. vCenter: resolved from the newest DRS placement dump. ESXi: this bundle&#39;s own host - every VM registered in the bundle runs on it.">Host</th>'
+    +'<th title="running / powered on, registered (powered off), or possibly encrypted (.vmx missing or ransom-renamed / restored from a recovery datastore). Untick Simplified for the full evidence columns.">Status</th>'
+    +'</tr></thead><tbody>';
+  if(!rows.length) h+= VMS.length
+    ? '<tr><td colspan="7" class="muted">No VMs with an identified host match the current filter. Untick <b>Simplified</b> to show VMs with no resolved host (powered off, template, or baseline-only) and the full detail columns.</td></tr>'
+    : ('<tr><td colspan="7" class="muted">'+(isVc?'No VM references found in the retained vpxd logs / DRS dumps.':'No .vmx files found in this bundle.')+'</td></tr>');
+  for(var i=0;i<rows.length;i++){ var v=rows[i]; var isEsxi=(BTYPE==="esxi");
+    var stat = v.enc
+      ? ('<span class="tag" style="background:#3a1010;color:#ff8b8b;border:1px solid #b02020" title="'+esc(v.enc)+'">possibly encrypted</span>')
+      : (v.running ? '<span class="pgood" title="'+esc(isEsxi?"Listed in the host running-VM process list at capture time.":(v.status||"Present in the newest DRS placement dump."))+'">'+(isEsxi?"running":"powered on")+'</span>'
+                   : '<span class="muted" title="'+esc(v.status||"Registered on the host but not running (powered off).")+'">'+esc(isEsxi?"registered":trunc(v.status,40))+'</span>');
+    var osTip = v.os ? v.os : (isVc?"not available in a vCenter bundle":"guest OS not recorded in the .vmx (missing / ransom-renamed?)");
+    var szTip = v.specSrc ? ("source: "+v.specSrc) : (v.vcpu?"":(isVc?"no DRS VMData for this VM (not powered on in the newest dump)":"not in the .vmx"));
+    var dkTip = v.disks.length
+      ? ((isVc?"from backup I/O: ":"")+v.disks.join("  |  ")+(v.diskDetail&&v.diskDetail.length?("\nDisk extents (start-end sector = disk pointers):\n"+(function(dd){ var a=[]; for(var x=0;x<dd.length;x++) a.push(dd[x].file+" ["+dd[x].gb.toFixed(1)+" GB: "+dd[x].sum+"]"); return a.join("\n"); })(v.diskDetail)):""))
+      : (isVc?"no backup .vmdk reads seen for this VM in the log window":"no virtual disks declared in the .vmx");
+    h+='<tr'+(isEsxi?(' data-cfg="'+esc(v.cfg)+'" data-nm="'+esc(v.name)+'" style="cursor:pointer" title="Click to open the activity timeline (power / snapshot / migration / guest-op) for '+esc(v.name)+'"'):'')+'>'
+      +'<td><b>'+esc(v.name)+'</b></td>'
+      +'<td class="muted" title="'+esc(osTip)+'">'+esc(v.os||"-")+'</td>'
+      +'<td class="mono" style="text-align:center" title="'+esc(szTip)+'">'+(v.vcpu?v.vcpu:'<span class="muted">-</span>')+'</td>'
+      +'<td class="mono" style="text-align:center" title="'+esc(szTip)+'">'+esc(fmtMB(v.memMB))+'</td>'
+      +'<td class="mono" title="'+esc(dkTip)+'">'+(v.ndisk?(v.ndisk+' <span class="muted">('+esc(trunc(v.disks.join(", "),34))+')</span>'):'<span class="muted">-</span>')+'</td>'
+      +'<td class="mono">'+esc(vmHostOf(v)||"-")+'</td>'
+      +'<td>'+stat+'</td></tr>'; }
+  h+='</tbody>'; $("vmsTbl").innerHTML=h;
+  var trs=$("vmsTbl").getElementsByTagName("tr");
+  for(var t=0;t<trs.length;t++){ if(trs[t].getAttribute("data-cfg")){ trs[t].onclick=function(){ openVm(this.getAttribute("data-cfg"), this.getAttribute("data-nm")); }; } }
+  setupColResizeFor($("vmsTbl"), BTYPE==="vcsa"?"vmsvcs":"vmssimp"); freezeThs($("vmsScroll"));
+}
 function renderVms(){
+  if(BTYPE==="vcsa"){ renderVcsaVms(); return; }
   if(BTYPE!=="esxi"){ $("vmsTbl").innerHTML='<thead><tr><th>VMs</th></tr></thead><tbody><tr><td class="muted">VM inventory is parsed from ESXi host bundles (.vmx files). A vCenter bundle does not carry the hosts’ VM configs - open the ESXi host bundles for their VMs.</td></tr></tbody>'; $("vmsInfo").innerHTML=""; return; }
   fillFilterSel("vmOs", mapField(VMS,"os"), VM_OS);
   var rows=vmsFiltered(), i;
   var run=0,vcpu=0,mem=0,vsan=0; for(i=0;i<VMS.length;i++){ if(VMS[i].running) run++; vcpu+=VMS[i].vcpu; mem+=VMS[i].memMB; if(VMS[i].vsan) vsan++; }
   var nip=0; for(i=0;i<VMS.length;i++) if(fleetGuestIp(VMS[i].name)) nip++;
   var showIp = nip>0;   // guest IP only comes from a vCenter in the loaded fleet - hide the column otherwise
-  $("vmsInfo").innerHTML=nf(VMS.length)+" VMs &middot; "+run+" running &middot; "+nf(vcpu)+" vCPU &middot; "+fmtMB(mem)+" vRAM &middot; "+vsan+" on vSAN"+(showIp?(" &middot; "+nip+" guest IP (from vCenter)"):"")+(rows.length<VMS.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'):'');
-  var h='<thead><tr><th>VM</th><th>Guest OS</th>'+(showIp?'<th>Guest IP</th>':'')+'<th style="text-align:center">vCPU</th><th style="text-align:center">vRAM</th><th>vDisks</th><th>Storage</th><th>Status</th></tr></thead><tbody>';
-  if(!VMS.length) h+='<tr><td colspan="'+(showIp?8:7)+'" class="muted">No .vmx files found in this bundle.</td></tr>';
-  else if(!rows.length) h+='<tr><td colspan="'+(showIp?8:7)+'" class="muted">No VMs match the current filter'+(VM_OS?' (Guest OS: '+esc(VM_OS)+')':'')+'.</td></tr>';
+  var nEnc=0; for(i=0;i<VMS.length;i++) if(VMS[i].enc) nEnc++;
+  $("vmsInfo").innerHTML=nf(VMS.length)+" VMs &middot; "+run+" running &middot; "+nf(vcpu)+" vCPU &middot; "+fmtMB(mem)+" vRAM &middot; "+vsan+" on vSAN"+(nEnc?(' &middot; <b style="color:#ff8b8b">'+nEnc+' possibly encrypted</b>'):'')+(showIp?(" &middot; "+nip+" guest IP (from vCenter)"):"")+(rows.length<VMS.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'+(VM_SIMPLE?' <span class="muted">(Simplified)</span>':'')):'');
+  if(VM_SIMPLE){ renderVmsSimple(rows); return; }
+  var h='<thead><tr>'
+    +'<th title="VM display name (displayName in the .vmx). When the .vmx is missing or ransom-renamed, the name is inferred from etc/vmware/hostd/vmInventory.xml, a sibling .vmdk, or the folder. Click a row for that VM&#39;s power / snapshot / migration / guest-op activity timeline.">VM</th>'
+    +'<th title="Guest OS: VMware Tools prettyName if recorded in the .vmx, otherwise the configured guestOS id. ESXi bundles carry no live guest-reported OS.">Guest OS</th>'
+    +(showIp?'<th title="Guest IP sourced from a vCenter bundle loaded in the fleet - ESXi bundles do not contain guest-reported IPs.">Guest IP</th>':'')
+    +'<th style="text-align:center" title="Configured virtual CPUs (numvcpus in the .vmx).">vCPU</th>'
+    +'<th style="text-align:center" title="Configured RAM (memSize in the .vmx).">vRAM</th>'
+    +'<th title="Virtual disks declared in the .vmx (scsi/sata/nvme/ide fileName). Hover a cell for the .vmdk names and, when the disk descriptor was captured, each disk&#39;s size plus start/end sector (the disk pointers) and its vSAN object / VMFS -flat backing.">vDisks</th>'
+    +'<th title="Datastore backing the .vmx: vSAN for a vsan:// object path, otherwise the VMFS / NFS datastore label.">Storage</th>'
+    +'<th title="For vSAN-backed VMs: the on-host folder path /vmfs/volumes/vsan:&lt;datastore-uuid&gt;/&lt;vm-namespace-uuid&gt; - the recovery handle that survives a ransomware rename of the .vmx. Taken from the captured vmfs path. Blank for VMs not on vSAN.">GUID Path</th>'
+    +'<th title="running = listed in the host&#39;s running-VM process list (localcli vm-process-list); registered = present but powered off; possibly encrypted = .vmx missing or ransom-renamed - hover the red tag for the evidence + how the name was recovered.">Status</th>'
+    +'</tr></thead><tbody>';
+  if(!VMS.length) h+='<tr><td colspan="'+(showIp?9:8)+'" class="muted">No .vmx files found in this bundle.</td></tr>';
+  else if(!rows.length) h+='<tr><td colspan="'+(showIp?9:8)+'" class="muted">No VMs match the current filter'+(VM_OS?' (Guest OS: '+esc(VM_OS)+')':'')+'.</td></tr>';
   for(i=0;i<rows.length;i++){ var v=rows[i]; var gip=fleetGuestIp(v.name);
-    h+='<tr data-cfg="'+esc(v.cfg)+'" data-nm="'+esc(v.name)+'" style="cursor:pointer" title="Open the activity timeline (power / snapshot / migration / guest-op) for '+esc(v.name)+'">'
-      +'<td><b>'+esc(v.name)+'</b></td><td class="muted">'+esc(v.os||"-")+'</td>'
+    h+='<tr data-cfg="'+esc(v.cfg)+'" data-nm="'+esc(v.name)+'" style="cursor:pointer" title="'+(v.enc?('POSSIBLY ENCRYPTED - '+esc(v.enc)+'. '):'')+'Click to open the activity timeline (power / snapshot / migration / guest-op) for '+esc(v.name)+(v.cfg?(' - config: '+esc(v.cfg)):'')+'">'
+      +'<td><b>'+esc(v.name)+'</b></td><td class="muted" title="'+esc(v.os||"guest OS not recorded in the .vmx")+'">'+esc(v.os||"-")+'</td>'
       +(showIp?('<td class="mono">'+(gip?esc(gip):'<span class="muted">-</span>')+'</td>'):'')
-      +'<td class="mono" style="text-align:center">'+v.vcpu+'</td><td class="mono" style="text-align:center">'+esc(fmtMB(v.memMB))+'</td>'
-      +'<td class="mono" title="'+esc(v.disks.join("  |  "))+'">'+v.ndisk+(v.ndisk?' <span class="muted">('+esc(trunc(v.disks.join(", "),40))+')</span>':'')+'</td>'
-      +'<td class="mono">'+(v.vsan?'<span class="tag" style="background:#10233a;color:#79c0ff;border:1px solid #1f6feb">vSAN</span>':esc(v.ds||"-"))+'</td>'
-      +'<td>'+(v.running?'<span class="pgood">running</span>':'<span class="muted">registered</span>')+'</td></tr>'; }
+      +'<td class="mono" style="text-align:center" title="'+v.vcpu+' vCPU">'+v.vcpu+'</td><td class="mono" style="text-align:center" title="'+esc(v.memMB?(nf(v.memMB)+" MB configured"):"memSize not in .vmx")+'">'+esc(fmtMB(v.memMB))+'</td>'
+      +'<td class="mono" title="'+esc((v.disks.length?v.disks.join("  |  "):"no virtual disks declared in the .vmx")+(v.diskDetail&&v.diskDetail.length?("\nDisk extents (start-end sector = disk pointers):\n"+(function(dd){ var a=[]; for(var x=0;x<dd.length;x++) a.push(dd[x].file+" ["+dd[x].gb.toFixed(1)+" GB: "+dd[x].sum+"]"); return a.join("\n"); })(v.diskDetail)):"\n(disk descriptor not captured in this bundle - size/extents unavailable)"))+'">'+v.ndisk+(v.ndisk?' <span class="muted">('+esc(trunc(v.disks.join(", "),40))+')</span>':'')+'</td>'
+      +'<td class="mono" title="'+esc(v.vsan?("vSAN-backed - the vSAN object UUID in the disk descriptor is the recovery handle"):(v.ds?("datastore: "+v.ds):"datastore unknown"))+'">'+(v.vsan?'<span class="tag" style="background:#10233a;color:#79c0ff;border:1px solid #1f6feb">vSAN</span>':esc(v.ds||"-"))+'</td>'
+      +'<td class="mono" style="font-size:11px" title="'+esc(v.guidPath?("vSAN VM folder (from the captured vmfs path): "+v.guidPath):(v.vsan?"vSAN-backed but the folder UUID was not captured":"not on vSAN - no vSAN GUID path"))+'">'+(v.guidPath?esc(v.guidPath):'<span class="muted">-</span>')+'</td>'
+      +'<td>'+(v.enc?('<span class="tag" style="background:#3a1010;color:#ff8b8b;border:1px solid #b02020" title="'+esc(v.enc)+'">possibly encrypted</span> <span class="muted" style="font-size:11px" title="'+esc(v.enc)+'">'+esc(trunc(v.enc,46))+'</span>'):(v.running?'<span class="pgood" title="Listed in the host running-VM process list at capture time.">running</span>':'<span class="muted" title="Registered on the host but not in the running-VM process list (powered off).">registered</span>'))+'</td></tr>'; }
   h+='</tbody>'; $("vmsTbl").innerHTML=h;
   var trs=$("vmsTbl").getElementsByTagName("tr");
   for(var t=0;t<trs.length;t++){ if(trs[t].getAttribute("data-cfg")){ trs[t].onclick=function(){ openVm(this.getAttribute("data-cfg"), this.getAttribute("data-nm")); }; } }
   setupColResizeFor($("vmsTbl"),"vms"); freezeThs($("vmsScroll"));
+}
+/* vCenter VMs board: log-derived inventory (no .vmx files exist in a vc-support bundle).
+   Columns differ from the ESXi board - MoRef / host / evidence instead of vCPU/vRAM. */
+function renderVcsaVms(){
+  fillFilterSel("vmOs", [], "");
+  var rows=vmsFiltered(), i, on=0, enc=0, base=0;
+  for(i=0;i<VMS.length;i++){ if(VMS[i].running) on++; if(VMS[i].enc) enc++; if(VMS[i].src&&VMS[i].src["baseline"]) base++; }
+  var meta=VCSA_VM_META||{};
+  $("vmsInfo").innerHTML = nf(VMS.length)+" VMs (from vpxd / DRS dumps / vSAN-health"+(meta.baseStamp?(" baseline "+esc(String(meta.baseStamp).substring(0,10))):"")+") &middot; "
+    +on+" powered on"+(meta.drmNew?(" @ "+esc(meta.drmNew)):"")
+    +(enc?(' &middot; <b style="color:#ff8b8b">'+enc+' restored / review</b>'):'')
+    +(rows.length<VMS.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'+(VM_SIMPLE?' <span class="muted">(Simplified - host identified only)</span>':'')):'');
+  if(VM_SIMPLE){ renderVmsSimple(rows); return; }
+  var h='<thead><tr>'
+    +'<th title="VM name recovered from vpxd task logs and the vSAN cloud-health baseline (its sha256-obfuscated names are cracked against a dictionary). A vc-support bundle has no .vmx files - this whole list is reconstructed from logs.">VM</th>'
+    +'<th title="vCenter managed-object ID(s) for the VM. A separate &#39;baseline&#39; MoRef that differs from the current one means the VM was re-registered (e.g. deleted and restored) since the vSAN-health baseline snapshot.">MoRef(s)</th>'
+    +'<th title="ESXi host running the VM per the newest DRS placement dump (drmdump/Plmt-N). Blank when the VM is not powered on in that dump.">Host</th>'
+    +'<th style="text-align:center" title="Configured vCPUs from the newest DRS dump (VMData Entitlement) - the only source in a vCenter bundle (no .vmx). Powered-on VMs only.">vCPU</th>'
+    +'<th style="text-align:center" title="Configured RAM from the newest DRS dump (VMData Entitlement) - the only source in a vCenter bundle (no .vmx). Powered-on VMs only.">vRAM</th>'
+    +'<th title="Virtual disks inferred from PPDM backup .vmdk reads seen in the vpxd /folder HTTP traffic - NOT a full .vmx disk list (a vc-support bundle has no .vmx).">vDisks (from backup I/O)</th>'
+    +'<th title="For vSAN-backed VMs: the on-host folder path /vmfs/volumes/vsan:&lt;datastore-uuid&gt;/&lt;vm-namespace-uuid&gt; - the recovery handle that survives a ransomware rename of the .vmx. Sourced from a literal vsan: path in vpxd, else the /folder GUID joined to the vSAN datastore UUID. Hover a value for which. Blank for VMs not on vSAN (e.g. a VMFS recovery datastore) or with no folder GUID in the retained logs.">GUID Path</th>'
+    +'<th title="powered on = present in the newest DRS dump; registered = a backup read its files inside the log window; baseline only = in the vSAN-health snapshot but absent from the current logs (powered off / template / removed).">Status</th>'
+    +'<th title="Recovery / encryption signal (advisory): the VM was restored from backup (its files were PUT into a datastore during the log window, or its name carries a -restore suffix), re-registered under a new MoRef since the baseline, or present in the baseline but gone from the current logs. Correlate with the incident window before concluding.">Encrypted / restored?</th>'
+    +'</tr></thead><tbody>';
+  if(!VMS.length) h+='<tr><td colspan="9" class="muted">No VM references found in the retained vpxd logs / DRS dumps. A vc-support bundle carries no .vmx files; the VM list is reconstructed from logs, so an empty result means the retained log window has no VM activity.</td></tr>';
+  else if(!rows.length) h+='<tr><td colspan="9" class="muted">No VMs match the current filter.</td></tr>';
+  for(i=0;i<rows.length;i++){ var v=rows[i];
+    var mo=v.mo.join(", ")+(v.moBase?((v.mo.length?" | ":"")+v.moBase+" (baseline)"):"");
+    var srcs=[]; for(var sk in v.src){ if(v.src.hasOwnProperty(sk)) srcs.push(sk); }
+    var srcTip=srcs.length?("evidence sources: "+srcs.join(", ")):"";
+    h+='<tr><td><b title="'+esc(srcTip||v.name)+'">'+esc(v.name)+'</b></td><td class="mono muted" style="font-size:11px" title="'+esc(v.mo.length?("current MoRef(s): "+v.mo.join(", ")):"no current MoRef in the retained logs")+(v.moBase?("\nbaseline MoRef: "+v.moBase):"")+'">'+esc(mo)+'</td>'
+      +'<td class="mono" title="'+esc(v.host?("running on "+v.host+" (newest DRS dump)"):"not powered on in the newest DRS dump")+'">'+esc(v.host||"-")+'</td>'
+      +'<td class="mono" style="text-align:center" title="'+esc(v.specSrc?("source: "+v.specSrc):"no DRS VMData for this VM (not powered on in the newest dump)")+'">'+(v.vcpu?v.vcpu:'<span class="muted">-</span>')+'</td>'
+      +'<td class="mono" style="text-align:center" title="'+esc(v.specSrc?("source: "+v.specSrc):"no DRS VMData for this VM (not powered on in the newest dump)")+'">'+esc(fmtMB(v.memMB))+'</td>'
+      +'<td class="mono" title="'+esc(v.disks.length?("from backup I/O: "+v.disks.join("  |  ")):"no backup .vmdk reads seen for this VM in the log window")+'">'+(v.ndisk?(v.ndisk+' <span class="muted">('+esc(trunc(v.disks.join(", "),40))+')</span>'):'<span class="muted">-</span>')+'</td>'
+      +'<td class="mono" style="font-size:11px" title="'+esc(v.guidPath?("source: "+v.guidSrc):(v.vsan?"on vSAN but no folder GUID in the retained logs":"not on vSAN - no vSAN GUID path"))+'">'+(v.guidPath?esc(v.guidPath):'<span class="muted">-</span>')+'</td>'
+      +'<td title="'+esc(v.status||"")+'">'+(v.running?'<span class="pgood">powered on</span>':'<span class="muted">'+esc(trunc(v.status,40))+'</span>')+'</td>'
+      +'<td>'+(v.enc?('<span class="tag" style="background:#3a1010;color:#ff8b8b;border:1px solid #b02020" title="'+esc(v.enc)+'">'+esc(trunc(v.enc,64))+'</span>'):'<span class="muted">-</span>')+'</td></tr>'; }
+  h+='</tbody>'; $("vmsTbl").innerHTML=h;
+  setupColResizeFor($("vmsTbl"),"vmsvc"); freezeThs($("vmsScroll"));
 }
 function previewVmx(rel){ var txt=catMember(rel); if(!txt){ setStatus("Could not read "+baseName(rel),"err"); return; }
   if(txt.length>200000) txt=txt.substring(0,200000)+"\n…(truncated)";
@@ -2414,19 +3044,49 @@ function openVm(cfgRel, vmName){
   try{ $("detailCard").scrollIntoView(); }catch(e){}
   setStatus(r.events.length+" activity event(s) for "+(vmName||baseName(cfgRel))+(del?(" - "+del+" snapshot delete/consolidate (review vs any encryption window)"):""), del?"err":"ok");
 }
-/* the VMs displayed right now (same predicate as renderVms): free-text + Guest-OS filters */
+/* The ESXi host a VM is placed on. vCenter rows carry the host resolved from the newest DRS placement
+   dump (blank when the VM is not powered on there). In an ESXi bundle there is no per-VM host field -
+   every VM in the bundle is registered on that bundle's own host by definition, so that IS its host. */
+function vmHostOf(v){ return trimStr(v.host || (BTYPE==="esxi" ? (NODE.host||"") : "")); }
+/* the VMs displayed right now (same predicate as renderVms): free-text + Guest-OS + Simplified filters */
 function vmsFiltered(){ var q=lc(trimStr($("vmq").value||"")), out=[];
-  for(var i=0;i<VMS.length;i++){ var v=VMS[i]; if(q && v.blob.indexOf(q)<0) continue; if(VM_OS && (v.os||"")!==VM_OS) continue; out.push(v); }
+  for(var i=0;i<VMS.length;i++){ var v=VMS[i]; if(q && v.blob.indexOf(q)<0) continue; if(VM_OS && (v.os||"")!==VM_OS) continue;
+    if(VM_SIMPLE && !vmHostOf(v)) continue;      // Simplified: only VMs with an identified host
+    out.push(v); }
   return out; }
 function vmsExport(){
-  if(!VMS.length){ setStatus("No VMs to export - open an ESXi bundle and let analysis finish (VMs tab shows the list).","err"); return; }
+  if(!VMS.length){ setStatus("No VMs to export - analyze a bundle and let analysis finish (VMs tab shows the list).","err"); return; }
   if(!trimStr(LASTOUTDIR)){ setStatus("No output directory set - Analyze a bundle first.","err"); return; }
-  var sel=vmsFiltered();   // export what the table shows, consistent with the analysis-tab CSV exports
+  var sel=vmsFiltered();   // export ONLY what the table shows - same rows AND same columns as the view
   if(!sel.length){ setStatus("No VMs match the current filter - clear it to export.","err"); return; }
-  var out=["Name,GuestOS,GuestIP,vCPU,vRAM_MB,DiskCount,Disks,Storage,Running,ConfigPath"];
-  for(var i=0;i<sel.length;i++){ var v=sel[i]; out.push([cq(v.name),cq(v.os),cq(fleetGuestIp(v.name)),cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(v.running?"running":"registered"),cq(v.cfg)].join(",")); }
+  var out=[], i, v;
+  if(VM_SIMPLE){
+    /* Simplified view is on -> the CSV mirrors it exactly: the same 7 columns, host-identified rows
+       only. Untick Simplified for the full-evidence export. */
+    out.push("Name,GuestOS,vCPU,vRAM_MB,DiskCount,Disks,Host,Status");
+    for(i=0;i<sel.length;i++){ v=sel[i];
+      var st = v.enc ? ("possibly encrypted - "+v.enc) : (v.running ? (BTYPE==="esxi"?"running":"powered on") : (BTYPE==="esxi"?"registered":(v.status||"")));
+      out.push([cq(v.name),cq(v.os),cq(v.vcpu||""),cq(v.memMB||""),cq(v.ndisk),cq(v.disks.join("; ")),cq(vmHostOf(v)),cq(st)].join(",")); }
+  } else if(BTYPE==="vcsa"){
+    /* mirrors the visible columns (VM | MoRef(s) | Host | vDisks | GUID Path | Status | Encrypted/restored);
+       each column carries the detail its cell shows on hover (evidence sources, GUID-path provenance).
+       'Datastore' is deliberately NOT exported - it is not a column on this board, and for a restored VM
+       it holds the restore SOURCE datastore, which contradicts the (correct) vSAN GUID Path. */
+    out.push("Name,MoRefs,BaselineMoRef,Host,vCPU,vRAM_MB,DiskCount,Disks,GUIDPath,GUIDPathSource,Status,EncryptedRestored,Evidence");
+    for(i=0;i<sel.length;i++){ v=sel[i]; var srcs=[]; for(var s in v.src){ if(v.src.hasOwnProperty(s)) srcs.push(s); }
+      out.push([cq(v.name),cq(v.mo.join("; ")),cq(v.moBase),cq(v.host),cq(v.vcpu||""),cq(v.memMB||""),cq(v.ndisk),cq(v.disks.join("; ")),cq(v.guidPath),cq(v.guidSrc),cq(v.running?"powered on":v.status),cq(v.enc),cq(srcs.join("; "))].join(",")); }
+  } else {
+    var showIpX=false; for(i=0;i<VMS.length;i++) if(fleetGuestIp(VMS[i].name)){ showIpX=true; break; }   // Guest IP column is hidden unless a fleet vCenter supplied one - don't export a column the view doesn't show
+    out.push("Name,GuestOS,"+(showIpX?"GuestIP,":"")+"vCPU,vRAM_MB,DiskCount,Disks,DiskExtents,Storage,GUIDPath,Running,PossiblyEncrypted,ConfigPath");
+    for(i=0;i<sel.length;i++){ v=sel[i]; var xt=[];
+      if(v.diskDetail){ for(var d=0;d<v.diskDetail.length;d++){ var dd=v.diskDetail[d]; xt.push(dd.file+" ["+dd.gb.toFixed(1)+" GB: "+dd.sum+"]"); } }
+      var rw=[cq(v.name),cq(v.os)]; if(showIpX) rw.push(cq(fleetGuestIp(v.name)));
+      rw.push(cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(xt.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(v.guidPath||""),cq(v.running?"running":"registered"),cq(v.enc||""),cq(v.cfg));
+      out.push(rw.join(",")); }
+  }
   var p=LASTOUTDIR+"\\vms_"+nowStamp()+".csv";
   var lbl=(sel.length<VMS.length)?(nf(sel.length)+" of "+nf(VMS.length)+" VMs (filtered)"):(nf(VMS.length)+" VMs");
+  lbl += VM_SIMPLE ? " - Simplified columns (VM/Host/Status); untick Simplified for the full export" : " - all columns";
   try{ ensureDir(LASTOUTDIR); writeUtf8(p,out.join("\r\n")); setStatus("Exported "+lbl+" → "+p,"ok"); appendLog("VMs CSV: "+p); openInExplorer(p); }
   catch(e){ setStatus("VMs export failed: "+e.message,"err"); appendLog("VMs export error: "+e.message); } }
 
@@ -2458,7 +3118,7 @@ function buildReportHtml(){
   if(VMS.length){ var vrun=0,vcpu=0,vmem=0; for(i=0;i<VMS.length;i++){ if(VMS[i].running) vrun++; vcpu+=VMS[i].vcpu; vmem+=VMS[i].memMB; }
     h.push('<h2>Hosted VMs ('+VMS.length+', '+vrun+' running, '+nf(vcpu)+' vCPU, '+fmtMB(vmem)+' vRAM)</h2>');
     h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks</th><th>Storage</th><th>Status</th></tr>');
-    for(i=0;i<VMS.length;i++){ var vm=VMS[i]; h.push('<tr><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td>'+vm.vcpu+'</td><td>'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono" title="'+rEsc(vm.disks.join(" | "))+'">'+vm.ndisk+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td><td'+(vm.running?'':' class="muted"')+'>'+(vm.running?"running":"registered")+'</td></tr>'); }
+    for(i=0;i<VMS.length;i++){ var vm=VMS[i]; h.push('<tr><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td>'+vm.vcpu+'</td><td>'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono" title="'+rEsc(vm.disks.join(" | "))+'">'+vm.ndisk+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td><td'+(vm.enc?' class="hit"':(vm.running?'':' class="muted"'))+'>'+(vm.enc?("POSSIBLY ENCRYPTED - "+rEsc(vm.enc)):(vm.running?"running":(vm.status||"registered")))+'</td></tr>'); }
     h.push('</table>'); }
   // key-file coverage
   var present=0,miss=[]; for(i=0;i<INVENTORY.length;i++){ if(INVENTORY[i].present) present++; if(INVENTORY[i].key&&!INVENTORY[i].present) miss.push(INVENTORY[i].name); }
@@ -2544,7 +3204,7 @@ function buildSpecHtml(){
   if(VMS.length){ var vr=0,vc=0,vm=0; for(i=0;i<VMS.length;i++){ if(VMS[i].running) vr++; vc+=VMS[i].vcpu; vm+=VMS[i].memMB; }
     h.push('<h2>Hosted VMs ('+VMS.length+', '+vr+' running, '+nf(vc)+' vCPU, '+rEsc(fmtMB(vm))+' vRAM)</h2>');
     h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>Status</th></tr>');
-    for(i=0;i<VMS.length;i++){ var v=VMS[i]; h.push('<tr><td><b>'+rEsc(v.name)+'</b></td><td>'+rEsc(v.os)+'</td><td>'+v.vcpu+'</td><td>'+rEsc(fmtMB(v.memMB))+'</td><td class="mono">'+v.ndisk+(v.disks.length?(' - '+rEsc(v.disks.join(", "))):'')+'</td><td>'+(v.vsan?"vSAN":rEsc(v.ds))+'</td><td'+(v.running?'':' class="muted"')+'>'+(v.running?"running":"registered")+'</td></tr>'); }
+    for(i=0;i<VMS.length;i++){ var v=VMS[i]; h.push('<tr><td><b>'+rEsc(v.name)+'</b></td><td>'+rEsc(v.os)+'</td><td>'+v.vcpu+'</td><td>'+rEsc(fmtMB(v.memMB))+'</td><td class="mono">'+v.ndisk+(v.disks.length?(' - '+rEsc(v.disks.join(", "))):'')+(v.diskDetail&&v.diskDetail.length?('<br><span class="muted" style="font-size:10px">'+rEsc(v.diskDetail[0].sum)+(v.diskDetail.length>1?(" (+"+(v.diskDetail.length-1)+" more)"):"")+'</span>'):'')+'</td><td>'+(v.vsan?"vSAN":rEsc(v.ds))+'</td><td'+(v.enc?' class="hit"':(v.running?'':' class="muted"'))+'>'+(v.enc?("POSSIBLY ENCRYPTED - "+rEsc(v.enc)):(v.running?"running":(v.status||"registered")))+'</td></tr>'); }
     h.push('</table>'); }
   h.push('<p class="muted" style="margin-top:20px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'.</p></body></html>');
   return h.join("\n");
@@ -2670,7 +3330,10 @@ function resolveBundleDesc(path){
     // "<host>", but the inner archive "vc-<fqdn>-<date>--<time>-<id>" carries the real FQDN.
     // Prefer the archive's guess.
     var a=findInnerArchive(path); if(a) return {path:path,mode:"toc",archive:a,host:guessHost(a)||guessHost(path)}; return null; }
-  if(fileExists(path) && isArchive(path)) return {path:path,mode:"toc",archive:path,host:guessHost(path)};
+  if(fileExists(path) && isArchive(path)){
+    var fmt=sniffContainer(path);
+    if(fmt==="iso9660"||fmt==="empty"){ appendLog("Fleet: skipping "+baseName(path)+" - "+(fmt==="iso9660"?("ISO disc image"+((function(){var l=isoVolumeLabel(path);return l?(" '"+l+"'"):"";})())):"empty/truncated file")+", not a support bundle."); return null; }
+    return {path:path,mode:"toc",archive:path,host:guessHost(path)}; }
   return null;
 }
 /* synchronous TOC read (blocking) - fine for batch fleet processing */
@@ -2691,10 +3354,10 @@ function processHostSync(path){
   if(FLEET_REUSE){ var cached=loadSnapshot(LASTOUTDIR, sig);
     if(cached){ appendLog("  = "+host+" reused saved analysis from "+(cached.analyzedAt||"?")+" (source unchanged, skipped re-parse)"); return cached; } }
   $("hostName").value=host;
-  if(MODE==="toc"){ if(!readTocSync(ARCHIVE)) return null; detectType(); if(MODE==="toc") extractNodeFilesToc(); }
+  if(MODE==="toc"){ if(!readTocSync(ARCHIVE)) return null; detectType(); }
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
-  buildInventory(); parseNode();
+  buildInventory(); extractKeyFilesToc(); parseNode();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
   ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
   safeStep("logons", parseLogons); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
   safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
@@ -3033,6 +3696,7 @@ function setTab(t){
   var ids={overview:"tabOverview",spec:"tabSpec",sec:"tabSec",net:"tabNet",vms:"tabVms",inv:"tabInv",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
   for(var k in ids){ if(ids.hasOwnProperty(k)) $(ids[k]).className=(k===t)?"btn on":"btn"; }
   showEl("ovCard", t==="overview"); showEl("invCard", t==="inv"); showEl("specCard", t==="spec"); showEl("secCard", t==="sec"); showEl("netCard", t==="net"); showEl("vmsCard", t==="vms");
+  showEl("secIndicCard", t==="sec");   // indicators panel sits above Security posture; renderIndicators() then hides it if there is nothing to show
   var isAn=(t==="logon"||t==="act"||t==="time"||t==="ioc"||t==="persist");
   showEl("tblCard", isAn); showEl("dateWrap", t==="time"||t==="logon");
   showEl("sessWrap", t==="logon");
@@ -3088,10 +3752,14 @@ function renderOverview(){
   if(miss.length){ var mh='<div class="muted" style="font-size:12px"><b style="color:#e3b341">Absent critical artifacts</b> (each is itself a finding):<br>';
     mh+=esc(miss.join(", "))+"</div>"; $("ovMissing").innerHTML=mh; }
   else $("ovMissing").innerHTML='<div class="ok" style="font-size:12px">All critical artifacts present.</div>';
-  renderAnStats(); renderIndicators(); renderCves();
+  renderAnStats(); renderCves();   // indicators moved to the Security tab (rendered by renderSecurity)
 }
+/* Owns the visibility of its own card: analysis finishing calls render() (NOT setTab), so if the user is
+   already sitting on the Security tab when it completes, setTab's showEl never re-runs - deciding here
+   means the panel can't end up populated-but-hidden. */
 function renderIndicators(){
-  if(!ANALYZED || !INDIC.length){ $("ovIndic").innerHTML=""; return; }
+  if(!ANALYZED || !INDIC.length){ $("ovIndic").innerHTML=""; showEl("secIndicCard", false); return; }
+  showEl("secIndicCard", TAB==="sec");
   var h='<div class="panel"><h4>Intrusion / ransomware indicators <span class="sub">- '+indHits()+' of '+INDIC.length+' triggered'+(BTYPE==="esxi"?" (ESXi kill-chain)":"")+'</span></h4>';
   for(var i=0;i<INDIC.length;i++){ var it=INDIC[i]; var dc=it.status==="hit"?"hit":(it.status==="na"?"na":""); var sc=it.status==="hit"?"hit":(it.status==="na"?"na":"clear"); var lbl=it.status==="hit"?"TRIGGERED":(it.status==="na"?"n/a":"clear");
     h+='<div class="ind"><span class="dot '+dc+'"></span><span class="nm">'+esc(it.name)+'</span><span class="st '+sc+'">'+lbl+'</span><span class="dt">'+esc(it.detail)+'</span></div>'; }
@@ -3191,6 +3859,8 @@ function renderNetwork(){
 function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"")); }
 function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"clear")); }
 function renderSecurity(){
+  renderIndicators();   // the intrusion / ransomware panel sits above Security posture - render it even if
+                        // posture itself has nothing to grade (it is a separate card)
   if(!ANALYZED || !SECPOST.length){
     $("secScore").innerHTML=""; $("secBody").innerHTML='<div class="muted" style="font-size:12px">Security posture is graded during log analysis'+(ANALYZED?" - nothing checkable for this bundle type.":" (runs automatically after Analyze).")+'</div>'; return; }
   var sc=secScoreOf();
@@ -3715,6 +4385,7 @@ function init(){
   $("corrExport").onclick=corrTimelineExport;
   $("vmq").onkeyup=function(){ renderVms(); };
   $("vmOs").onchange=function(){ VM_OS=this.value; renderVms(); };
+  $("vmSimple").onclick=function(){ VM_SIMPLE=!!this.checked; renderVms(); };
   $("vmsExport").onclick=vmsExport;
   $("specExport").onclick=specExport;
   $("secExport").onclick=securityExport;

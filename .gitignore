@@ -2,10 +2,14 @@
 .DS_Store
 Thumbs.db
 
-# tool runtime output (created next to the HTA when it runs)
+# Tool runtime output. EVERY item below can contain real customer/evidence data (VM names, users,
+# source IPs, datastore paths, log excerpts) - never commit any of it. Belt-and-braces: these normally
+# land under _Processed\<host>\vSphere\, but the output directory is user-settable, so the concrete
+# filenames are ignored too.
 _Processed/
 _extracted/
 _view/
+_nodecfg/
 _fleet/
 tools/
 toc.tsv
@@ -15,9 +19,28 @@ logons.json
 actions.json
 snapshot.json
 IOC.txt
+IOC.csv
 *.colw.txt
+
+# CSV exports
 *_export_*.csv
 roster_*.csv
+vms_*.csv
+inventory_*.csv
+logon_*.csv
+act_*.csv
+time_*.csv
+ioc_*.csv
+persist_*.csv
+
+# HTML reports
 report_*.html
+security_*.html
 specification_*.html
 fleet_report_*.html
+
+# never commit sample/evidence bundles
+*.tgz
+*.tar
+*.vmx
+*.vmdk
