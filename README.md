@@ -1,4 +1,4 @@
-# vSphere Support Bundle Triage Tool
+# vSphere Support Bundle Analyzer
 
 A single-file Windows **HTA** for rapid DFIR triage of VMware **ESXi** (`vm-support`) and **vCenter / VCSA** (`vc-support`) log bundles. It answers two questions fast: **what is this node** (configuration, VMs, storage) and **what happened on it** (logins, actions, persistence, ransomware / intrusion indicators) - for one host or a whole cluster.
 
@@ -46,7 +46,7 @@ _Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NE
 - **Fleet mode** - discover every bundle under a folder, roster them by risk, group by **vSAN cluster**, and run **cross-host correlation**: shared source IPs (lateral movement), shared accounts, shared IOCs, coordinated indicators, a merged timeline, and the **vCenter&rarr;ESXi opID task chain**. Re-runs **reuse each host's saved analysis** from `_Processed` when the source bundle is unchanged (uncheck *reuse cached* to force a fresh pass); the roster's **Analyzed** column shows when each host was last processed.
 - **Reports & exports** - per-view CSVs, a standalone node **Specification HTML**, a per-host **report** (the green **Generate Report** button - every tab in one self-contained HTML, with a clickable navigation pane), and a consolidated **Fleet report**.
 
-See the [Field Manual](vSphere-Bundle-Triage-Manual.html) for full documentation.
+See the [Field Manual](vSphere-SupportBundle-Analyzer-Manual.html) for full documentation.
 
 ## Requirements
 
@@ -56,12 +56,12 @@ See the [Field Manual](vSphere-Bundle-Triage-Manual.html) for full documentation
 
 ## Quick start
 
-1. Download `vSphere-Bundle-Triage.hta` from the [latest release](../../releases/latest) into a local working folder and double-click it.
+1. Download `vSphere-SupportBundle-Analyzer.hta` from the [latest release](../../releases/latest) into a local working folder and double-click it.
 2. **Bundle** - point at the nested archive that holds the tree (ESXi `<host>.tar` / vCenter `<host>.tgz`), the outer `.tgz`, or an already-extracted folder. For fleet mode, point at a **parent folder** of bundles.
 3. **Target hostname** (required) - names the output folder `_Processed\<host>\vSphere\`.
 4. Click **Analyze bundle** (single) or **Triage fleet folder…** (folder). Log analysis runs automatically.
 
-Command line: `mshta.exe "vSphere-Bundle-Triage.hta" "<archiveOrFolder>" ["<outDir>"] [/auto] [/from:yyyy-MM-dd] [/to:yyyy-MM-dd]`
+Command line: `mshta.exe "vSphere-SupportBundle-Analyzer.hta" "<archiveOrFolder>" ["<outDir>"] [/auto] [/from:yyyy-MM-dd] [/to:yyyy-MM-dd]`
 
 ## Notes & caveats
 

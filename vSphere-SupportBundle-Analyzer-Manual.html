@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vSphere Support Bundle Triage Tool - Field Manual</title>
+<title>vSphere Support Bundle Analyzer - Field Manual</title>
 <style>
   :root{--blue:#58a6ff;--ink:#e6edf3;--mut:#8b949e;--line:#30363d;--bg:#0d1117;--card:#161b22;--code:#1c2330}
   *{box-sizing:border-box}
@@ -84,9 +84,9 @@
 </nav>
 <main>
 <header class="top">
-  <h1>vSphere Support Bundle Triage Tool</h1>
+  <h1>vSphere Support Bundle Analyzer</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles - one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.2.2</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.2.2</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -108,7 +108,7 @@
 
 <h2 id="start">3. Getting started</h2>
 <ol>
-  <li>Put the <code>.hta</code> in a working folder (e.g. <code>Documents\Claude\Artifacts\vSphere-Bundle-Triage\</code>) and double-click it.</li>
+  <li>Put the <code>.hta</code> in a working folder (e.g. <code>Documents\Claude\Artifacts\vSphere-SupportBundle-Analyzer\</code>) and double-click it.</li>
   <li><b>Bundle field:</b> point at the nested archive that holds the tree (ESXi <code>&lt;host&gt;.tar</code> / vCenter <code>&lt;host&gt;.tgz</code>), the outer <code>.tgz</code>, or an already-extracted folder. <b>Browse…</b> or <b>Pick folder…</b> help.</li>
   <li><b>Target hostname</b> is required - it names the output folder. It is guessed from the bundle name; correct it if needed.</li>
   <li>Click <b>Analyze bundle</b>. The button turns blue when the field points at a single bundle; <b>Triage fleet folder…</b> turns blue when it points at a folder holding two or more bundles.</li>
@@ -125,7 +125,7 @@
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
   <!-- header -->
   <rect width="1000" height="34" rx="10" fill="#161b22"/><rect y="24" width="1000" height="10" fill="#161b22"/>
-  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Triage <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v1.2.2</tspan></text>
+  <text x="16" y="22" fill="#e6edf3" font-size="13" font-weight="700">vSphere Support Bundle Analyzer <tspan fill="#8b949e" font-weight="400">· ESXi &amp; vCenter · v1.2.2</tspan></text>
   <rect x="360" y="9" width="78" height="16" rx="8" fill="none" stroke="#30363d"/><text x="368" y="21" fill="#8b949e" font-size="10">bsdtar v3.8.4</text>
   <rect x="446" y="9" width="88" height="16" rx="8" fill="none" stroke="#2ea043"/><text x="454" y="21" fill="#7ee787" font-size="10">ESXi bundle</text>
   <!-- tabs -->
@@ -439,7 +439,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Triage Tool - Field Manual for v1.2.2. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool">github.com/bpmorris22/vSphere-Support-Bundle-Triage-Tool</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Analyzer - Field Manual for v1.2.2. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer">github.com/bpmorris22/vSphere-SupportBundle-Analyzer</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>
