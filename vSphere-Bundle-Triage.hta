@@ -246,7 +246,7 @@
         <button class="btn" id="tabIoc" data-tab="ioc" title="Hits for your IOC list (shared toolkit IOC.txt / IOC.csv - use 'Create IOC list' to edit) swept across the key logs present in this bundle, not the whole tree. IPs, users, hashes, filenames, keywords. Any hit scores +3 wherever it appears.">IOC hits</button>
         <button class="btn orange hide" id="backRosterBtn" style="float:right" title="Return to the fleet roster (kept in memory - no re-scan)">&#9664; Fleet roster</button>
       </div>
-      <div class="roadmap">Logons / Actions / Timeline / Persistence / IOC parse the key logs &amp; config automatically after Analyze (Re-run on Overview). Overview shows the ransomware-indicator &amp; CVE-exposure panels; Case-note report writes a self-contained HTML. Case window (/from /to) filters Timeline &amp; Logons, never scores. Next: fleet / multi-host mode.</div>
+      <div class="roadmap">Logons / Actions / Timeline / Persistence / IOC parse the key logs &amp; config automatically after Analyze (Re-run on Overview). Overview shows the ransomware-indicator &amp; CVE-exposure panels; Generate Report writes every tab into one self-contained HTML. Case window (/from /to) filters Timeline &amp; Logons, never scores. Next: fleet / multi-host mode.</div>
     </div>
 
     <!-- OVERVIEW -->
@@ -265,7 +265,7 @@
       </div>
       <div style="margin-top:12px;border-top:1px solid #30363d;padding-top:10px">
         <button class="btn" id="anBtn" title="Re-parse the key logs (auth/shell/hostd/websso/vpxd) into Logons, Actions, Timeline and re-sweep IOCs. Runs automatically after Analyze; click to re-run.">Re-run log analysis</button>
-        <button class="btn green" id="reportBtn" title="Generate a self-contained HTML case-note report and open it.">Case-note report</button>
+        <button class="btn green" id="reportBtn" title="Generate a self-contained HTML report - every tab in one document (node config, maintenance, key files, specification, VMs, network, indicators, CVEs, security posture, persistence, logons, sessions, actions, timeline, IOC hits) - and open it.">Generate Report</button>
         <span class="muted" id="anStatus" style="margin-left:8px;font-size:12px">Runs automatically after Analyze.</span>
         <div id="anStats" style="margin-top:8px"></div>
       </div>
@@ -452,7 +452,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.7.1";
+var APP_VERSION = "1.8.2";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -2851,9 +2851,9 @@ function buildSpecEsxi(){
     var nr=wsRows(ni); for(i=0;i<nr.length;i++){ var n2=nr[i]; if(!/^(vmnic\d+|vusb\d+)$/.test(n2[0]||"")) continue; s2.rows.push([n2[0]||"",n2[2]||"",n2[4]||"",n2[5]||"",n2[7]||"",n2[9]||""]); } }
   // port groups & VLANs (standard vSwitch + distributed)
   var pgs=parsePortgroupsEsxi();
-  if(pgs.std.length){ var sp1=specSec("Port groups &amp; VLANs (standard vSwitch)","tbl"); sp1.head=["Port group","vSwitch","VLAN ID","Uplinks"]; sp1.tips=["Port group name - what VMs attach to.","The standard vSwitch hosting it.","VLAN tag. 0 = untagged; 4095 = VGT/trunk (a VM sees all VLANs - worth explaining).","Physical NICs carrying this port group off the host."];
+  if(pgs.std.length){ var sp1=specSec("Port groups & VLANs (standard vSwitch)","tbl"); sp1.head=["Port group","vSwitch","VLAN ID","Uplinks"]; sp1.tips=["Port group name - what VMs attach to.","The standard vSwitch hosting it.","VLAN tag. 0 = untagged; 4095 = VGT/trunk (a VM sees all VLANs - worth explaining).","Physical NICs carrying this port group off the host."];
     for(i=0;i<pgs.std.length;i++){ var p1=pgs.std[i]; sp1.rows.push([p1.pg, p1.sw, p1.vlan, p1.uplinks||""]); } }
-  if(pgs.dvs.length){ var sp2=specSec("Distributed port groups &amp; VLANs (DVS)"+(pgs.dvsNames.length?(" - "+distinct(pgs.dvsNames).join(", ")):""),"tbl");
+  if(pgs.dvs.length){ var sp2=specSec("Distributed port groups & VLANs (DVS)"+(pgs.dvsNames.length?(" - "+distinct(pgs.dvsNames).join(", ")):""),"tbl");
     sp2.head=["Port group","dvPortgroup ID","Distributed switch","VLAN","Host ports","Port aliases (sample)"]; sp2.tips=["Distributed port group name.","dvPortgroup ID as referenced by the VMs.","The distributed switch it belongs to.","VLAN tag. 0 = untagged; 4095 = VGT/trunk.","How many ports this host has on the port group.","Sample of port aliases, to tie ports back to VMs."];
     for(i=0;i<pgs.dvs.length;i++){ var p2=pgs.dvs[i]; sp2.rows.push([p2.pgName||"-", p2.pg, p2.dvs||"", p2.vlan, String(p2.ports), p2.aliases||""]); } }
   // datastores
@@ -2864,7 +2864,7 @@ function buildSpecEsxi(){
   // vSAN & disk layout (recovery scoping)
   var vsds=readMember("commands/localcli_vsan-datastore-list.txt");
   var vsanOn = trimStr(vsds)!=="" && !/no such|not configured|error/i.test(vsds);
-  var stor=specSec("vSAN &amp; storage layout");
+  var stor=specSec("vSAN & storage layout");
   kvAdd(stor,"vSAN in use", vsanOn?"Yes":"No / not configured");
   if(trimStr(st)){ var srr=wsRows(st); for(i=0;i<srr.length;i++){ if(/vsan/i.test(srr[i][4]||"")){ var vz=parseInt(srr[i][5],10), vf=parseInt(srr[i][6],10);
     kvAdd(stor,"vSAN datastore", (srr[i][1]||"")+" - "+(isNaN(vz)?"":fmtSize(vz)+" total")+(isNaN(vf)?"":", "+fmtSize(vf)+" free")+((!isNaN(vz)&&!isNaN(vf))?(" ("+fmtSize(vz-vf)+" used)"):"")); } } }
@@ -3702,95 +3702,407 @@ function vmsExport(){
   try{ ensureDir(LASTOUTDIR); writeUtf8(p,out.join("\r\n")); setStatus("Exported "+lbl+" → "+p,"ok"); appendLog("VMs CSV: "+p); openInExplorer(p); }
   catch(e){ setStatus("VMs export failed: "+e.message,"err"); appendLog("VMs export error: "+e.message); } }
 
-/* ---------- case-note report (self-contained HTML) ---------- */
+/* ---------- report (self-contained HTML) ----------
+   The report is the offline copy of the SESSION: every tab the tool renders has a section here, in tab
+   order, so a reader who never opens the HTA sees what the analyst saw. Rules it follows:
+   - No silent caps. Where a table is bounded (REPORT_MAX) the row it stops at is stated in the section.
+   - The case window (/from /to) filters Logons / Sessions / Timeline HERE exactly as it does in the tab,
+     and every windowed section says so - a filtered count must never read as a total.
+   - "not captured" is never rendered as "clean": n/a stays n/a, same as the tabs. */
 function rEsc(s){ return esc(s); }
 function flagged(arr){ var o=[]; for(var i=0;i<arr.length;i++) if(arr[i].score>=3) o.push(arr[i]); return o; }
+var REPORT_MAX=ANMAXROWS;   // same bound the analysis tabs draw with
+function rScCls(s){ return s>=5?"s5":(s>=3?"s3":(s>=1?"s1":"s0")); }
+function rTags(r){ var h="", i, t=r.tags||[]; for(i=0;i<t.length;i++) h+='<span class="tg" title="'+rEsc((r.reasons||[]).join("; "))+'">'+rEsc(t[i])+'</span>'; return h; }
+function rScoreCell(r){ return '<td class="mono nw"><span class="sc '+rScCls(r.score)+'">'+r.score+'</span> '+rTags(r)+'</td>'; }
+function rRowCls(r){ return r.score>=5?' class="rf"':(r.score>=3?' class="rw"':''); }
+/* one place decides "is this row in the report", so a capped table can always say what it dropped */
+function rCapped(total){ return total>REPORT_MAX?REPORT_MAX:total; }
+function rCapNote(total,what){ return total>REPORT_MAX?('<p class="muted">Showing the first '+nf(REPORT_MAX)+' of '+nf(total)+' '+what+' (report cap). Export the tab to CSV for the complete set.</p>'):''; }
+function rWinLabel(){ var f="", t=""; try{ f=trimStr($("dfrom").value||""); t=trimStr($("dto").value||""); }catch(e){}
+  if(!f && !t) return ""; return "Case window "+(f||"(open)")+" to "+(t||"(open)")+" UTC"; }
+function rWinNote(){ var w=rWinLabel(); return w?(' <span class="muted">- filtered by the case window ('+rEsc(w)+'); this is a subset, not the total</span>'):''; }
+function rWinPass(r){ return !((DFROM||DTO) && r.epoch && !inWin(r.epoch)); }
+function rSection(id,title,sub){ return '<h2 id="'+id+'">'+rEsc(title)+(sub?(' <span class="sub">'+sub+'</span>'):'')+'</h2>'; }
 function buildReportHtml(){
   var d=new Date(); function p(x){return x<10?("0"+x):x;}
   var gen=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
-  var h=[];
-  h.push('<!doctype html><html><head><meta charset="utf-8"><title>vSphere Triage - '+rEsc(NODE.host||"")+'</title>');
-  h.push('<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1b2330;font-size:13px}h1{font-size:19px;margin:0 0 2px}h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:20px 0 8px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:200px}.hit{color:#b00020;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}.warn{color:#9a6700;font-weight:700}.mono{font-family:Consolas,monospace}.sev{font-weight:700}.muted{color:#6a7686}code{background:#f0f3f7;padding:1px 4px;border-radius:3px}</style></head><body>');
-  h.push('<h1>vSphere Support Bundle Triage - Case Notes</h1>');
-  h.push('<div class="muted">Host <b>'+rEsc(NODE.host||"?")+'</b> &middot; '+rEsc(NODE.type||"")+' &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>');
-  // node config
-  h.push('<h2>Node configuration</h2><table>');
-  var nf2=[["Bundle type",NODE.type],["Host",NODE.host],["Product",NODE.product],["Version",NODE.version],["Build",NODE.build],["Serial / service tag",NODE.serial],["Management IP",NODE.mgmtIp],["Web client",NODE.webUi],["Appliance mgmt (VAMI)",NODE.vami],["iDRAC / BMC IP",NODE.idrac],["Update",NODE.update],["VIB acceptance",NODE.acceptance],["Captured on",NODE.captured],["vm-support version",NODE.vmsupport],["Capture command",NODE.cmdline]];
-  for(var i=0;i<nf2.length;i++){ if(nf2[i][1]) h.push('<tr><td class="k">'+rEsc(nf2[i][0])+'</td><td class="mono">'+rEsc(nf2[i][1])+'</td></tr>'); }
+  var h=[], i, c, r, k;
+  /* Host FIRST: this is the tab title with several reports open, and long titles truncate - the host is
+     what tells them apart. The report name still follows it, because the browser stamps this string into
+     the header when the report is printed or saved as PDF. */
+  h.push('<!doctype html><html><head><meta charset="utf-8"><title>'+rEsc(NODE.host||"?")+' - vSphere Support Bundle Analysis Report</title>');
+  h.push('<meta name="viewport" content="width=device-width,initial-scale=1">');
+  /* The report is opened with WScript.Shell.Run, so the SHELL picks the viewer: a real browser, not the
+     HTA's Trident engine. The document may therefore use position:fixed / scroll-behavior / :target.
+     The BUILDER below still has to be ES3 (it runs inside the HTA) - only the OUTPUT is modern. */
+  /* color-scheme:light + an explicit body background are NOT cosmetic. The document sets a dark text
+     colour but used to set no background, so a viewer in dark mode (Edge/Chrome auto-dark, which the
+     shell picks, not us) painted the page dark and left the text dark navy on near-black: the report
+     was unreadable, while every element that happened to set its own background stayed light. Declaring
+     the scheme opts the document out of forced-dark, and the background makes it self-consistent. */
+  h.push('<style>:root{color-scheme:light}html{scroll-behavior:smooth}'
+    +'body{font-family:Segoe UI,Arial,sans-serif;margin:24px 24px 24px 254px;background:#fff;color:#1b2330;font-size:13px}h1{font-size:19px;margin:0 0 2px}'
+    +'h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:22px 0 8px;color:#0b2a5b}'
+    +'h3{font-size:13px;margin:10px 0 3px;color:#0b2a5b}h2 .sub{font-size:11px;font-weight:400;color:#6a7686;text-transform:none}'
+    +'table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}'
+    +'th{background:#eef2f7}.k{color:#5a6675;width:200px}.hit{color:#b00020;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}'
+    +'.warn{color:#9a6700;font-weight:700}.mono{font-family:Consolas,monospace}.nw{white-space:nowrap}.sev{font-weight:700}.muted{color:#6a7686}'
+    +'code{background:#f0f3f7;padding:1px 4px;border-radius:3px}'
+    /* navigation pane: fixed rail on screen, plain contents list on paper (a case note gets printed) */
+    +'.nav{position:fixed;top:0;left:0;bottom:0;width:206px;overflow-y:auto;background:#f7f9fc;border-right:1px solid #ccd2da;padding:14px 10px;font-size:12px;box-sizing:border-box}'
+    +'.nav .navh{font-weight:700;color:#0b2a5b;font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:0 6px 6px}'
+    +'.nav .navsub{color:#6a7686;font-size:10px;padding:0 6px 8px;border-bottom:1px solid #dfe4ea;margin-bottom:6px;word-break:break-all}'
+    +'.nav a{display:block;color:#0b57d0;text-decoration:none;padding:4px 6px;border-radius:4px;line-height:1.35;border-left:3px solid transparent}'
+    +'.nav a:hover{background:#e8eef8}'
+    +'.nav a.on{background:#e8eef8;border-left-color:#1f6feb;color:#0b2a5b;font-weight:600}'
+    +'.nav a .fl{float:right;color:#b00020;font-weight:700}'
+    +'@media print{.nav{position:static;width:auto;height:auto;border:1px solid #ccd2da;border-radius:6px;margin-bottom:14px;overflow:visible}'
+    +'.nav a{display:inline-block;color:#1b2330;border-left:0;margin-right:12px;padding:2px 4px}.nav a.on{background:none;font-weight:400}body{margin:24px}}'
+    +'@media screen and (max-width:820px){.nav{position:static;width:auto;height:auto;border-right:0;border:1px solid #ccd2da;border-radius:6px;margin-bottom:12px}'
+    +'.nav a{display:inline-block;margin-right:10px;border-left:0}body{margin:24px}}'
+    +'.sc{display:inline-block;min-width:16px;text-align:center;border-radius:3px;padding:0 4px;font-weight:700;color:#fff}'
+    +'.s5{background:#b00020}.s3{background:#c76a00}.s1{background:#1a7f37}.s0{background:#aab2bd}'
+    +'.tg{display:inline-block;border:1px solid #ccd2da;border-radius:8px;padding:0 5px;margin-left:3px;font-size:10px;color:#42505f;background:#fff}'
+    +'.rf{background:#fdeceb}.rw{background:#fdf6e6}.ioc td{background:#fdeceb}'
+    +'.pres{color:#1a7f37;font-weight:700}.abs{color:#b00020;font-weight:700}.absk{color:#9a6700;font-weight:700}'
+    +'.pre{white-space:pre-wrap;font-family:Consolas,monospace;font-size:11px;background:#f7f9fc;border:1px solid #ccd2da;border-radius:4px;padding:6px;margin:4px 0}'
+    +'</style></head><body>');
+  h.push('<h1>vSphere Support Bundle Analysis Report</h1>');
+  var win=rWinLabel();
+  h.push('<div class="muted">Host <b>'+rEsc(NODE.host||"?")+'</b> &middot; '+rEsc(NODE.type||"")+' &middot; generated '+gen+' &middot; tool v'+APP_VERSION
+    +' &middot; source '+(MODE==="toc"?("archive index ("+nf(TOC.length)+" entries)"):"extracted tree")
+    +(win?(' &middot; '+rEsc(win)):'')+'</div>');
+
+  /* Navigation pane. Built from the sections that actually have something to say, so the reader is never
+     sent to an empty anchor. The third element is a FINDINGS count: the rail doubles as the "where do I
+     look first" summary, so it counts only what demands attention (absent criticals, triggered
+     indicators, fails, flagged rows) - never row totals, which would make a quiet host look loud. */
+  var nfMiss=0; for(i=0;i<INVENTORY.length;i++) if(INVENTORY[i].key && !INVENTORY[i].present) nfMiss++;
+  var nfEnc=0; for(i=0;i<VMS.length;i++) if(VMS[i].enc) nfEnc++;
+  var nfCve=0; for(i=0;i<CVES.length;i++) if(CVES[i].verdict==="exposed") nfCve++;
+  var nfSec=0; for(i=0;i<SECPOST.length;i++) if(SECPOST[i].status==="fail") nfSec++;
+  var nfNet=(NETINFO&&NETINFO.captured)?(NETINFO.sus.length+NETINFO.ext.length):0;
+  var toc=[["r-node","Node configuration",0]];
+  if(MAINT.length) toc.push(["r-maint","Maintenance events",0]);
+  toc.push(["r-keyfiles","Key files",nfMiss]);
+  if(SPEC.length) toc.push(["r-spec","Specification",0]);
+  if(VMS.length) toc.push(["r-vms","Hosted VMs",nfEnc]);
+  if(VMEV.length) toc.push(["r-vmev","VM activity",0]);
+  if(NETINFO && NETINFO.captured) toc.push(["r-net","Network",nfNet]);
+  toc.push(["r-ind","Indicators",indHits()]);
+  if(CVES.length) toc.push(["r-cve","CVE exposure",nfCve]);
+  if(SECPOST.length) toc.push(["r-sec","Security posture",nfSec]);
+  toc.push(["r-persist","Persistence & tampering",persistHits()]);
+  toc.push(["r-logon","Logons",flagged(LOGON).length]);
+  if(SESSIONS.length) toc.push(["r-sess","Login sessions",0]);
+  toc.push(["r-act","Actions",flagged(ACTIONS).length]);
+  if(TIMELINE.length) toc.push(["r-time","Timeline",0]);
+  toc.push(["r-ioc","IOC hits",IOCHITS.length]);
+  toc.push(["r-prov","Evidence & provenance",0]);
+  var nh='<div class="nav" id="nav"><div class="navh">Contents</div>';
+  nh+='<div class="navsub">'+rEsc(NODE.host||"?")+'<br>'+rEsc(NODE.type||typeLabel())+'</div>';
+  for(i=0;i<toc.length;i++){ var tc=toc[i][2];
+    nh+='<a href="#'+toc[i][0]+'">'+rEsc(toc[i][1])
+      +(tc?('<span class="fl" title="'+tc+' item(s) in this section need attention">'+tc+'</span>'):'')+'</a>'; }
+  h.push(nh+'</div>');
+
+  /* ---- node configuration (mirrors the Overview card, derived fields carry their source) ---- */
+  h.push(rSection("r-node","Node configuration"));
+  h.push('<table>');
+  var nf2=[["Bundle type",NODE.type],["Host",NODE.host],["Product",NODE.product],["Version",NODE.version],["Build",NODE.build],
+    ["Installed",NODE.install?(NODE.install+(NODE.installSrc?("  (derived from "+NODE.installSrc+")"):"")):""],
+    ["Uptime",NODE.uptime?(NODE.uptime+(NODE.uptimeSrc?("  (source: "+NODE.uptimeSrc+")"):"")):""],
+    ["Booted",NODE.booted?(NODE.booted+"  (derived: capture time minus uptime)"):""],
+    ["Serial / service tag",NODE.serial],["Management IP",NODE.mgmtIp],
+    [BTYPE==="vcsa"?"vSphere Client (web)":"Web client (ESXi)",NODE.webUi],
+    ["Appliance mgmt (VAMI)",NODE.vami],["iDRAC / BMC IP",NODE.idrac],["Update",NODE.update],["VIB acceptance",NODE.acceptance],
+    ["Captured on",NODE.captured],["vm-support version",NODE.vmsupport],["Capture command",NODE.cmdline]];
+  for(i=0;i<nf2.length;i++){ if(nf2[i][1]) h.push('<tr><td class="k">'+rEsc(nf2[i][0])+'</td><td class="mono">'+rEsc(nf2[i][1])+'</td></tr>'); }
   h.push('</table>');
-  // specification
-  if(SPEC.length){ h.push('<h2>Specification</h2>');
-    for(i=0;i<SPEC.length;i++){ var sp=SPEC[i]; h.push('<h3 style="font-size:13px;margin:10px 0 3px;color:#0b2a5b">'+rEsc(sp.title)+'</h3>');
+
+  /* ---- maintenance events ---- */
+  if(MAINT.length){
+    h.push(rSection("r-maint","Maintenance events ("+nf(MAINT.length)+")",
+      BTYPE==="esxi"?"from the vobd audit log + rotations, newest first":"from the appliance patch log + vpxd service starts, newest first"));
+    h.push('<table><tr><th>When (UTC)</th><th>Kind</th><th>Event</th><th>Detail</th><th>Log</th></tr>');
+    for(i=0;i<MAINT.length;i++){ var mv=MAINT[i];
+      h.push('<tr><td class="mono nw">'+rEsc(mv.when)+'</td><td class="mono">'+rEsc(mv.kind)+'</td><td>'+rEsc(mv.what)+'</td>'
+        +'<td class="mono muted">'+rEsc(mv.detail||"-")+'</td><td class="mono muted">'+rEsc(mv.src)+'</td></tr>'); }
+    h.push('</table>');
+  }
+
+  /* ---- key files: the coverage verdict AND the board it came from ---- */
+  var present=0, keyN=0, keyP=0, miss=[];
+  for(i=0;i<INVENTORY.length;i++){ var iv=INVENTORY[i]; if(iv.present) present++; if(iv.key){ keyN++; if(iv.present) keyP++; else miss.push(iv.name); } }
+  h.push(rSection("r-keyfiles","Key files ("+nf(present)+" of "+nf(INVENTORY.length)+" present, "+nf(keyP)+" of "+nf(keyN)+" critical)"));
+  h.push('<p>'+(miss.length?('<span class="hit">Absent critical artifacts (each is itself a finding): '+rEsc(miss.join(", "))+'</span>'):'<span class="clear">All critical artifacts present.</span>')+'</p>');
+  if(INVENTORY.length){
+    h.push('<table><tr><th>Category</th><th>File</th><th>Description</th><th>Present</th><th>Size</th><th>Path in bundle</th></tr>');
+    for(i=0;i<INVENTORY.length;i++){ var it=INVENTORY[i];
+      var pcell = it.present?'<span class="pres">present</span>':('<span class="'+(it.key?"absk":"abs")+'">absent</span>');
+      var scell = it.present?(it.dir?(nf(it.count)+" files, "+fmtSize(it.size)):fmtSize(it.size)):"-";
+      h.push('<tr'+((it.key&&!it.present)?' class="rw"':'')+'><td class="muted">'+rEsc(it.cat)+'</td>'
+        +'<td>'+(it.key?'<b>':'')+rEsc(it.name)+(it.key?'</b>':'')+'</td>'
+        +'<td class="muted">'+rEsc(it.desc)+'</td><td>'+pcell+'</td>'
+        +'<td class="mono nw" style="text-align:right">'+rEsc(scell)+'</td>'
+        +'<td class="mono muted">'+rEsc(it.rel||(it.rels?it.rels.join(", "):""))+'</td></tr>'); }
+    h.push('</table><p class="muted">Bold = critical artifact for this bundle type. Sizes are read from the archive index.</p>');
+  }
+
+  /* ---- specification ---- */
+  if(SPEC.length){ h.push(rSection("r-spec","Specification"));
+    for(i=0;i<SPEC.length;i++){ var sp=SPEC[i]; h.push('<h3>'+rEsc(sp.title)+'</h3>');
       if(sp.kind==="tbl"){ if(!sp.rows.length){ h.push('<p class="muted">none captured</p>'); continue; }
-        h.push('<table><tr>'); for(var c=0;c<sp.head.length;c++) h.push('<th>'+rEsc(sp.head[c])+'</th>'); h.push('</tr>');
-        for(var r=0;r<sp.rows.length;r++){ h.push('<tr>'); for(c=0;c<sp.head.length;c++) h.push('<td class="mono">'+rEsc(sp.rows[r][c]||"")+'</td>'); h.push('</tr>'); } h.push('</table>'); }
+        h.push('<table><tr>'); for(c=0;c<sp.head.length;c++) h.push('<th>'+rEsc(sp.head[c])+'</th>'); h.push('</tr>');
+        for(r=0;r<sp.rows.length;r++){ h.push('<tr>'); for(c=0;c<sp.head.length;c++) h.push('<td class="mono">'+rEsc(sp.rows[r][c]||"")+'</td>'); h.push('</tr>'); } h.push('</table>'); }
       else { if(!sp.kv.length){ h.push('<p class="muted">not captured</p>'); continue; }
-        h.push('<table>'); for(var k=0;k<sp.kv.length;k++) h.push('<tr><td class="k">'+rEsc(sp.kv[k][0])+'</td><td class="mono">'+rEsc(sp.kv[k][1])+'</td></tr>'); h.push('</table>'); } } }
-  // hosted VMs
-  if(VMS.length){ var vrun=0,vcpu=0,vmem=0; for(i=0;i<VMS.length;i++){ if(VMS[i].running) vrun++; vcpu+=VMS[i].vcpu; vmem+=VMS[i].memMB; }
-    h.push('<h2>Hosted VMs ('+VMS.length+', '+vrun+' running, '+nf(vcpu)+' vCPU, '+fmtMB(vmem)+' vRAM)</h2>');
-    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks</th><th>Storage</th><th>Status</th></tr>');
-    for(i=0;i<VMS.length;i++){ var vm=VMS[i]; h.push('<tr><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td>'+vm.vcpu+'</td><td>'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono" title="'+rEsc(vm.disks.join(" | "))+'">'+vm.ndisk+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td><td'+(vm.enc?' class="hit"':(vm.running?'':' class="muted"'))+'>'+(vm.enc?("POSSIBLY ENCRYPTED - "+rEsc(vm.enc)):(vm.running?"running":(vm.status||"registered")))+'</td></tr>'); }
+        h.push('<table>'); for(k=0;k<sp.kv.length;k++) h.push('<tr><td class="k">'+rEsc(sp.kv[k][0])+'</td><td class="mono">'+rEsc(sp.kv[k][1])+'</td></tr>'); h.push('</table>'); } } }
+
+  /* ---- hosted VMs (full columns - the report is not the tab's Simplified view) ---- */
+  if(VMS.length){ var vrun=0,vcpu=0,vmem=0,venc=0;
+    for(i=0;i<VMS.length;i++){ if(VMS[i].running) vrun++; if(VMS[i].enc) venc++; vcpu+=VMS[i].vcpu; vmem+=VMS[i].memMB; }
+    h.push(rSection("r-vms","Hosted VMs ("+nf(VMS.length)+", "+vrun+" running, "+nf(vcpu)+" vCPU, "+fmtMB(vmem)+" vRAM"+(venc?(", "+venc+" possibly encrypted"):"")+")",
+      BTYPE==="vcsa"?"reconstructed from vpxd + DRS dumps + the vSAN-health baseline (a vc-support bundle has no .vmx)":"parsed from each registered .vmx; missing / ransom-renamed .vmx are still listed"));
+    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>Status</th></tr>');
+    for(i=0;i<VMS.length;i++){ var vm=VMS[i];
+      var dcell=vm.ndisk+(vm.disks&&vm.disks.length?(' - '+rEsc(vm.disks.join(", "))):'');
+      if(vm.diskDetail&&vm.diskDetail.length){ for(var dd=0;dd<vm.diskDetail.length;dd++) dcell+='<br><span class="muted" style="font-size:10px">'+rEsc(vm.diskDetail[dd].sum)+'</span>'; }
+      h.push('<tr'+(vm.enc?' class="rf"':'')+'><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td class="mono">'+vm.vcpu+'</td>'
+        +'<td class="mono nw">'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono">'+dcell+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td>'
+        +'<td'+(vm.enc?' class="hit"':(vm.running?'':' class="muted"'))+'>'+(vm.enc?("POSSIBLY ENCRYPTED - "+rEsc(vm.enc)):(vm.running?"running":(vm.status||"registered")))+'</td></tr>'); }
     h.push('</table>'); }
-  // key-file coverage
-  var present=0,miss=[]; for(i=0;i<INVENTORY.length;i++){ if(INVENTORY[i].present) present++; if(INVENTORY[i].key&&!INVENTORY[i].present) miss.push(INVENTORY[i].name); }
-  h.push('<h2>Key-file coverage</h2><p>'+present+' of '+INVENTORY.length+' curated artifacts present. ');
-  h.push(miss.length?('<span class="hit">Absent critical artifacts: '+rEsc(miss.join(", "))+'</span>'):'<span class="clear">All critical artifacts present.</span>');
-  h.push('</p>');
-  // indicators
-  h.push('<h2>Ransomware / intrusion indicators</h2>');
+
+  /* ---- VM activity events ---- */
+  if(VMEV.length){ var vcap=rCapped(VMEV.length);
+    h.push(rSection("r-vmev","VM activity ("+nf(VMEV.length)+" event(s))", VMEV_SRC?("parsed from "+rEsc(VMEV_SRC)):""));
+    h.push(rCapNote(VMEV.length,"VM events"));
+    h.push('<table><tr><th>When (UTC)</th><th>VM</th><th>Kind</th><th>Event</th><th>Method</th><th>Actor</th><th>Via</th><th>Log</th></tr>');
+    for(i=0;i<vcap;i++){ var ve=VMEV[i];
+      h.push('<tr><td class="mono nw">'+rEsc(ve.when)+'</td><td class="mono">'+rEsc(ve.vm)+'</td><td class="mono">'+rEsc(ve.kind)+'</td>'
+        +'<td>'+rEsc(ve.what)+'</td><td class="mono muted">'+rEsc(ve.method)+'</td><td class="mono">'+rEsc(ve.actor||"-")+'</td>'
+        +'<td class="mono muted">'+rEsc(trunc(ve.via||"-",40))+'</td><td class="mono muted">'+rEsc(ve.src)+'</td></tr>'); }
+    h.push('</table>'); }
+
+  /* ---- network ---- */
+  h.push(rSection("r-net","Network"));
+  if(!NETINFO || !NETINFO.captured){
+    h.push('<p class="muted">No socket capture in this bundle ('+(BTYPE==="esxi"?"localcli network ip connection list":"netstat -anp")+' not present). Not captured is not an assurance that nothing was listening.</p>');
+  } else {
+    h.push('<p>'+nf(NETINFO.listenN)+' listener(s), '+nf(NETINFO.netFacing)+' network-facing, '+NETINFO.ext.length+' established external connection(s)'
+      +(NETINFO.sus.length?(', <span class="hit">'+NETINFO.sus.length+' suspicious process(es)</span>'):'')
+      +(NETINFO.web?(', '+nf(NETINFO.web.reqs)+' web request(s)'):'')+'.</p>');
+    var w=NETINFO.web;
+    if(w){ var esxiWeb=(w.kind==="esxi"), unit=esxiWeb?"connection":"request";
+      h.push('<h3>'+rEsc(w.title||"Web access summary")+'</h3>');
+      h.push('<p class="muted">'+nf(w.reqs)+' '+unit+'(s)'+(w.truncated?" (newest ~12MB of the log sampled)":"")+' from '+w.ips.length+' client IP(s), '
+        +w.external.length+' external'+(esxiWeb?'':(', '+w.err+' 4xx/5xx'))+', via '+rEsc(w.file)+'. Loopback clients are the appliance\'s own services and are included here.</p>');
+      if(w.sus.length){ h.push('<p class="hit">'+w.sus.length+' request(s) match web-attack patterns:</p><div class="pre">');
+        for(i=0;i<w.sus.length;i++) h.push(rEsc(w.sus[i].ip+"  "+w.sus[i].meth+" "+w.sus[i].code+"  "+w.sus[i].path));
+        h.push('</div>'); }
+      if(w.ips.length){ h.push('<table><tr><th>Client IP</th><th>Scope</th><th>'+(esxiWeb?"Connections":"Requests")+'</th><th>Errors</th><th>Methods</th></tr>');
+        for(i=0;i<w.ips.length;i++){ var ci=w.ips[i];
+          h.push('<tr'+(ci.ext?' class="rw"':'')+'><td class="mono">'+rEsc(ci.ip)+'</td>'
+            +'<td'+(ci.ext?' class="warn"':' class="muted"')+'>'+(ci.ext?"external (public)":"private/local")+'</td>'
+            +'<td class="mono">'+nf(ci.n)+'</td><td class="mono'+(ci.err?' hit':'')+'">'+ci.err+'</td>'
+            +'<td class="mono muted">'+rEsc(ci.methods)+'</td></tr>'); }
+        h.push('</table>'); }
+      var rec=w.recent||[];
+      if(rec.length){ var rcap=rCapped(rec.length);
+        h.push('<h3>'+(esxiWeb?"Recent connections":"Recent web requests")+' ('+nf(rec.length)+', newest first)</h3>');
+        h.push(rCapNote(rec.length,(esxiWeb?"connections":"requests")));
+        if(esxiWeb) h.push('<table><tr><th>When (UTC)</th><th>Source IP</th><th>Protocol</th><th>Service / path</th></tr>');
+        else h.push('<table><tr><th>When (UTC)</th><th>Source IP</th><th>Method</th><th>Response</th><th>Path</th><th>Operation / UA</th></tr>');
+        for(i=0;i<rcap;i++){ var rq=rec[i]; var ec=/^[45]/.test(rq.code);
+          if(esxiWeb) h.push('<tr'+(rq.ext?' class="rw"':'')+'><td class="mono nw">'+rEsc(rq.ts)+'</td><td class="mono'+(rq.ext?' warn':'')+'">'+rEsc(rq.ip)+'</td>'
+            +'<td class="mono">'+rEsc(rq.meth)+'</td><td class="mono">'+rEsc(trunc(rq.path,110))+'</td></tr>');
+          else h.push('<tr'+(rq.ext?' class="rw"':'')+'><td class="mono nw">'+rEsc(rq.ts)+'</td><td class="mono'+(rq.ext?' warn':'')+'">'+rEsc(rq.ip)+'</td>'
+            +'<td class="mono">'+rEsc(rq.meth)+'</td><td class="mono'+(ec?' hit':'')+'">'+rEsc(rq.code)+'</td>'
+            +'<td class="mono">'+rEsc(trunc(rq.path,110))+'</td><td class="mono muted">'+rEsc(trunc(rq.op,60))+'</td></tr>'); }
+        h.push('</table>'); }
+    }
+    if(NETINFO.sus.length){ h.push('<h3 class="hit">Suspicious processes ('+NETINFO.sus.length+') - attacker-tool / reverse-shell patterns</h3><div class="pre">');
+      for(i=0;i<NETINFO.sus.length;i++) h.push(rEsc(NETINFO.sus[i]));
+      h.push('</div>'); }
+    h.push('<h3>External connections ('+NETINFO.ext.length+')</h3>');
+    if(!NETINFO.ext.length) h.push('<p class="muted">None - every established session is to a private/local address.</p>');
+    else { h.push('<table><tr><th>Proto</th><th>Local</th><th>Foreign (external)</th><th>Process</th></tr>');
+      for(i=0;i<NETINFO.ext.length;i++){ var ne=NETINFO.ext[i];
+        h.push('<tr class="rf"><td class="mono">'+rEsc(ne.proto)+'</td><td class="mono">'+rEsc(ne.local)+'</td>'
+          +'<td class="mono">'+rEsc(ne.foreign)+'</td><td class="mono">'+rEsc(ne.proc)+'</td></tr>'); }
+      h.push('</table>'); }
+    h.push('<h3>Listening services ('+nf(NETINFO.listenN)+', '+nf(NETINFO.netFacing)+' network-facing)</h3>');
+    h.push('<p class="muted">Loopback-only listeners are hidden by default in the tab; the report lists all of them.</p>');
+    h.push('<table><tr><th>Proto</th><th>Local address</th><th>Scope</th><th>Process</th></tr>');
+    for(i=0;i<NETINFO.listen.length;i++){ var ls=NETINFO.listen[i]; var nfc=ls.scope.indexOf("network")===0;
+      h.push('<tr><td class="mono">'+rEsc(ls.proto)+'</td><td class="mono">'+rEsc(ls.local)+'</td>'
+        +'<td'+(nfc?' class="warn"':' class="muted"')+'>'+rEsc(ls.scope)+'</td><td class="mono">'+rEsc(ls.proc)+'</td></tr>'); }
+    h.push('</table>');
+  }
+
+  /* ---- indicators ---- */
+  h.push(rSection("r-ind","Ransomware / intrusion indicators"+(INDIC.length?(" ("+indHits()+" of "+INDIC.length+" triggered)"):"")));
   if(INDIC.length){ h.push('<table><tr><th>Indicator</th><th>Status</th><th>Evidence</th></tr>');
-    for(i=0;i<INDIC.length;i++){ var it=INDIC[i]; var cls=it.status==="hit"?"hit":(it.status==="na"?"na":"clear"); var lbl=it.status==="hit"?"TRIGGERED":(it.status==="na"?"n/a":"clear");
-      h.push('<tr><td>'+rEsc(it.name)+'</td><td class="'+cls+'">'+lbl+'</td><td class="muted">'+rEsc(it.detail)+'</td></tr>'); }
-    h.push('</table><p class="muted">'+indHits()+' indicator(s) triggered.</p>'); }
+    for(i=0;i<INDIC.length;i++){ var ind=INDIC[i]; var cls=ind.status==="hit"?"hit":(ind.status==="na"?"na":"clear"); var lbl=ind.status==="hit"?"TRIGGERED":(ind.status==="na"?"n/a":"clear");
+      h.push('<tr'+(ind.status==="hit"?' class="rf"':'')+'><td>'+rEsc(ind.name)+'</td><td class="'+cls+'">'+lbl+'</td><td class="muted">'+rEsc(ind.detail)+'</td></tr>'); }
+    h.push('</table><p class="muted">n/a means the source was not captured in this bundle. It is never an assurance that the thing is clean.</p>'); }
   else h.push('<p class="muted">No indicator set for this bundle type.</p>');
-  // CVEs
-  h.push('<h2>CVE exposure <span class="muted">(advisory - verify against the linked VMSA)</span></h2>');
-  if(CVES.length){ h.push('<table><tr><th>CVE</th><th>VMSA</th><th>Summary</th><th>Status</th><th>Basis</th></tr>');
-    for(i=0;i<CVES.length;i++){ var c=CVES[i]; var vc=(c.verdict==="exposed")?"hit":(c.verdict==="review"?"warn":(c.verdict==="na"?"na":"clear"));
-      h.push('<tr><td class="mono"><a href="'+rEsc(cveUrl(c.id))+'" target="_blank">'+rEsc(c.id)+'</a></td><td class="mono"><a href="'+rEsc(vmsaUrl(c.vmsa))+'" target="_blank">'+rEsc(c.vmsa)+'</a></td><td>'+rEsc(c.title)+'</td><td class="'+vc+'">'+rEsc(c.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(c.basis)+'</td></tr>'); }
+
+  /* ---- CVEs ---- */
+  if(CVES.length){ h.push(rSection("r-cve","CVE exposure","advisory - verify against the linked VMSA"));
+    h.push('<table><tr><th>CVE</th><th>VMSA</th><th>Summary</th><th>Status</th><th>Basis</th></tr>');
+    for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=(cv.verdict==="exposed")?"hit":(cv.verdict==="review"?"warn":(cv.verdict==="na"?"na":"clear"));
+      h.push('<tr'+(cv.verdict==="exposed"?' class="rf"':'')+'><td class="mono"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
+        +'<td class="mono"><a href="'+rEsc(vmsaUrl(cv.vmsa))+'" target="_blank">'+rEsc(cv.vmsa)+'</a></td><td>'+rEsc(cv.title)+'</td>'
+        +'<td class="'+vc+'">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td></tr>'); }
     h.push('</table>'); }
-  // persistence & tampering
-  h.push('<h2>Persistence &amp; tampering ('+persistHits()+' flagged / '+PERSIST.length+' checks)</h2>');
-  if(PERSIST.length){ h.push('<table><tr><th>Category</th><th>Finding</th><th>Verdict</th><th>Detail</th></tr>');
-    for(i=0;i<PERSIST.length;i++){ var pp=PERSIST[i]; var pc=pp.verdict==="suspect"?"hit":(pp.verdict==="review"?"warn":(pp.verdict==="na"?"na":"clear"));
-      h.push('<tr><td class="muted">'+rEsc(pp.cat)+'</td><td>'+rEsc(pp.name)+'</td><td class="'+pc+'">'+rEsc(persistLbl(pp.verdict))+'</td><td class="muted">'+rEsc(pp.detail)+'</td></tr>'); }
-    h.push('</table>'); }
-  else h.push('<p class="muted">No persistence checks for this bundle type.</p>');
-  // security posture
+
+  /* ---- security posture ---- */
   if(SECPOST.length){ var ssc=secScoreOf();
-    h.push('<h2>Security posture ('+ssc.p+' of '+ssc.t+' checkable controls at best practice)</h2>');
+    h.push(rSection("r-sec","Security posture ("+ssc.p+" of "+ssc.t+" checkable controls at best practice)"));
     h.push('<p class="muted">Graded against config captures and parsed log evidence. Not-captured sources are n/a, never assumed compliant; verdicts are advisory.</p>');
     h.push('<table><tr><th>Group</th><th>Control</th><th>Status</th><th>Detail</th></tr>');
-    for(i=0;i<SECPOST.length;i++){ var sp=SECPOST[i]; var scls=sp.status==="fail"?"hit":(sp.status==="warn"?"warn":(sp.status==="na"?"na":"clear"));
-      h.push('<tr><td>'+rEsc(sp.grp)+'</td><td>'+rEsc(sp.name)+'</td><td class="'+scls+'">'+rEsc(sp.status==="na"?"n/a":sp.status.toUpperCase())+'</td><td>'+rEsc(sp.detail)+'</td></tr>'); }
+    for(i=0;i<SECPOST.length;i++){ var sc2=SECPOST[i]; var scls=sc2.status==="fail"?"hit":(sc2.status==="warn"?"warn":(sc2.status==="na"?"na":"clear"));
+      h.push('<tr'+(sc2.status==="fail"?' class="rf"':(sc2.status==="warn"?' class="rw"':''))+'><td>'+rEsc(sc2.grp)+'</td><td>'+rEsc(sc2.name)+'</td>'
+        +'<td class="'+scls+'">'+rEsc(sc2.status==="na"?"n/a":sc2.status.toUpperCase())+'</td><td>'+rEsc(sc2.detail)+'</td></tr>'); }
     h.push('</table>');
-    if(VIBS_NOTABLE.length){ h.push('<h3>Third-party &amp; non-standard VIBs ('+VIBS_NOTABLE.length+' of '+VIBS.length+')</h3>');
+    if(VIBS_NOTABLE.length){ h.push('<h3>Third-party &amp; non-standard VIBs ('+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages)</h3>');
+      h.push('<p class="muted">VMwareCertified VMware VIBs are omitted. Confirm any unsigned / unrecognized-vendor / recently-added entry.</p>');
       h.push('<table><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr>');
-      for(i=0;i<VIBS_NOTABLE.length;i++){ var vb=VIBS_NOTABLE[i]; var vc=vb.trust===0?"hit":((vb.trust===1||!vb.known)?"warn":"");
-        h.push('<tr><td class="mono">'+rEsc(vb.name)+'</td><td class="mono">'+rEsc(vb.ver)+'</td><td class="mono'+(vc?" "+vc:"")+'">'+rEsc(vb.vendor)+(vb.known||vb.vmware?"":" (unknown)")+'</td><td class="'+vc+'">'+rEsc(vb.acc)+'</td><td class="mono">'+rEsc(vb.date)+'</td></tr>'); }
+      for(i=0;i<VIBS_NOTABLE.length;i++){ var vb=VIBS_NOTABLE[i]; var vbc=vb.trust===0?"hit":((vb.trust===1||!vb.known)?"warn":"");
+        h.push('<tr'+(vb.trust===0?' class="rf"':'')+'><td class="mono">'+rEsc(vb.name)+'</td><td class="mono">'+rEsc(vb.ver)+'</td>'
+          +'<td class="mono'+(vbc?" "+vbc:"")+'">'+rEsc(vb.vendor)+(vb.known||vb.vmware?"":" (unknown)")+'</td>'
+          +'<td class="'+vbc+'">'+rEsc(vb.acc)+'</td><td class="mono">'+rEsc(vb.date)+'</td></tr>'); }
       h.push('</table>'); } }
-  // logon summary
+
+  /* ---- persistence ---- */
+  h.push(rSection("r-persist","Persistence & tampering ("+persistHits()+" flagged / "+PERSIST.length+" checks)"));   // rSection escapes the title - pass a literal &
+  if(PERSIST.length){ h.push('<table><tr><th>Category</th><th>Finding</th><th>Verdict</th><th>Detail</th><th>File</th></tr>');
+    for(i=0;i<PERSIST.length;i++){ var pp=PERSIST[i]; var pc=persistCls(pp.verdict);
+      h.push('<tr'+(pp.verdict==="suspect"?' class="rf"':(pp.verdict==="review"?' class="rw"':''))+'><td class="muted">'+rEsc(pp.cat)+'</td><td>'+rEsc(pp.name)+'</td>'
+        +'<td class="'+pc+'">'+rEsc(persistLbl(pp.verdict))+'</td><td class="muted">'+rEsc(pp.detail)+'</td>'
+        +'<td class="mono muted">'+rEsc(pp.rel||"-")+'</td></tr>'); }
+    h.push('</table><p class="muted">n/a means the source was not captured, not that the check passed.</p>'); }
+  else h.push('<p class="muted">No persistence checks for this bundle type.</p>');
+
+  /* ---- logons (all rows, window-filtered exactly as the tab is) ---- */
   var ext=logonExternal();
-  h.push('<h2>Logon summary</h2><p>'+LOGON.length+' login event(s); '+logonFail()+' failed; '+ext.n+' from external IP'+(ext.ips.length?(' ('+rEsc(ext.ips.slice(0,8).join(", "))+')'):'')+'.</p>');
-  var lf=flagged(LOGON);
-  if(lf.length){ h.push('<table><tr><th>When (UTC)</th><th>Result</th><th>User</th><th>Source IP</th><th>Method</th><th>Tags</th></tr>');
-    for(i=0;i<lf.length && i<60;i++){ var r=lf[i]; h.push('<tr><td class="mono">'+rEsc(r.when)+'</td><td>'+rEsc(r.result)+'</td><td class="mono">'+rEsc(r.user)+'</td><td class="mono">'+rEsc(r.ip)+'</td><td>'+rEsc(r.method)+'</td><td class="mono">'+rEsc(r.tags.join(","))+'</td></tr>'); }
+  var lrows=[]; for(i=0;i<LOGON.length;i++) if(rWinPass(LOGON[i])) lrows.push(LOGON[i]);
+  h.push(rSection("r-logon","Logons ("+nf(lrows.length)+")",rWinLabel()?rEsc(rWinLabel()):""));
+  h.push('<p>'+nf(LOGON.length)+' login event(s) parsed; '+logonFail()+' failed; '+ext.n+' from an external IP'
+    +(ext.ips.length?(' ('+rEsc(ext.ips.join(", "))+')'):'')+'; '+flagged(LOGON).length+' flagged (score 3+).'
+    +(rWinLabel()?(' <span class="muted">The table below is filtered to the case window; the counts in this line are for the whole captured window.</span>'):'')+'</p>');
+  if(BF && (BF.bursts.length||BF.sprays.length||BF.breaches.length)){
+    h.push('<h3 class="hit">Brute-force / password-spray detection</h3>');
+    h.push('<table><tr><th>Pattern</th><th>Source IP</th><th>Detail</th><th>Worst window began (UTC)</th></tr>');
+    for(i=0;i<BF.breaches.length;i++) h.push('<tr class="rf"><td class="hit">BREACH</td><td class="mono">'+rEsc(BF.breaches[i].ip)+'</td>'
+      +'<td>successful login as <b>'+rEsc(BF.breaches[i].user)+'</b> from an IP that was guessing - treat as compromised</td><td class="mono nw">'+rEsc(BF.breaches[i].when)+'</td></tr>');
+    for(i=0;i<BF.bursts.length;i++) h.push('<tr class="rf"><td class="hit">BURST</td><td class="mono">'+rEsc(BF.bursts[i].ip||"(local)")+'</td>'
+      +'<td>'+BF.bursts[i].n+' failures for <b>'+rEsc(BF.bursts[i].user)+'</b> within '+BF_WIN+'s'+(BF.bursts[i].ext?" (external source)":"")+'</td>'
+      +'<td class="mono nw">'+rEsc(BF.bursts[i].when)+'</td></tr>');
+    for(i=0;i<BF.sprays.length;i++) h.push('<tr class="rf"><td class="hit">SPRAY</td><td class="mono">'+rEsc(BF.sprays[i].ip)+'</td>'
+      +'<td>'+BF.sprays[i].users+' distinct users tried within '+BF_SPRAY_WIN+'s'+(BF.sprays[i].ext?" (external source)":"")+'</td>'
+      +'<td class="mono nw">'+rEsc(BF.sprays[i].when)+'</td></tr>');
+    h.push('</table>');
+  } else if(BF){
+    h.push('<p class="muted">No brute-force burst or password spray met threshold ('+BF_FAILS+' failures per user/IP in '+BF_WIN+'s, '+BF_FAILS_EXT+' from an external IP, or '+BF_SPRAY_USERS+' distinct users from one IP in '+BF_SPRAY_WIN+'s). Worst observed: '+BF.worstBurst+' failure(s) in a burst window, '+BF.worstSpray+' distinct user(s) from one IP.</p>');
+  }
+  if(lrows.length){ var lcap=rCapped(lrows.length); h.push(rCapNote(lrows.length,"logons"));
+    h.push('<table><tr><th>Score / tags</th><th>When (UTC)</th><th>Result</th><th>User</th><th>Source IP</th><th>Method</th><th>Log</th></tr>');
+    for(i=0;i<lcap;i++){ var lg=lrows[i];
+      h.push('<tr'+rRowCls(lg)+'>'+rScoreCell(lg)+'<td class="mono nw">'+rEsc(lg.when)+'</td><td class="mono">'+rEsc(lg.result)+'</td>'
+        +'<td class="mono">'+rEsc(lg.user)+'</td><td class="mono">'+rEsc(lg.ip||"(local)")+'</td>'
+        +'<td class="mono muted">'+rEsc(lg.method)+'</td><td class="mono muted">'+rEsc(lg.src)+'</td></tr>'); }
     h.push('</table>'); }
-  // action highlights
-  var af=flagged(ACTIONS);
-  h.push('<h2>Flagged actions ('+af.length+')</h2>');
-  if(af.length){ h.push('<table><tr><th>When (UTC)</th><th>Actor</th><th>Action / command</th><th>Tags</th></tr>');
-    for(i=0;i<af.length && i<120;i++){ var a=af[i]; h.push('<tr><td class="mono">'+rEsc(a.when)+'</td><td class="mono">'+rEsc(a.actor)+'</td><td class="mono">'+rEsc(trunc(a.cmd,160))+'</td><td class="mono">'+rEsc(a.tags.join(","))+'</td></tr>'); }
+  else h.push('<p class="muted">No login events'+(rWinLabel()?" in the case window":"")+' (auth.log / hostd / websso). A quiet or short-window bundle can legitimately have none.</p>');
+
+  /* ---- login sessions ---- */
+  if(SESSIONS.length){ var srows=[]; for(i=0;i<SESSIONS.length;i++) if(rWinPass(SESSIONS[i])) srows.push(SESSIONS[i]);
+    h.push(rSection("r-sess","Login sessions ("+nf(srows.length)+")","login paired to logout"+(rWinLabel()?("; "+rEsc(rWinLabel())):"")+"; loopback and brief sessions are hidden in the tab, listed here"));
+    var scap=rCapped(srows.length); h.push(rCapNote(srows.length,"sessions"));
+    h.push('<table><tr><th>Login (UTC)</th><th>Logout (UTC)</th><th>Duration</th><th>User</th><th>Source IP</th><th>Session ID</th><th>Via / client</th><th>Log</th></tr>');
+    for(i=0;i<scap;i++){ var se=srows[i]; var sext=se.ip&&!ipIsLocal(se.ip);
+      h.push('<tr'+(sext?' class="rw"':'')+'><td class="mono nw'+(se.inTs?'':' muted')+'">'+rEsc(se.inTs||"(pre-window)")+'</td>'
+        +'<td class="mono nw'+(se.outTs?'':' muted')+'">'+rEsc(se.outTs||"-")+'</td>'
+        +'<td class="mono nw">'+rEsc(fmtDur(se.dur)||"-")+'</td>'
+        +'<td class="mono">'+rEsc(se.user||"(unknown)")+(se.sol?' <span class="tg">svc</span>':'')+'</td>'
+        +'<td class="mono'+(sext?' warn':'')+'">'+rEsc(se.ip||"-")+'</td>'
+        +'<td class="mono muted">'+rEsc(se.sess)+'</td><td class="mono muted">'+rEsc(trunc(se.via,50))+'</td>'
+        +'<td class="mono muted">'+rEsc(se.src)+'</td></tr>'); }
+    h.push('</table><p class="muted">A blank logout means the session was never paired: still active at capture, started before the log window, or a failed login. An API session is any client, not only an interactive human.</p>'); }
+
+  /* ---- actions ---- */
+  var acap=rCapped(ACTIONS.length);
+  h.push(rSection("r-act","Actions ("+nf(ACTIONS.length)+", "+flagged(ACTIONS).length+" flagged)"));
+  if(ACTIONS.length){ h.push(rCapNote(ACTIONS.length,"actions"));
+    h.push('<table><tr><th>Score / tags</th><th>When (UTC)</th><th>Actor</th><th>Action / command</th><th>Kind</th><th>Log</th></tr>');
+    for(i=0;i<acap;i++){ var ac=ACTIONS[i];
+      h.push('<tr'+rRowCls(ac)+'>'+rScoreCell(ac)+'<td class="mono nw">'+rEsc(ac.when)+'</td><td class="mono">'+rEsc(ac.actor)+'</td>'
+        +'<td class="mono">'+rEsc(trunc(ac.cmd,220))+'</td><td class="mono muted">'+rEsc(ac.akind)+'</td>'
+        +'<td class="mono muted">'+rEsc(ac.src)+'</td></tr>'); }
+    h.push('</table><p class="muted">vCenter actors are the nearest preceding human SAML login (approximate) or the service account.</p>'); }
+  else h.push('<p class="muted">No actions parsed. ESXi = shell.log commands; vCenter = vpxd mutating operations + sudo. A healthy vCenter with no VM changes in the captured window shows none.</p>');
+
+  /* ---- timeline ---- */
+  if(TIMELINE.length){ var trows=[]; for(i=0;i<TIMELINE.length;i++) if(rWinPass(TIMELINE[i])) trows.push(TIMELINE[i]);
+    var tcap=rCapped(trows.length);
+    h.push(rSection("r-time","Timeline ("+nf(trows.length)+")","logons and actions merged, time-ordered"+(rWinLabel()?("; "+rEsc(rWinLabel())):"")));
+    h.push(rCapNote(trows.length,"timeline events"));
+    h.push('<table><tr><th>Score / tags</th><th>When (UTC)</th><th>Kind</th><th>Detail</th><th>Log</th></tr>');
+    for(i=0;i<tcap;i++){ var tr=trows[i];
+      h.push('<tr'+rRowCls(tr)+'>'+rScoreCell(tr)+'<td class="mono nw">'+rEsc(tr.when)+'</td><td class="mono">'+rEsc(tr.kind)+'</td>'
+        +'<td class="mono">'+rEsc(trunc(tr.detail,220))+'</td><td class="mono muted">'+rEsc(tr.src)+'</td></tr>'); }
     h.push('</table>'); }
-  else h.push('<p class="muted">No actions scored suspicious.</p>');
-  // IOC
-  h.push('<h2>IOC hits ('+IOCHITS.length+')</h2>');
-  if(IOCHITS.length){ h.push('<table><tr><th>Log</th><th>Line</th><th>IOC</th><th>Excerpt</th></tr>');
-    for(i=0;i<IOCHITS.length && i<200;i++){ var x=IOCHITS[i]; h.push('<tr><td class="mono">'+rEsc(x.file)+'</td><td>'+rEsc(x.line)+'</td><td class="mono">'+rEsc(x.ioc)+'</td><td class="mono">'+rEsc(trunc(x.excerpt,140))+'</td></tr>'); }
+
+  /* ---- IOC ---- */
+  var icap=rCapped(IOCHITS.length);
+  h.push(rSection("r-ioc","IOC hits ("+nf(IOCHITS.length)+")",IOCS.length?(nf(IOCS.length)+" IOC term(s) swept across the key logs present in this bundle"):""));
+  if(!IOCS.length) h.push('<p class="muted">No IOC terms loaded (no IOC.txt / IOC.csv next to the app), so no sweep ran. This is not a clean result.</p>');
+  else if(!IOCHITS.length) h.push('<p class="clear">No IOC hits in the swept key logs.</p>');
+  else { h.push(rCapNote(IOCHITS.length,"IOC hits"));
+    h.push('<table><tr><th>Log</th><th>Line</th><th>IOC</th><th>Excerpt</th></tr>');
+    for(i=0;i<icap;i++){ var x=IOCHITS[i];
+      h.push('<tr class="ioc"><td class="mono">'+rEsc(x.file)+'</td><td class="mono" style="text-align:right">'+rEsc(x.line)+'</td>'
+        +'<td class="mono">'+rEsc(x.ioc)+'</td><td class="mono">'+rEsc(trunc(x.excerpt,180))+'</td></tr>'); }
     h.push('</table>'); }
-  else h.push('<p class="muted">No IOC hits (or no IOC.txt loaded).</p>');
-  h.push('<p class="muted" style="margin-top:24px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'. CVE section is advisory; confirm builds against the linked VMSA. Times UTC.</p>');
+
+  /* ---- provenance: what was read, and what was NOT read in full ---- */
+  h.push(rSection("r-prov","Evidence & provenance"));
+  h.push('<table>');
+  h.push('<tr><td class="k">Bundle</td><td class="mono">'+rEsc(MODE==="toc"?ARCHIVE:ROOT)+'</td></tr>');
+  h.push('<tr><td class="k">Read mode</td><td class="mono">'+(MODE==="toc"?("archive index, "+nf(TOC.length)+" entries"):"extracted tree")+'</td></tr>');
+  h.push('<tr><td class="k">Output folder</td><td class="mono">'+rEsc(LASTOUTDIR)+'</td></tr>');
+  if(win) h.push('<tr><td class="k">Case window</td><td class="mono">'+rEsc(win)+'</td></tr>');
+  h.push('<tr><td class="k">Per-log read cap</td><td class="mono">'+fmtSize(LOGCAP)+'</td></tr>');
+  h.push('</table>');
+  if(LOG_TRUNC.length){ h.push('<p class="warn">'+LOG_TRUNC.length+' log(s) exceeded the read cap and were read only from the START of the file, so the NEWEST entries in them are absent from this report:</p><div class="pre">');
+    for(i=0;i<LOG_TRUNC.length;i++) h.push(rEsc(LOG_TRUNC[i]));
+    h.push('</div>'); }
+  else h.push('<p class="muted">No log hit the read cap; every parsed log was read in full.</p>');
+
+  h.push('<p class="muted" style="margin-top:24px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'. The CVE and security-posture sections are advisory; confirm builds against the linked VMSA. All times UTC.</p>');
+  /* Scroll-spy for the nav pane: marks the section you are reading, and keeps that link in view inside
+     the rail. Progressive enhancement only - the links are plain anchors, so navigation still works with
+     script disabled or blocked.
+     A literal closing script tag here would CLOSE THE HTA'S OWN SCRIPT BLOCK when the parser reads this
+     file (the HTML parser does not care that it sits inside a JScript string), so it is written escaped
+     as "<\/script>" - which emits the correct tag into the report at runtime. */
+  h.push('<script>(function(){'
+    +'var n=document.getElementById("nav");if(!n)return;'
+    +'var as=n.getElementsByTagName("a"),s=[],i;'
+    +'for(i=0;i<as.length;i++){var e=document.getElementById(as[i].getAttribute("href").substring(1));if(e)s.push({a:as[i],e:e});}'
+    +'if(!s.length)return;'
+    +'function absTop(e){var y=0;while(e){y+=e.offsetTop;e=e.offsetParent;}return y;}'
+    +'function upd(){var sy=window.pageYOffset||document.documentElement.scrollTop||0,c=0,i;'
+    +'for(i=0;i<s.length;i++){if(absTop(s[i].e)<=sy+96)c=i;}'
+    /* At the document bottom the scroll clamps, so any section sitting in that last viewport can never
+       cross the trigger line and would never highlight - the final section (short by nature) worst of
+       all. Once we are at the end, mark the last section that has actually come into view instead. */
+    +'if(sy+window.innerHeight>=(document.documentElement.scrollHeight-2)){'
+    +'for(i=s.length-1;i>=0;i--){if(absTop(s[i].e)<=sy+window.innerHeight){c=i;break;}}}'
+    +'for(i=0;i<s.length;i++)s[i].a.className=(i===c)?"on":"";'
+    +'var el=s[c].a;if(el.offsetTop<n.scrollTop||el.offsetTop>n.scrollTop+n.clientHeight-30)n.scrollTop=Math.max(0,el.offsetTop-40);}'
+    +'upd();window.onscroll=upd;window.onresize=upd;})();<\/script>');
   h.push('</body></html>');
   return h.join("\n");
 }
@@ -3799,7 +4111,7 @@ function buildSpecHtml(){
   var d=new Date(); function p(x){return x<10?("0"+x):x;}
   var gen=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
   var h=['<!doctype html><html><head><meta charset="utf-8"><title>Node Specification - '+rEsc(NODE.host||"")+'</title>',
-    '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1b2330;font-size:13px}h1{font-size:19px;margin:0 0 2px}h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:18px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:10px 0 3px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:220px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}</style></head><body>',
+    '<style>:root{color-scheme:light}body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#fff;color:#1b2330;font-size:13px}h1{font-size:19px;margin:0 0 2px}h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:18px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:10px 0 3px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:220px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}</style></head><body>',
     '<h1>Node Specification - '+rEsc(NODE.host||"?")+'</h1>',
     '<div class="muted">'+rEsc(NODE.type||"")+' &middot; '+rEsc((NODE.product||"")+" "+(NODE.version||"")+" build "+(NODE.build||""))+' &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>'];
   h.push('<h2>Node configuration</h2><table>');
@@ -3835,7 +4147,7 @@ function buildSecurityHtml(){
   var gen=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
   var sc=secScoreOf(), i;
   var h=['<!doctype html><html><head><meta charset="utf-8"><title>Security Report - '+rEsc(NODE.host||"")+'</title>',
-    '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:20px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:12px 0 4px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:210px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}.hit{color:#b00020;font-weight:700}.warn{color:#9a6700;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}.box{border:1px solid #ccd2da;border-radius:8px;padding:10px 14px;margin:8px 0;background:#f7f9fc}.score{font-size:22px;font-weight:700}.pill{display:inline-block;border-radius:12px;padding:1px 9px;font-size:11px;font-weight:700;margin-right:6px}.pf{background:#fde8e8;color:#b00020}.pw{background:#fdf4e3;color:#9a6700}.pp{background:#e6f4ea;color:#1a7f37}</style></head><body>',
+    '<style>:root{color-scheme:light}body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#fff;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:20px 0 8px;color:#0b2a5b}h3{font-size:13px;margin:12px 0 4px;color:#0b2a5b}table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left;vertical-align:top}th{background:#eef2f7}.k{color:#5a6675;width:210px}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}.hit{color:#b00020;font-weight:700}.warn{color:#9a6700;font-weight:700}.clear{color:#1a7f37}.na{color:#8b949e}.box{border:1px solid #ccd2da;border-radius:8px;padding:10px 14px;margin:8px 0;background:#f7f9fc}.score{font-size:22px;font-weight:700}.pill{display:inline-block;border-radius:12px;padding:1px 9px;font-size:11px;font-weight:700;margin-right:6px}.pf{background:#fde8e8;color:#b00020}.pw{background:#fdf4e3;color:#9a6700}.pp{background:#e6f4ea;color:#1a7f37}</style></head><body>',
     '<h1>vSphere Security Report - '+rEsc(NODE.host||"?")+'</h1>',
     '<div class="muted">'+rEsc(NODE.type||"")+' &middot; '+rEsc((NODE.product||"")+" "+(NODE.version||"")+" build "+(NODE.build||""))+(NODE.serial?(' &middot; serial '+rEsc(NODE.serial)):'')+' &middot; captured '+rEsc(NODE.captured||"?")+' &middot; report generated '+gen+' &middot; tool v'+APP_VERSION+'</div>'];
   // executive summary
@@ -4156,9 +4468,9 @@ function fleetExport(){ if(!FLEET.length){ setStatus("No fleet to export.","err"
 }
 function fleetReport(){ if(!FLEET.length){ setStatus("No fleet to report.","err"); return; }
   var d=new Date(); function p(x){return x<10?("0"+x):x;} var gen=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
-  var h=['<!doctype html><html><head><meta charset="utf-8"><title>vSphere Fleet Triage</title>',
-    '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0}h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:18px 0 8px;color:#0b2a5b}table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left}th{background:#eef2f7}.hit{color:#b00020;font-weight:700}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}</style></head><body>',
-    '<h1>vSphere Fleet Triage - Case Notes</h1><div class="muted">'+FLEET.length+' host(s) &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>',
+  var h=['<!doctype html><html><head><meta charset="utf-8"><title>vSphere Fleet Analysis Report</title>',
+    '<style>:root{color-scheme:light}body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#fff;color:#1b2330;font-size:13px}h1{font-size:20px;margin:0}h2{font-size:14px;border-bottom:2px solid #1f6feb;padding-bottom:3px;margin:18px 0 8px;color:#0b2a5b}table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0}th,td{border:1px solid #ccd2da;padding:4px 7px;text-align:left}th{background:#eef2f7}.hit{color:#b00020;font-weight:700}.muted{color:#6a7686}.mono{font-family:Consolas,monospace}</style></head><body>',
+    '<h1>vSphere Fleet Analysis Report</h1><div class="muted">'+FLEET.length+' host(s) &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>',
     '<h2>Roster (by risk)</h2><table><tr><th>Host</th><th>Type</th><th>Version/Build</th><th>Serial</th><th>KeyFiles</th><th>Logons(flag)</th><th>Actions(flag)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>IOC</th><th>Risk</th></tr>'];
   for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; h.push('<tr><td><b>'+esc(r.host)+'</b></td><td>'+esc(r.type)+'</td><td class="mono">'+esc((r.version?r.version+" ":"")+r.build)+'</td><td class="mono">'+esc(r.serial||"-")+'</td><td>'+r.keyPresent+'/'+r.keyTotal+'</td><td'+(r.logonFlagged?' class="hit"':'')+'>'+r.logons+' ('+r.logonFlagged+')'+(r.logonExt?(' ext '+r.logonExt):'')+'</td><td'+(r.actFlagged?' class="hit"':'')+'>'+r.actions+' ('+r.actFlagged+')</td><td'+(r.persistFlagged?' class="hit"':'')+'>'+r.persistFlagged+'</td><td'+(r.indicHits?' class="hit"':'')+'>'+r.indicHits+'</td><td>'+r.cveFlag+'</td><td>'+r.iocHits+'</td><td><b>'+r.risk+'</b></td></tr>'); }
   h.push('</table>');

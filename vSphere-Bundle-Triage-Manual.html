@@ -119,7 +119,7 @@
 <p>Every table in the app keeps its <b>header row pinned</b> while you scroll, and columns are drag-resizable (double-click a grip to reset).</p>
 
 <h3 id="overview-tab">Overview</h3>
-<p>Node configuration summary + key-file coverage, the <b>intrusion / ransomware indicator</b> panel, and the <b>CVE exposure</b> panel. The stat bubbles at the bottom (Logons, Actions, Timeline, IOC hits) are <b>clickable</b> - they jump to the matching tab. Buttons: <b>Re-run log analysis</b> and <b>Case-note report</b> (green).</p>
+<p>Node configuration summary + key-file coverage, the <b>intrusion / ransomware indicator</b> panel, and the <b>CVE exposure</b> panel. The stat bubbles at the bottom (Logons, Actions, Timeline, IOC hits) are <b>clickable</b> - they jump to the matching tab. Buttons: <b>Re-run log analysis</b> and <b>Generate Report</b> (green).</p>
 <figure>
 <svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial,sans-serif">
   <rect width="1000" height="640" rx="10" fill="#0d1117"/>
@@ -162,7 +162,7 @@
   <!-- analysis + bubbles -->
   <rect x="14" y="322" width="972" height="1" fill="#30363d"/>
   <rect x="14" y="334" width="128" height="26" rx="6" fill="#1c2330" stroke="#30363d"/><text x="28" y="351" fill="#e6edf3" font-size="11">Re-run log analysis</text>
-  <rect x="150" y="334" width="120" height="26" rx="6" fill="#238636"/><text x="164" y="351" fill="#fff" font-size="11">Case-note report</text>
+  <rect x="150" y="334" width="120" height="26" rx="6" fill="#238636"/><text x="164" y="351" fill="#fff" font-size="11">Generate Report</text>
   <text x="284" y="351" fill="#8b949e" font-size="11">58 logons, 35 actions, 93 timeline, 0 IOC hits.</text>
   <g font-size="9">
     <rect x="14" y="376" width="86" height="46" rx="8" fill="#1c2330" stroke="#30363d"/><text x="26" y="400" fill="#e6edf3" font-size="17" font-weight="700">58</text><text x="26" y="414" fill="#8b949e">LOGONS</text>
@@ -180,14 +180,14 @@
 <p>Deep node configuration parsed from the bundle. <b>ESXi:</b> identity (FQDN, UUID, <b>serial / service tag</b>, model/PSNT, <b>management IP + ESXi Host Client URL</b>, and the <b>iDRAC / BMC IP</b> when in-band IPMI exposes it), networking (VMkernel adapters, physical NICs, gateway, DNS, NTP), <b>port groups &amp; VLANs</b> (standard vSwitch port groups plus distributed port groups with their VLANs, parsed from <code>esxcfg-vswitch -l</code> and <code>net-dvs -l</code>), <b>datastores</b>, <b>vSAN &amp; disk layout</b> (disk groups, physical devices, capacity/usage - for recovery scoping), and security posture (AD join via LSASS, VIB acceptance, syslog target). <b>vCenter:</b> identity, <b>management IP + vSphere Client &amp; VAMI (:5480) URLs</b>, SSO domain &amp; <b>identity sources / AD integration</b>, networking, and <b>managed ESXi hosts</b>. The green <b>Export &rarr; HTML</b> button writes a standalone node-spec document. (The same identity fields - serial, management IP, web URLs, iDRAC - also appear on the <b>Overview → Node configuration</b> pane.)</p>
 
 <h3 id="security-tab">Security</h3>
-<p>A graded review of <b>patch state and recommended security controls</b>, checked against the bundle's config captures <b>and</b> the parsed log evidence, scored as <i>N of M checkable controls at best practice</i> (a bubble on Overview jumps here; the case-note report gets a matching section). Three groups:</p>
+<p>A graded review of <b>patch state and recommended security controls</b>, checked against the bundle's config captures <b>and</b> the parsed log evidence, scored as <i>N of M checkable controls at best practice</i> (a bubble on Overview jumps here; the generated report gets a matching section). Three groups:</p>
 <ul>
   <li><b>Patch state</b> - build number vs the tracked CVE fix-builds (summarises the Overview CVE panel; advisory, verify against the VMSA).</li>
   <li><b>Hardening controls</b> (ESXi) - VIB acceptance, host encryption mode / <code>execInstalledOnly</code> / Require Secure Boot, TPM &amp; measured boot, MOB, account lockout, password policy, shell/SSH idle timeouts, DCUI access, remote syslog, NTP. Settings checks read <code>advanced-list -d</code> (options <i>changed from default</i>), so "at default" is provable, not assumed. vCenter: SSO identity sources, rsyslog forwarding, NTP.</li>
   <li><b>Installed VIBs (software integrity)</b> - parses <code>software-vib-list</code> (Name / Version / Vendor / Acceptance / Install date) and flags the rogue-VIB persistence tells: any <b>CommunitySupported (unsigned)</b> package, VIBs from a vendor that isn't VMware or a known hardware OEM, and VIBs <b>installed after the base image</b> (highlighted if within the case window). A <b>Third-party &amp; non-standard VIBs</b> table lists every non-VMware / non-Certified package with its full metadata, risk-sorted.</li>
   <li><b>Log-corroborated controls</b> - what the logs show actually happened: SSH logins and ESXi Shell usage observed, logons from public IPs, failed-login volume, and log-integrity gaps. Config claims and observed behaviour are graded separately, so a "disabled" control that the logs show being used still surfaces.</li>
 </ul>
-<p>The green <b>Export &rarr; HTML</b> button writes a self-contained <b>security report</b>: an executive summary (posture score with fail/warn/pass counts and the top findings), patch state &amp; CVE exposure, ransomware/intrusion indicators, the full control matrix, the third-party VIB table, and the security-relevant persistence/tampering findings - a standalone deliverable distinct from the full Case-note report.</p>
+<p>The green <b>Export &rarr; HTML</b> button writes a self-contained <b>security report</b>: an executive summary (posture score with fail/warn/pass counts and the top findings), patch state &amp; CVE exposure, ransomware/intrusion indicators, the full control matrix, the third-party VIB table, and the security-relevant persistence/tampering findings - a standalone deliverable distinct from the full report (Generate Report).</p>
 <div class="note">Support bundles are targeted: a control whose source file isn't captured is graded <b>n/a</b> - never assumed compliant. Lockdown mode on ESXi 7+ lives in the ConfigStore, which <code>vm-support</code> does not capture. The checks are <b>version-aware</b>: patch-state verdicts select the fix line by the host's version and update level; capture-driven checks degrade to n/a on versions that lack a capture; and the "at default" claims are the documented 7.x/8.x defaults - on other versions the check still proves the setting is <i>unchanged</i>, but flags the default value for verification.</div>
 
 <h3 id="network-tab">Network</h3>
@@ -406,7 +406,7 @@
 <tr><th>Where</th><th>Output</th></tr>
 <tr><td>Key Files / Logons / Actions / Timeline / IOC / VMs</td><td>CSV of the current view</td></tr>
 <tr><td>Specification</td><td>Standalone <b>node-spec HTML</b></td></tr>
-<tr><td>Overview</td><td><b>Case-note report</b> (self-contained HTML: node config, spec, VMs, coverage, indicators, CVE, persistence, logon summary, flagged actions, IOC hits)</td></tr>
+<tr><td>Overview</td><td><b>Generate Report</b> (self-contained HTML with a clickable navigation pane - fixed contents rail, findings count per section, highlights the section you are reading; it prints as a plain contents list. Every tab in one document: node config, maintenance events, the full key-file board, spec, VMs, VM activity, network, indicators, CVE, security posture, persistence, logons + brute-force + sessions, actions, timeline, IOC hits, evidence/provenance)</td></tr>
 <tr><td>Fleet roster</td><td>Roster CSV &middot; <b>Fleet report HTML</b> (roster + clusters + correlation + chain)</td></tr>
 <tr><td>Correlation</td><td>Cross-host timeline CSV</td></tr>
 </table>
@@ -426,7 +426,7 @@
   <li><b>Persistence &amp; tampering:</b> boot scripts, syslog forwarding, ransom-note scan, log-integrity gaps.</li>
   <li><b>IOCs:</b> drop your <code>IOC.txt</code> in and re-analyse to sweep the logs.</li>
   <li><b>Fleet:</b> Correlation for shared IPs/users/IOCs, coordinated indicators, and the vCenter&rarr;ESXi chain. Export the cross-host timeline.</li>
-  <li><b>Document:</b> Case-note report per host and/or the Fleet report for the engagement.</li>
+  <li><b>Document:</b> Generate Report per host and/or the Fleet report for the engagement.</li>
 </ol>
 
 <footer>
