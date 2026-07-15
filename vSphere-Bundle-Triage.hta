@@ -452,7 +452,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.10.0";
+var APP_VERSION = "1.11.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -1486,6 +1486,19 @@ function parseNode(){
   } else if(BTYPE==="vcsa"){
     NODE.product="VMware vCenter Server (VCSA)";
     var b=trimStr(readMember("etc/vmware-analytics/build.txt")); if(b) NODE.build=b;
+    /* vCenter exposes no version anywhere the old code looked, which is why the Overview Version field
+       was blank on every vc-support bundle - and why the CVE logic had only a build number to compare,
+       with 7.0/8.0 build ranges that overlap. Two places DO carry it:
+         etc/issue                -> "VMware vCenter Server 8.0.3.00100"   (cheap, no log read)
+         vpxd-N.log first line    -> "Section for VMware VirtualCenter, ... version=8.0.3, build=..."
+       Take the cheap one, fall back to the log header. The third component IS the update level
+       (8.0.3 = 8.0 U3), same convention as ESXi 7.0.3 = 7.0 U3, so fill Update from it when the
+       platform did not state one. */
+    var iss=readMember("etc/issue"), mvc=iss && iss.match(/vCenter Server\s+(\d+\.\d+\.\d+)/i);
+    if(!mvc){ var vh=readMember("var/log/vmware/vpxd/vpxd.log")||firstLineOfVpxd();
+      mvc = vh && vh.match(/Section for VMware VirtualCenter[^\n]*?version=(\d+\.\d+\.\d+)/i); }
+    if(mvc){ NODE.version=mvc[1];
+      var mu2=mvc[1].match(/^\d+\.\d+\.(\d+)/); if(mu2 && !trimStr(NODE.update||"")) NODE.update=mu2[1]; }
     NODE.mgmtIp=vcsaPrimaryIp();
   }
   var fq=parseNodeFqdn(); if(fq){ NODE.fqdn=sanitHost(fq); NODE.host=betterHost(NODE.host, NODE.fqdn); }
@@ -2364,6 +2377,7 @@ function runAnalysis(){
       safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence);
       safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity);
       safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); ANALYZED=true;
+      safeStep("nvd", nvdStart);   // async: paints from cve.json now, repaints when NVD answers (or explains why it could not)
       writeAnalysisOutputs();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
       var warn=ANALYSIS_ERRS.length?("  ("+ANALYSIS_ERRS.length+" stage(s) failed: "+ANALYSIS_ERRS.join(", ")+" - see Show log)"):"";
@@ -2574,6 +2588,12 @@ function cve(id,vmsa,title,verdict,basis){ return {id:id,vmsa:vmsa,title:title,v
    So the tool never claims to have checked: it shows the data's review date and, when that date is
    stale/absent/unreadable, says plainly that it must be verified by hand against the advisory index. */
 var CVEDATA=null, CVEDATA_ERR="", CVE_INDEX_URL="https://www.broadcom.com/support/vmware-security-advisories";
+/* first line of the rotated vpxd log, for the version header - cheap: one small read, no full parse */
+function firstLineOfVpxd(){
+  var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel) return "";
+  var src=ensureExtracted(rel); if(!src) return "";
+  try{ return readCappedText(src, 400); }catch(e){ return ""; }
+}
 function cveDataPath(){ return (htaFolder()||".")+"\\cve.json"; }
 function loadCveData(){
   CVEDATA=null; CVEDATA_ERR="";
@@ -2599,14 +2619,195 @@ function cveAgeDays(){
 function cveStale(){ var d=cveAgeDays(); var lim=(CVEDATA&&CVEDATA.staleAfterDays)||180; return (d<0)||(d>lim); }
 /* One sentence the UI and the report both print, so they can never disagree about how trustworthy the
    CVE section is. Never says "checked" - the tool cannot check. */
+/* short state for the panel header */
+function nvdSummary(){
+  if(NVD.state==="busy") return "checking NVD…";
+  if(NVD.state==="ok") return nf(NVD.n)+" CVE(s) from NVD vendor data"+(NVD.added?(", "+NVD.added+" not in cve.json"):"")+(NVD.conflicted?(", "+NVD.conflicted+" CONFLICT"):"")+(NVD.corroborated?(", "+NVD.corroborated+" corroborated"):"");
+  if(NVD.state==="err") return "LIVE CHECK FAILED - offline data only";
+  if(NVD.state==="off") return "live check OFF - offline data only";
+  return "advisory";
+}
+/* One paragraph the UI and BOTH reports print, so they can never disagree about how much this section
+   can be trusted. It states the SOURCE of the verdicts, not a reassurance. */
 function cveProvenance(){
-  if(!CVEDATA) return "CVE exposure NOT ASSESSED: "+CVEDATA_ERR+". Nothing was checked - verify this host's build by hand against the VMware advisories ("+CVE_INDEX_URL+").";
+  var idx=" Verify against the vendor advisories ("+CVE_INDEX_URL+").";
+  if(NVD.state==="ok"){
+    var s="Checked live against NVD on "+NVD.when+": "+nf(NVD.n)+" CVE(s) published for "+((NODE.product||typeLabel())+" "+nodeLine())+", with fix builds taken from the vendor's own CNA data (Broadcom files it; NVD republishes it) - a better source than any number typed into this tool. ";
+    if(NVD.added) s+=NVD.added+" of them were NOT in cve.json. ";
+    if(NVD.corroborated) s+=NVD.corroborated+" cve.json build(s) were corroborated by the vendor. ";
+    if(NVD.conflicted) s+="WARNING: "+NVD.conflicted+" cve.json build(s) CONFLICT with the vendor and were overridden - correct cve.json. ";
+    s+="Rows marked [cve.json] are the ones NVD carries no machine-readable fix for (older advisories, or update labels with no build) - those remain hand-maintained data of the age below. ";
+    if(CVEDATA) s+="cve.json "+((cveAgeDays()<0)?"was NEVER stamped with a review date":("last reviewed "+CVEDATA.reviewed))+". ";
+    return s+"Verdicts are ADVISORY."+idx;
+  }
+  var why = (NVD.state==="err") ? ("The live NVD check FAILED ("+NVD.err+"), so nothing was verified online. ")
+          : (NVD.state==="off") ? ("The live NVD check is switched OFF, so nothing was verified online. ")
+          : (NVD.state==="busy") ? ("The live NVD check had not finished when this was produced, so nothing was verified online. ") : "";
+  if(!CVEDATA) return why+"CVE exposure NOT ASSESSED: "+CVEDATA_ERR+". Nothing was checked - verify this host's build by hand."+idx;
   var d=cveAgeDays(), who=trimStr(CVEDATA.reviewedBy||"");
-  var s="Fix builds are read from cve.json (data, not code)"+(who?(", last reviewed by "+who):"")+
-        ((d<0)?", NEVER stamped with a review date":(", last reviewed "+CVEDATA.reviewed+" ("+nf(d)+" day(s) ago)"))+". ";
-  s += "The tool does not and cannot query Broadcom: the advisory portal is login-gated and JavaScript-driven, and no feed publishes VMware fix builds. These verdicts are ADVISORY - confirm against the VMSA by hand ("+CVE_INDEX_URL+").";
-  if(cveStale()) s += "  DATA IS STALE - re-check the advisories and update cve.json before relying on this section.";
-  return s;
+  var s2=why+"Fix builds are read from cve.json (data, not code)"+(who?(", last reviewed by "+who):"")+
+        ((d<0)?", NEVER stamped with a review date":(", last reviewed "+CVEDATA.reviewed+" ("+nf(d)+" day(s) ago)"))+". "+
+        "It lists only the CVEs someone added, so a CVE absent from this section is not evidence the host is unaffected. Verdicts are ADVISORY.";
+  if(cveStale()) s2 += "  DATA IS STALE - re-check the advisories and update cve.json before relying on this section.";
+  return s2+idx;
+}
+/* ============================================================
+   LIVE CVE LOOKUP - NVD API 2.0 (hybrid: vendor data online, cve.json for the gaps)
+   ------------------------------------------------------------
+   Broadcom is the CNA for VMware CVEs and files STRUCTURED version data that NVD republishes, shaped
+   like {version:"<line>", lessThan:"<ESXi build tag>", status:"affected"} - exactly the comparison this
+   tool needs, from the vendor themselves, free and keyless. That is a strictly better source than any
+   number typed into this repo, so where NVD has data it WINS. cve.json remains for what NVD does NOT
+   carry, which is not rare:
+     - older advisories filed before structured version data was the norm: no version rows at all
+     - some CVEs carry a build for one release line and nothing for the other
+     - vCenter frequently carries update LABELS only (e.g. "8.0 U3e") with no build to compare against
+   plus the config cross-checks NVD cannot do (SLP running state, AD join).
+   (No CVE id or build number is named in this file on purpose - they are data, and data lives in
+   cve.json or comes from the vendor. See check-cve.js, which fails the build if one creeps back.)
+   It also fixes the dead advisory link: the per-advisory Broadcom URL is not constructible, but it IS
+   discoverable - NVD carries it in references.
+   AUTOMATIC but toggleable, and it degrades to the offline data + a "check manually" note: a DFIR box
+   may be air-gapped, and a triage tool must never depend on the internet to render a verdict. */
+var NVD_API="https://services.nvd.nist.gov/rest/json/cves/2.0";
+var NVD_ON=true;                 // automatic; user-toggleable, persisted next to the HTA
+var NVD_TIMEOUT=20000;
+var NVD={state:"idle", err:"", url:"", when:"", n:0, added:0, corroborated:0, conflicted:0};
+function prefsFile(){ var d=htaFolder(); return d?(d+"\\"+SELF_HTA+".prefs.txt"):""; }
+function savePrefs(){ var p=prefsFile(); if(!p) return; try{ writeUtf8(p,"nvd="+(NVD_ON?"1":"0")); }catch(e){} }
+function loadPrefs(){ var p=prefsFile(); if(!p||!fileExists(p)) return;
+  try{ var m=(readUtf8(p)||"").match(/nvd\s*=\s*([01])/); if(m) NVD_ON=(m[1]==="1"); }catch(e){} }
+/* host version line ("7.0") and update level (3), from whichever field the platform gave us */
+function nodeLine(){ var m=String(NODE.version||"").match(/^(\d+)\.(\d+)/); return m?(m[1]+"."+m[2]):""; }
+function nodeUpdate(){ var u=parseInt(NODE.update||"",10); if(!isNaN(u)) return u;
+  var m=String(NODE.version||"").match(/^\d+\.\d+\.(\d+)/); return m?parseInt(m[1],10):-1; }
+function nvdCpe(){
+  var line=nodeLine(); if(!line) return "";
+  if(BTYPE==="esxi") return "cpe:2.3:o:vmware:esxi:"+line;
+  if(BTYPE==="vcsa") return "cpe:2.3:a:vmware:vcenter_server:"+line;
+  return "";
+}
+function nvdProdRe(){ return (BTYPE==="vcsa") ? /^vcenter server$/i : /^esxi$/i; }
+function nvdSev(v){ try{
+  var m=v.metrics||{};
+  var a=(m.cvssMetricV40&&m.cvssMetricV40[0])||(m.cvssMetricV31&&m.cvssMetricV31[0])||(m.cvssMetricV30&&m.cvssMetricV30[0]);
+  return a?String(a.cvssData.baseSeverity||"").toUpperCase():""; }catch(e){ return ""; } }
+function nvdAdvisoryUrl(v){ var r=v.references||[];
+  for(var i=0;i<r.length;i++){ var u=String(r[i].url||""); if(/broadcom\.com.*SecurityAdvisories/i.test(u)) return u; }
+  for(i=0;i<r.length;i++){ var u2=String(r[i].url||""); if(/vmware\.com\/security\/advisories/i.test(u2)) return u2; }
+  return ""; }
+function nvdTitle(v){ try{ var d=v.descriptions||[];
+  for(var i=0;i<d.length;i++) if(d[i].lang==="en") return trunc(trimStr(d[i].value),160); }catch(e){} return ""; }
+/* Pull THIS host's fix build out of the CNA version rows. Two shapes seen in the wild:
+     lessThan:"ESXi70U3s-<build>"    -> a real build we can compare
+     lessThan:"8.0 U3e"             -> an update LABEL, nothing numeric to compare
+   8.0 carries several rows (U3d / U2d) because the trains are patched separately, so the host's update
+   level picks the row - the same reason cveEsxiLine exists. */
+function nvdFixFor(v, line, up){
+  var out={build:0, label:"", rows:0}, pr=nvdProdRe(), aff=v.affected||[], i, j, k;
+  var cand=[];
+  for(i=0;i<aff.length;i++){ var ad=aff[i].affectedData||[];
+    for(j=0;j<ad.length;j++){ if(!pr.test(String(ad[j].product||""))) continue;
+      var vs=ad[j].versions||[];
+      for(k=0;k<vs.length;k++){ var row=vs[k]; if(String(row.status||"")!=="affected") continue;
+        var vline=String(row.version||"").match(/^(\d+\.\d+)/);
+        if(!vline || vline[1]!==line) continue;                  // different major line - not this host
+        var lt=String(row.lessThan||row.lessThanOrEqual||"");
+        var mb=lt.match(/-(\d{6,9})\s*$/);                        // trailing "-<build>" on the release tag
+        var mu=lt.match(/U(\d+)/i);                               // which update train this row fixes
+        cand.push({build:mb?parseInt(mb[1],10):0, label:lt, up:mu?parseInt(mu[1],10):-1});
+        out.rows++;
+      } } }
+  if(!cand.length) return out;
+  var pick=null, i2;
+  for(i2=0;i2<cand.length;i2++) if(cand[i2].up===up){ pick=cand[i2]; break; }   // exact train
+  if(!pick){ for(i2=0;i2<cand.length;i2++) if(cand[i2].build && (!pick||cand[i2].build>pick.build)) pick=cand[i2]; }  // else the highest known fix (conservative)
+  if(!pick) pick=cand[0];
+  out.build=pick.build; out.label=pick.label; out.pickedTrain=(pick.up===up);
+  out.trains=cand.length;
+  return out;
+}
+function nvdCveObj(id,title,verdict,basis,src,kev,sev,url){
+  var o=cve(id,"",title,verdict,basis); o.src=src; o.kev=!!kev; o.sev=sev||""; o.url=url||""; return o; }
+function nvdMerge(j){
+  var host=buildNumOf(), line=nodeLine(), up=nodeUpdate();
+  var rows=j.vulnerabilities||[], i, byId={};
+  for(i=0;i<CVES.length;i++){ byId[lc(CVES[i].id)]=CVES[i]; if(!CVES[i].src) CVES[i].src="cve.json"; }
+  NVD.n=rows.length; NVD.added=0; NVD.corroborated=0; NVD.conflicted=0;
+  for(i=0;i<rows.length;i++){
+    var v=rows[i].cve; if(!v||!v.id) continue;
+    var fx=nvdFixFor(v, line, up), kev=!!v.cisaExploitAdd, sev=nvdSev(v), url=nvdAdvisoryUrl(v), local=byId[lc(v.id)];
+    var verdict, basis;
+    if(fx.build){
+      verdict = !host ? "verify" : (host>=fx.build ? "patched" : (kev?"exposed":"review"));
+      basis = "host build "+(host||"?")+"; vendor says "+line+" is fixed in "+fx.label
+            + (fx.trains>1 ? (fx.pickedTrain?(" (your U"+up+" train)"):(" (no row for U"+(up<0?"?":up)+" - compared against the highest known fix)")) : "");
+    } else if(fx.rows){
+      verdict="verify"; basis="vendor lists "+line+" affected below "+(fx.label||"a named release")+", but published no build number to compare - check the advisory against your exact release";
+    } else {
+      verdict="verify"; basis="vendor filed no machine-readable fix for the "+line+" line - check the advisory";
+    }
+    if(local){
+      /* Local and vendor both have it. Corroboration is worth stating: it is the only evidence the
+         hand-typed numbers were ever right. A CONFLICT is worth shouting about - one of them is wrong
+         and it decides what a customer report claims. Compare the STRUCTURED fix build each side used
+         (local.localFix), never a number scraped back out of the basis prose. */
+      var lf=local.localFix||0;
+      if(fx.build && lf && lf!==fx.build){
+        NVD.conflicted++;
+        local.verdict=verdict; local.src="NVD (vendor CNA) - CONFLICTS with cve.json";
+        local.basis=basis+"  ***cve.json says the fix build is "+lf+", the vendor says "+fx.build+" - the vendor is authoritative and has been used here; correct cve.json***";
+      } else {
+        if(fx.build && lf) NVD.corroborated++;
+        /* keep the local verdict where it rests on a config cross-check NVD cannot do (SLP state, AD join) */
+        if(fx.build && !/slp|encryption|AD integration/i.test(local.basis||"")){ local.verdict=verdict; local.basis=basis; }
+        local.src = fx.build ? ((lf?"cve.json corroborated by ":"")+"NVD (vendor CNA)") : (local.src||"cve.json");
+      }
+      local.kev=local.kev||kev; local.sev=local.sev||sev; if(url) local.url=local.url||url;
+    } else {
+      CVES.push(nvdCveObj(v.id, nvdTitle(v), verdict, basis, "NVD (vendor CNA)", kev, sev, url));
+      NVD.added++;
+    }
+  }
+  /* worst first: known-exploited, then exposed/review, then severity */
+  var rank={exposed:0, review:1, verify:2, mitigated:3, patched:4, na:5};
+  var srank={CRITICAL:0, HIGH:1, MEDIUM:2, LOW:3, "":4};
+  CVES.sort(function(a,b){
+    if(!!b.kev !== !!a.kev) return b.kev?1:-1;
+    var ra=(rank[a.verdict]==null?9:rank[a.verdict]), rb=(rank[b.verdict]==null?9:rank[b.verdict]);
+    if(ra!==rb) return ra-rb;
+    var sa=(srank[a.sev]==null?4:srank[a.sev]), sb=(srank[b.sev]==null?4:srank[b.sev]);
+    if(sa!==sb) return sa-sb;
+    return a.id<b.id?1:-1; });
+}
+function nvdStart(){
+  if(!BTYPE) return;
+  if(!NVD_ON){ NVD={state:"off", err:"", n:0, added:0, corroborated:0, conflicted:0}; renderCves(); return; }
+  var cpe=nvdCpe();
+  if(!cpe){ NVD={state:"err", err:"the product version was not identified in this bundle, so NVD cannot be asked which CVEs apply to it", n:0}; renderCves(); return; }
+  var url=NVD_API+"?virtualMatchString="+encodeURIComponent(cpe)+"&resultsPerPage=200";
+  NVD={state:"busy", err:"", url:url, n:0, added:0, corroborated:0, conflicted:0}; renderCves();
+  appendLog("NVD: GET "+url);
+  var done=false;
+  function fail(msg){ if(done) return; done=true; NVD.state="err"; NVD.err=msg; appendLog("NVD: "+msg); renderCves(); }
+  try{
+    var x=new ActiveXObject("MSXML2.XMLHTTP.6.0");
+    x.open("GET",url,true);
+    try{ x.setRequestHeader("User-Agent",SELF_HTA+"/"+APP_VERSION); }catch(eh){}
+    x.onreadystatechange=function(){ if(x.readyState!==4 || done) return;
+      try{
+        if(x.status!==200){ fail("NVD returned HTTP "+x.status
+          +(x.status===403?" - rate-limited. Unauthenticated callers get 5 requests / 30 seconds; wait a moment and re-run.":"")
+          +(x.status===0?" - no response (offline, blocked by proxy/firewall, or DNS failed).":"")); return; }
+        var j=JSON.parse(x.responseText+"");
+        done=true; nvdMerge(j); NVD.state="ok"; NVD.when=isoNow();
+        appendLog("NVD: "+NVD.n+" CVE(s) for "+cpe+" - "+NVD.added+" added, "+NVD.corroborated+" corroborated, "+NVD.conflicted+" CONFLICT(s)");
+        renderCves();
+      }catch(e2){ fail("the NVD reply could not be parsed: "+(e2.message||e2)); }
+    };
+    x.send();
+    window.setTimeout(function(){ if(!done && NVD.state==="busy") fail("NVD did not answer within "+(NVD_TIMEOUT/1000)+"s (offline, or the API is down)"); }, NVD_TIMEOUT);
+  }catch(e3){ fail("the request could not be sent: "+(e3.message||e3)+" (no network, or blocked)"); }
 }
 function buildCves(){
   CVES=[]; var b=buildNumOf(), i;
@@ -2635,20 +2836,26 @@ function buildCves(){
   }
 }
 /* per-version/per-update fix-line compare for ESXi (which, unlike vCenter, exposes version+update) */
+/* localFix = the fix build THIS row was actually judged against, recorded structurally.
+   It used to be recoverable only by scraping the basis text, and the first 7-9 digit number in that
+   string is the HOST build, not the fix - which made every corroboration check compare the wrong two
+   numbers and report a conflict against vendor data that actually agreed. Never re-derive a number from
+   prose you already had in hand. */
 function cveEsxiLine(id,vmsa,title,b,mj,up,f){
-  var verdict, detail;
-  if(mj===7){ verdict = !b?"verify":(b>=f.v7?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d7; }
-  else if(mj===8 && up>=3){ verdict = !b?"verify":(b>=f.v8u3?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d8u3; }
-  else if(mj===8 && up>=2 && f.v8u2){ verdict = !b?"verify":(b>=f.v8u2?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d8u2; }
-  else if(mj===8){ verdict="verify"; detail="host is 8.0 U"+(up<0?"?":up)+" - this train's fix ("+(f.d8other||"see VMSA")+") is not tracked; verify vs the VMSA"; }
-  else if(mj>=9){ if(/not affected/i.test(f.v9||"")){ verdict="na"; } else { verdict="verify"; } detail=f.v9||"verify vs the VMSA for this version"; }
-  else { verdict="verify"; detail="version not identified - verify vs the VMSA ("+f.d7+" / "+f.d8u3+")"; }
-  CVES.push(cve(id,vmsa,title,verdict,detail));
+  var verdict, detail, fix=0;
+  if(mj===7){ fix=f.v7; verdict = !b?"verify":(b>=f.v7?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d7; }
+  else if(mj===8 && up>=3){ fix=f.v8u3; verdict = !b?"verify":(b>=f.v8u3?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d8u3; }
+  else if(mj===8 && up>=2 && f.v8u2){ fix=f.v8u2; verdict = !b?"verify":(b>=f.v8u2?"patched":"review"); detail="host build "+(b||"?")+"; fixed in "+f.d8u2; }
+  else if(mj===8){ verdict="verify"; detail="host is 8.0 U"+(up<0?"?":up)+" - this train's fix ("+(f.d8other||"see the advisory")+") is not tracked; verify vs the advisory"; }
+  else if(mj>=9){ if(/not affected/i.test(f.v9||"")){ verdict="na"; } else { verdict="verify"; } detail=f.v9||"verify vs the advisory for this version"; }
+  else { verdict="verify"; detail="version not identified - verify vs the advisory ("+f.d7+" / "+f.d8u3+")"; }
+  var o=cve(id,vmsa,title,verdict,detail); o.localFix=fix||0; CVES.push(o);
 }
 function cveMulti(id,vmsa,title,build,fixes,fixDesc){
   var mn=fixes[0], mx=fixes[0]; for(var i=1;i<fixes.length;i++){ if(fixes[i]<mn) mn=fixes[i]; if(fixes[i]>mx) mx=fixes[i]; }
   var verdict = !build ? "verify" : (build>=mx ? "patched" : (build<mn ? "review" : "verify"));
-  CVES.push(cve(id,vmsa,title,verdict, "host build "+(build||"?")+"; fixed in "+fixDesc+(verdict==="verify"?" - build falls between the 7.0/8.0 fix lines, confirm your exact release":"")));
+  var o=cve(id,vmsa,title,verdict, "host build "+(build||"?")+"; fixed in "+fixDesc+(verdict==="verify"?" - build falls between the 7.0/8.0 fix lines, confirm your exact release":""));
+  o.localFix=mx||0; CVES.push(o);   // the conservative threshold this row was judged against
 }
 
 /* ============================================================
@@ -2730,8 +2937,8 @@ var SEC_TIPS={
  "Unsigned VIBs (CommunitySupported)":"VIBs whose acceptance level is CommunitySupported, meaning nothing verified the code. Legitimate on lab hosts; on a production host it is a known ransomware persistence route (the attacker installs their own VIB). FAIL means at least one unsigned package is installed - identify the vendor and confirm it was intended.",
  "Unrecognized VIB vendor":"VIBs whose vendor string is not VMware or a hardware OEM the tool recognises. REVIEW is not an accusation: it means nobody can tell you from the bundle alone whether that vendor belongs on this host, so a human must confirm it.",
  "VIBs added after the base image":"Packages whose install date is later than the bulk of the image. A VIB installed long after the host was built, especially inside the case window, is exactly what a rogue package looks like. Cross-check the date against the Maintenance events and Actions tabs.",
- "Known-CVE exposure (advisory)":"Whether this host's build is at or below the fix build for the CVEs the tool knows about. ADVISORY only. The fix builds come from cve.json (data, not code) and are only as current as the date stamped in it - the tool cannot query Broadcom, whose advisory portal is login-gated with no machine-readable feed. ESXi and vCenter build numbers are also not comparable across major lines. Confirm against the VMSA by hand before reporting it.",
- "Known-CVE exposure":"Whether this host's build is at or below the fix build for the CVEs the tool knows about. ADVISORY only. The fix builds come from cve.json (data, not code) and are only as current as the date stamped in it - the tool cannot query Broadcom, whose advisory portal is login-gated with no machine-readable feed. Build numbers are also not comparable across major lines. Confirm against the VMSA by hand before reporting it.",
+ "Known-CVE exposure (advisory)":"Whether this host's build is at or below the fix build for the CVEs that apply to it. ADVISORY only. With the live check on, the CVE list and the fix builds come from the vendor's own data (Broadcom files it as CNA; NVD republishes it), so the list is not limited to what someone added to this tool. Rows the vendor filed no machine-readable fix for fall back to cve.json - local data, only as current as the date stamped in it. If the live check is off or fails, EVERY row is that local data and the panel says so: a CVE absent from it is not evidence the host is unaffected. Build numbers are also not comparable across major lines. Confirm against the advisory before reporting it.",
+ "Known-CVE exposure":"Whether this host's build is at or below the fix build for the CVEs that apply to it. ADVISORY only. With the live check on, the CVE list and the fix builds come from the vendor's own data (Broadcom files it as CNA; NVD republishes it). Rows the vendor filed no machine-readable fix for fall back to cve.json - local data, only as current as the date stamped in it - and if the live check is off or fails, every row is. A CVE absent from local data is not evidence the host is unaffected. Build numbers are not comparable across major lines. Confirm against the advisory before reporting it.",
  "VIB acceptance level (host policy)":"The host's POLICY for what it will install (VMwareCertified / VMwareAccepted / PartnerSupported / CommunitySupported). This is the gate, not the packages. FAIL = CommunitySupported: the host will accept unsigned code, so a rogue VIB needs no further weakening. Attackers downgrade this deliberately - check the Actions tab for the command that changed it.",
  "Host encryption mode":"ESXi host encryption / key-provider state. Relevant two ways: it protects VM data at rest, and an ATTACKER who reaches the recovery key or flips the mode can lock the host's own config. TPM-sealed is best practice; anything else means the key material is less protected.",
  "execInstalledOnly":"When true, ESXi refuses to execute a binary that did not arrive in an installed VIB. This is the single most effective anti-ransomware setting on ESXi, because the encryptor is an arbitrary binary dropped in /tmp. WARN means arbitrary binaries are allowed to run.",
@@ -4162,12 +4369,18 @@ function buildReportHtml(){
     /* The report used to tell the reader to "verify against the linked VMSA" while linking a URL that
        404s. State where the numbers came from, how old they are, and that nothing was auto-checked. */
     h.push('<p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
-    h.push('<table><tr><th>CVE</th><th>Advisory</th><th>Summary</th><th>Status</th><th>Basis</th></tr>');
+    h.push('<table><tr><th>CVE</th><th>Exploited</th><th>Severity</th><th>Advisory</th><th>Summary</th><th>Status</th><th>Basis</th><th>Source</th></tr>');
     for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=(cv.verdict==="exposed")?"hit":(cv.verdict==="review"?"warn":(cv.verdict==="na"?"na":"clear"));
-      h.push('<tr'+(cv.verdict==="exposed"?' class="rf"':'')+'><td class="mono"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
-        +'<td class="mono"><a href="'+rEsc(vmsaUrl(cv.vmsa))+'" target="_blank">'+rEsc(cv.vmsa)+'</a></td><td>'+rEsc(cv.title)+'</td>'
-        +'<td class="'+vc+'">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td></tr>'); }
-    h.push('</table>'); }
+      var advU=cv.url||vmsaUrl(cv.vmsa), advL=cv.vmsa||(cv.url?"advisory":"-");
+      h.push('<tr'+(cv.kev?' class="rf"':(cv.verdict==="exposed"?' class="rf"':(cv.verdict==="review"?' class="rw"':'')))+'>'
+        +'<td class="mono nw"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
+        +'<td class="nw'+(cv.kev?' hit':' muted')+'">'+(cv.kev?"KEV - in the wild":"-")+'</td>'
+        +'<td class="nw'+((cv.sev==="CRITICAL"||cv.sev==="HIGH")?' hit':' muted')+'">'+rEsc(cv.sev||"-")+'</td>'
+        +'<td class="mono nw">'+(advL!=="-"?('<a href="'+rEsc(advU)+'" target="_blank">'+rEsc(advL)+'</a>'):'-')+'</td>'
+        +'<td>'+rEsc(cv.title)+'</td>'
+        +'<td class="'+vc+' nw">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td>'
+        +'<td class="muted nw" style="font-size:10px">'+rEsc(cv.src||"cve.json")+'</td></tr>'); }
+    h.push('</table><p class="muted">Source column: <b>NVD (vendor CNA)</b> = the fix build came from Broadcom\'s own advisory data, fetched live. <b>cve.json</b> = local hand-maintained data, because the vendor filed no machine-readable fix for that CVE. KEV = in CISA\'s Known Exploited Vulnerabilities catalog.</p>'); }
 
   /* ---- security posture ---- */
   if(SECPOST.length){ var ssc=secScoreOf();
@@ -4375,8 +4588,14 @@ function buildSecurityHtml(){
     h.push('</table>'); }
   // patch state / CVE
   if(CVES.length){ h.push('<h2>Patch state &amp; CVE exposure</h2><p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
-    h.push('<table><tr><th>CVE</th><th>VMSA</th><th>Verdict</th><th>Basis</th><th>Title</th></tr>');
-    for(i=0;i<CVES.length;i++){ var c=CVES[i]; h.push('<tr><td class="mono">'+rEsc(c.id)+'</td><td class="mono">'+rEsc(c.vmsa)+'</td><td class="'+cveCls(c.verdict)+'">'+rEsc(c.verdict.toUpperCase())+'</td><td>'+rEsc(c.basis)+'</td><td>'+rEsc(c.title)+'</td></tr>'); }
+    h.push('<table><tr><th>CVE</th><th>Exploited</th><th>Severity</th><th>Advisory</th><th>Verdict</th><th>Basis</th><th>Title</th><th>Source</th></tr>');
+    for(i=0;i<CVES.length;i++){ var c=CVES[i];
+      h.push('<tr'+(c.kev?' class="rf"':'')+'><td class="mono">'+rEsc(c.id)+'</td>'
+        +'<td class="'+(c.kev?'hit':'muted')+'">'+(c.kev?"KEV":"-")+'</td>'
+        +'<td class="'+((c.sev==="CRITICAL"||c.sev==="HIGH")?'hit':'muted')+'">'+rEsc(c.sev||"-")+'</td>'
+        +'<td class="mono">'+rEsc(c.vmsa||(c.url?"advisory":"-"))+'</td>'
+        +'<td class="'+cveCls(c.verdict)+'">'+rEsc(c.verdict.toUpperCase())+'</td><td>'+rEsc(c.basis)+'</td><td>'+rEsc(c.title)+'</td>'
+        +'<td class="muted" style="font-size:10px">'+rEsc(c.src||"cve.json")+'</td></tr>'); }
     h.push('</table>'); }
   // intrusion indicators
   if(INDIC.length){ h.push('<h2>Ransomware / intrusion indicators ('+indH+' of '+INDIC.length+' triggered)</h2><table><tr><th>Indicator</th><th>Status</th><th>Detail</th></tr>');
@@ -4934,13 +5153,32 @@ function renderCves(){
     return;
   }
   var stale=cveStale();
-  var h='<div class="panel"><h4>CVE exposure <span class="sub" title="'+esc(cveProvenance())+'">- advisory'
-    +(stale?', <span style="color:#e3b341;font-weight:700">DATA STALE - re-check the advisories and update cve.json</span>':(', fix builds reviewed '+esc(CVEDATA.reviewed||"never")))
-    +'; the tool cannot query Broadcom - confirm by hand</span>'
-    +'<span style="float:right;font-weight:400;text-transform:none"><span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'" title="Open the VMware (Broadcom) security advisory index and search for the VMSA id. Per-advisory deep links are not constructible, and the old vmware.com advisory URLs 404.">Check advisories</span></span></h4>';
+  var h='<div class="panel"><h4>CVE exposure <span class="sub" title="'+esc(cveProvenance())+'">- '+esc(nvdSummary())+'</span>'
+    +'<span style="float:right;font-weight:400;text-transform:none">'
+    +'<label title="Ask NVD which CVEs affect this product+version, and take the fix builds from the vendor\'s own CNA data. Automatic when a bundle is analysed. Untick on an air-gapped or evidence-handling box: the tool then uses cve.json only, and says so. One request per bundle.">'
+    +'<input type="checkbox" id="nvdOn"'+(NVD_ON?" checked":"")+'> live NVD check</label>'
+    +(NVD.state==="ok"||NVD.state==="err"?' &middot; <span class="lnk" id="nvdRetry" title="Query NVD again">re-check</span>':'')
+    +' &middot; <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'" title="Open the VMware (Broadcom) security advisory index. Per-advisory deep links are not constructible, but where NVD supplies one the CVE row links it directly.">advisories</span></span></h4>';
+  /* State line. An offline/failed check must never look like a clean result, so it says what it could
+     not do and what the verdicts below therefore rest on. */
+  if(NVD.state==="busy") h+='<div class="ind"><span class="dot"></span><span class="nm">Checking NVD…</span><span class="st">…</span><span class="dt">asking which CVEs affect '+esc((NODE.product||typeLabel())+" "+nodeLine())+'; the rows below are from cve.json until it answers</span></div>';
+  else if(NVD.state==="err") h+='<div class="ind"><span class="dot warn"></span><span class="nm">Live NVD check FAILED</span><span class="st warn">offline?</span><span class="dt">'+esc(NVD.err)+' - the rows below come from cve.json only ('+(stale?"which is STALE":"reviewed "+(CVEDATA.reviewed||"never"))+'), so they may be incomplete or out of date. <b>Check manually:</b> <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'">VMware security advisories</span></span></div>';
+  else if(NVD.state==="off") h+='<div class="ind"><span class="dot na"></span><span class="nm">Live NVD check OFF</span><span class="st na">offline mode</span><span class="dt">rows are from cve.json only ('+(stale?"STALE - ":"reviewed "+(CVEDATA.reviewed||"never")+" - ")+'it lists only the CVEs someone added, so absence here is not evidence of absence). Tick "live NVD check" to ask the vendor data, or verify manually.</span></div>';
+  else if(NVD.state==="ok" && NVD.conflicted) h+='<div class="ind"><span class="dot hit"></span><span class="nm">cve.json DISAGREES with the vendor</span><span class="st hit">'+NVD.conflicted+'</span><span class="dt">the vendor\'s fix build differs from the one in cve.json on '+NVD.conflicted+' CVE(s) - the vendor is authoritative and has been used; correct cve.json (see the rows marked CONFLICTS)</span></div>';
   for(var i=0;i<CVES.length;i++){ var c=CVES[i]; var v=c.verdict; var dc=(v==="exposed")?"hit":(v==="review"?"warn":(v==="na"?"na":"")); var sc=(v==="exposed")?"hit":(v==="review"?"warn":(v==="na"?"na":"clear"));
-    h+='<div class="ind"><span class="dot '+dc+'"></span><span class="nm mono"><span class="lnk" data-url="'+esc(cveUrl(c.id))+'" title="Open '+esc(c.id)+' on NVD">'+esc(c.id)+'</span> <span class="lnk dt" data-url="'+esc(vmsaUrl(c.vmsa))+'" title="Open '+esc(c.vmsa)+' advisory">'+esc(c.vmsa)+'</span></span><span class="st '+sc+'">'+esc(v.toUpperCase())+'</span><span class="dt">'+esc(c.title)+' - '+esc(c.basis)+'</span></div>'; }
+    var adv=c.url||vmsaUrl(c.vmsa), advLbl=c.vmsa||(c.url?"advisory":"");
+    h+='<div class="ind"><span class="dot '+dc+'"></span><span class="nm mono">'
+      +'<span class="lnk" data-url="'+esc(cveUrl(c.id))+'" title="Open '+esc(c.id)+' on NVD">'+esc(c.id)+'</span>'
+      +(c.kev?' <span class="tag ioc" title="In CISA\'s Known Exploited Vulnerabilities catalog - this is being used against real estates, not a theoretical finding">KEV</span>':'')
+      +(c.sev?' <span class="tag '+(c.sev==="CRITICAL"||c.sev==="HIGH"?"sus":"info")+'" title="CVSS base severity from NVD">'+esc(c.sev)+'</span>':'')
+      +(advLbl?(' <span class="lnk dt" data-url="'+esc(adv)+'" title="Open the vendor advisory'+(c.url?" (link supplied by NVD)":" index - search this VMSA id")+'">'+esc(advLbl)+'</span>'):'')
+      +'</span><span class="st '+sc+'">'+esc(v.toUpperCase())+'</span>'
+      +'<span class="dt" title="'+esc("source: "+(c.src||"cve.json"))+'">'+esc(c.title)+' - '+esc(c.basis)
+      +' <i>['+esc(c.src||"cve.json")+']</i></span></div>'; }
   h+='</div>'; $("ovCve").innerHTML=h;
+  var cb=$("nvdOn"); if(cb){ cb.onclick=function(){ NVD_ON=!!this.checked; savePrefs();
+    if(NVD_ON){ safeStep("cves", buildCves); nvdStart(); } else { safeStep("cves", buildCves); NVD={state:"off",err:"",n:0,added:0,corroborated:0,conflicted:0}; renderCves(); } }; }
+  var rt=$("nvdRetry"); if(rt){ rt.onclick=function(){ safeStep("cves", buildCves); nvdStart(); }; }
   var sp=$("ovCve").getElementsByTagName("span");
   for(i=0;i<sp.length;i++){ if(/\blnk\b/.test(sp[i].className+"") && sp[i].getAttribute("data-url")){ sp[i].onclick=function(){ openUrl(this.getAttribute("data-url")); }; } }
 }
@@ -5554,7 +5792,7 @@ function init(){
     if(!el || el===this) return; var di=el.getAttribute("data-i"); if(di==null) return;
     var rws=window.__anRows||[]; anDetail(rws[parseInt(di,10)]); };
   $("anMaxLbl").innerHTML=nf(ANMAXROWS);
-  resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadToolkitIoc(); iocBtnLabel();
+  resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadPrefs(); loadToolkitIoc(); iocBtnLabel();
   try{ var hf=htaFolder(); if(hf && isNetworkPath(hf)){ showEl("netwarn",true); } }catch(e){}
 
   $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };

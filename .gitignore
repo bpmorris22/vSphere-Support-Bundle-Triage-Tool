@@ -21,6 +21,7 @@ snapshot.json
 IOC.txt
 IOC.csv
 *.colw.txt
+*.prefs.txt
 
 # CSV exports
 *_export_*.csv
