@@ -452,7 +452,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.7.0";
+var APP_VERSION = "1.7.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -1492,6 +1492,14 @@ function parseNode(){
   // web-management URLs (built after the FQDN is resolved)
   if(BTYPE==="esxi"){ var e4=NODE.mgmtIp||NODE.host; if(e4) NODE.webUi="https://"+e4+"/ui"; }
   else if(BTYPE==="vcsa"){ var v5=NODE.host||NODE.mgmtIp; if(v5){ NODE.webUi="https://"+v5+"/ui"; NODE.vami="https://"+v5+":5480"; } }
+  /* Uptime / Booted / Installed are NODE CONFIGURATION, so they must be filled HERE - parseNode() runs
+     inside finishToc()/runTree() BEFORE showResults() paints the Overview. Running them in the later
+     log-analysis phase (as v1.5.0/v1.7.0 did) set them AFTER the panel had already been drawn, and
+     runAnalysis deliberately skips its re-render while you are on the Overview tab
+     (`if(TAB!=="overview"...) render()`), so the three fields never appeared. The sources are all
+     command captures already on disk by this point (extractKeyFilesToc runs before parseNode). */
+  safeStep("uptime", parseUptime);
+  safeStep("install", parseInstallDate);
 }
 
 /* ============================================================
@@ -2349,7 +2357,7 @@ function runAnalysis(){
   appendLog("=== log analysis: "+typeLabel()+" bundle, mode="+MODE+" ===");
   $("anStatus").innerHTML="Parsing logs (decompressing on demand)…"; setStatus("Parsing logs…","muted");
   window.setTimeout(function(){
-    safeStep("uptime", parseUptime); safeStep("install", parseInstallDate); safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
+    safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
     window.setTimeout(function(){ try{
       safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
       safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence);
@@ -2360,7 +2368,8 @@ function runAnalysis(){
       var warn=ANALYSIS_ERRS.length?("  ("+ANALYSIS_ERRS.length+" stage(s) failed: "+ANALYSIS_ERRS.join(", ")+" - see Show log)"):"";
       $("anStatus").innerHTML=msg+warn+(LOG_TRUNC.length?("  (capped: "+LOG_TRUNC.join("; ")+")"):"");
       setStatus((ANALYSIS_ERRS.length?"Log analysis finished with "+ANALYSIS_ERRS.length+" partial failure(s) - ":"Log analysis complete - ")+msg, ANALYSIS_ERRS.length?"err":"ok"); renderAnStats();
-      BUSY=false; $("anBtn").disabled=false; if(TAB!=="overview"&&TAB!=="inv") render();
+      BUSY=false; $("anBtn").disabled=false;
+      if(TAB==="overview") renderOverview(); else if(TAB!=="inv") render();   // Overview depends on analysis output (stats / maintenance / CVE) - it must repaint too
     }catch(e2){ BUSY=false; $("anBtn").disabled=false; setStatus("Analysis phase failed: "+e2.message,"err"); } }, 30);
   }, 30);
 }
@@ -3962,7 +3971,7 @@ function processHostSync(path){
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
   buildInventory(); extractKeyFilesToc(); parseNode();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
   ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
-  safeStep("uptime", parseUptime); safeStep("install", parseInstallDate); safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
+  safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
   safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
   safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity); safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents);
   if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
