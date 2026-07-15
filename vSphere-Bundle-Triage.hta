@@ -136,7 +136,8 @@
   .roadmap{font-size:11px;color:#8b949e;border:1px dashed #30363d;border-radius:6px;padding:6px 10px;margin-top:8px}
   .panel{border:1px solid #30363d;border-radius:8px;padding:10px 12px;background:#0f141b}
   .panel h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#c9d1d9}
-  .panel h4 .sub{text-transform:none;letter-spacing:0;color:#8b949e;font-weight:400;font-size:11px}
+  .panel h4 .evf{font-size:11px;margin-right:6px;cursor:pointer;white-space:nowrap}
+.sub{text-transform:none;letter-spacing:0;color:#8b949e;font-weight:400;font-size:11px}
   .ind{display:flex;align-items:flex-start;padding:4px 0;border-bottom:1px solid #1c222b;font-size:12px}
   .ind:last-child{border-bottom:none}
   .dot{width:9px;height:9px;border-radius:50%;margin:4px 8px 0 0;flex:0 0 auto;background:#3fb950}
@@ -268,6 +269,7 @@
         <span class="muted" id="anStatus" style="margin-left:8px;font-size:12px">Runs automatically after Analyze.</span>
         <div id="anStats" style="margin-top:8px"></div>
       </div>
+      <div id="ovMaintWrap" class="hide" style="margin-top:12px"><div id="ovMaint"></div></div>
       <div id="ovCve" style="margin-top:12px"></div>
     </div>
 
@@ -284,6 +286,29 @@
         </span>
       </div>
       <div class="scroll" id="vmsScroll" style="max-height:56vh"><table id="vmsTbl"></table></div>
+
+      <!-- Virtual Machine Events -->
+      <div id="vmEvWrap" class="hide" style="margin-top:14px;border-top:1px solid #30363d;padding-top:10px">
+        <div class="row" style="margin-bottom:6px">
+          <b style="font-size:14px">Virtual Machine events</b>
+          <span class="muted" id="vmEvInfo" style="margin-left:10px;font-size:12px"></span>
+          <span style="float:right">
+            <span class="muted" style="font-size:11px;margin-right:4px" title="Show only these kinds of event. All are on by default - untick to narrow.">Type:</span>
+            <label class="evf" title="VM created, cloned, or registered into inventory."><input type="checkbox" class="vmEvK" value="create" checked> create</label>
+            <label class="evf" title="VM destroyed (deleted from disk) or unregistered from inventory. The ransomware-relevant one."><input type="checkbox" class="vmEvK" value="delete" checked> delete</label>
+            <label class="evf" title="VM reconfigured (hardware/settings), renamed, or its template state changed."><input type="checkbox" class="vmEvK" value="modify" checked> modify</label>
+            <label class="evf" title="VM powered on."><input type="checkbox" class="vmEvK" value="start" checked> start</label>
+            <label class="evf" title="VM powered off, suspended, or a guest shutdown/standby was requested. A burst of these before an encryption window is the classic tell."><input type="checkbox" class="vmEvK" value="stop" checked> stop</label>
+            <label class="evf" title="VM reset (hard reboot) or a guest reboot was requested."><input type="checkbox" class="vmEvK" value="reboot" checked> reboot</label>
+            <label class="evf" title="Snapshot created, removed, consolidated, or reverted. Snapshot removal destroys restore points - review against any encryption window."><input type="checkbox" class="vmEvK" value="snapshot" checked> snapshot</label>
+            <label class="evf" title="VM migrated / relocated (vMotion or Storage vMotion), including DRS-initiated moves."><input type="checkbox" class="vmEvK" value="migrate" checked> migrate</label>
+            <input class="txt" id="vmEvQ" placeholder="filter events" style="width:150px;margin-left:6px">
+            <button class="btn green" id="vmEvExport" title="Export the VM events exactly as filtered here to CSV.">Export &rarr; CSV</button>
+          </span>
+        </div>
+        <div class="scroll" id="vmEvScroll" style="max-height:40vh"><table id="vmEvTbl"></table></div>
+        <div class="muted" style="font-size:11px;margin-top:6px" id="vmEvNote"></div>
+      </div>
       <div class="muted" style="font-size:11px;margin-top:6px"><b>Simplified</b> (on by default) shows only VMs with an identified host, with just the VM / Host / Status columns - untick it for the full inventory (VMs with no resolved host: powered off, templates, or baseline-only) and every evidence column. Parsed from the registered VMs' .vmx files on an ESXi bundle; reconstructed from vpxd / DRS dumps / the vSAN-health baseline on a vCenter bundle. <b>Click a VM</b> to open its <b>activity timeline</b> (power / snapshot / migration / guest-op events from vmware.log, with the opID that joins the vCenter task chain) - snapshot delete/consolidate before an encryption window is the ransomware tell; then <i>view .vmx config</i> for disk paths. Guest IP is not captured in ESXi bundles. See Specification for the node's vSAN &amp; disk layout.</div>
     </div>
 
@@ -427,7 +452,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.3.6";
+var APP_VERSION = "1.7.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -803,7 +828,7 @@ function analyze(){
   if(!requireHost()) return;
   var outdir=trimStr($("outDir").value); if(!outdir){ syncOutDir(); outdir=trimStr($("outDir").value); }
   LASTOUTDIR=outdir; EXDIR=outdir+"\\_extracted"; NODEDIR=outdir+"\\_nodecfg"; ensureDir(outdir);
-  ANALYZED=false; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[];
+  ANALYZED=false; LOGON=[]; BF=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[];
   $("anStats").innerHTML=""; $("ovIndic").innerHTML=""; $("ovCve").innerHTML=""; $("anStatus").innerHTML="Logons / Actions / Timeline / Persistence / IOC not parsed yet.";
 
   // folder input?
@@ -1039,7 +1064,7 @@ function analysisRels(){
     addAll(rotationsOf("var/run/log/vobd.log"));                                          // vobd rotations are ALWAYS read (small)
     add(resolveLog(["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]));
     addAll(["etc/hosts","etc/vmsyslog.conf","etc/ntp.conf","etc/resolv.conf",             // parseNode / persistence / security / spec members
-      "etc/vmware/hostd/vmAutoStart.xml","etc/vmware/hostd/dvportgroups.xml.gz","etc/ssh/keys-root/authorized_keys",
+      "etc/vmware/hostd/vmInventory.xml","etc/vmware/hostd/vmAutoStart.xml","etc/vmware/hostd/dvportgroups.xml.gz","etc/ssh/keys-root/authorized_keys",
       "commands/smbiosDump.txt","commands/ifconfig_-a.txt","commands/localcli_hardware-ipmi-bmc-get.txt",
       "commands/ps_-Cc---tree.txt","commands/lw-lsa_get-status.txt","commands/localcli_system-slp-stats-get.txt",
       "commands/localcli_system-settings-advanced-list--d.txt","commands/localcli_system-settings-encryption-get.txt",
@@ -1050,7 +1075,7 @@ function analysisRels(){
       "commands/localcli_storage-filesystem-list--i.txt","commands/localcli_storage-filesystem-list.txt",
       "commands/localcli_vsan-datastore-list.txt","commands/localcli_vsan-storage-list.txt",
       "commands/localcli_storage-core-device-capacity-list.txt","commands/localcli_vm-process-list.txt",
-      "commands/localcli_vsan-cluster-get.txt"]);
+      "commands/localcli_vsan-cluster-get.txt","commands/localcli_system-stats-uptime-get.txt","commands/date.txt","commands/localcli_software-vib-list.txt"]);
   } else if(BTYPE==="vcsa"){
     addLog(["var/log/auth.log"]);                                                         // parseLogons/sudo + IOC + integrity
     addLog(["var/log/vmware/sso/websso.log"]);                                            // parseLogons + IOC + integrity
@@ -1064,7 +1089,7 @@ function analysisRels(){
     addAll(["etc/hosts","etc/rsyslog.conf","etc/crontab","etc/ntp.conf","etc/resolv.conf",
       "etc/applmgmt/appliance/patching_backup_config.json","var/log/vmware/applmgmt/backupSchedulerCron.log",
       "commands/ifconfig_-a.txt","commands/ps_auwwx---sort--rss.txt","commands/route.txt",
-      "commands/sso-config.txt","commands/lw-lsa_get-status.txt"]);
+      "commands/sso-config.txt","commands/lw-lsa_get-status.txt","commands/uptime.txt","commands/date.txt","var/log/vmware/applmgmt/PatchRunner.log","var/log/firstboot/cloudvm.log"]);
     try{ var dsets=drmDumpSets(); addAll(dsets.latest||[]); addAll(dsets.earliest||[]); }catch(eD){}   // VMs-from-logs: DRS dumps
     try{ var hp="var/log/vmware/vsan-health/", hn=listUnder(hp,/-cloud_health_check_data\.json\.gz$/i), ob=listUnder(hp,/_obfuscationTableForHuman\.json\.gz$/i);
       if(hn.length) add(hp+hn[0]); for(var oo=0;oo<ob.length;oo++) add(hp+ob[oo]); }catch(eH){}        // VMs-from-logs: vSAN-health baseline
@@ -1163,6 +1188,285 @@ function idracIp(){
   var t=readMember("commands/localcli_hardware-ipmi-bmc-get.txt");
   var m=String(t).match(/IPv4 Address:\s*(\d{1,3}(?:\.\d{1,3}){3})/i);
   return (m && !/^0\.0\.0\.0$/.test(m[1])) ? m[1] : "";
+}
+/* ---- Virtual Machine Events -------------------------------------------------------------------
+   Per-VM lifecycle from the node's own task stream: create / delete / modify / start / stop / reboot /
+   snapshot / migrate. Methods are matched AS THEY ARE ACTUALLY LOGGED, verified against both reference
+   bundles - NOT as the WSDL/API docs name them:
+     vCenter vpxd : `[VpxLRO] -- BEGIN task-N -- vm-N -- vim.VirtualMachine.powerOff` - VMODL name,
+                    lowercase-initial, and **no `_Task` suffix on anything** (the reference bundle has
+                    reconfigure/createSnapshotEx/shutdownGuest/relocate/powerOff/reset/rename, zero `_Task`).
+     ESXi hostd   : `Task Created : haTask-<objID>-vim.VirtualMachine.unregister-<id>` with `user=` and
+                    `opID=` on the same line - and it is `unregister`, not `unregisterVM`.
+   `_Task` is accepted but never required. */
+var VMEV=[], VMEV_SRC="", VMEV_KINDS=["create","delete","modify","start","stop","reboot","snapshot","migrate","other"];
+var VM_NAME_RE=/\[vim\.VirtualMachine:(vm-\d+),([^\]]{1,80})\]/g;   // hoisted: never rebuild a regex inside a 200k-line loop
+/* Was this log CAPPED by the read limit? logLines() reads only the FIRST LOGCAP bytes (48 MB, or 8 MB
+   when FILE_IO falls back to "fso" on a network/redirected path) and records the fact in LOG_TRUNC.
+   That matters enormously here: the cap keeps the OLDEST bytes, so a capped vpxd log silently drops the
+   NEWEST activity - on the reference bundle an 8 MB read would lose 92% of VM events and everything
+   after 13:33. "No events" and "events past the cap" are different claims, so the panel must say which. */
+function logWasCapped(rel){ var b=lc(baseName(rel||"")); if(!b) return "";
+  for(var i=0;i<LOG_TRUNC.length;i++) if(lc(LOG_TRUNC[i]).indexOf(b)===0) return LOG_TRUNC[i];
+  return ""; }
+var VM_EV_MAP=[
+  [/(Folder|VirtualMachine)\.(createVM|createChildVM)(_Task)?\b/i,      "create",  "VM created"],
+  [/(Folder|VirtualMachine)\.registerVM(_Task)?\b|solo\/registervm/i,   "create",  "VM registered"],
+  [/VirtualMachine\.clone(_Task)?\b/i,                                  "create",  "VM cloned"],
+  [/(VirtualMachine|ManagedEntity|Folder)\.destroy(_Task)?\b/i,         "delete",  "VM/entity DESTROYED (deleted from disk)"],
+  [/VirtualMachine\.unregister(VM)?(_Task)?\b/i,                        "delete",  "VM unregistered from inventory"],
+  [/VirtualMachine\.reconfigure(_Task)?\b/i,                            "modify",  "VM reconfigured (hardware / settings changed)"],
+  [/ManagedEntity\.rename(_Task)?\b/i,                                  "modify",  "VM renamed"],
+  [/VirtualMachine\.(markAsTemplate|markAsVirtualMachine)\b/i,          "modify",  "template state changed"],
+  [/VirtualMachine\.powerOn(_Task)?\b|Drm\.ExecuteVmPowerOnLRO/i,       "start",   "VM powered on"],
+  [/VirtualMachine\.powerOff(_Task)?\b/i,                               "stop",    "VM powered OFF"],
+  [/VirtualMachine\.shutdownGuest\b/i,                                  "stop",    "guest shutdown requested"],
+  [/VirtualMachine\.suspend(_Task)?\b/i,                                "stop",    "VM suspended"],
+  [/VirtualMachine\.standbyGuest\b/i,                                   "stop",    "guest standby requested"],
+  [/VirtualMachine\.reset(_Task)?\b/i,                                  "reboot",  "VM reset (hard reboot)"],
+  [/VirtualMachine\.rebootGuest\b/i,                                    "reboot",  "guest reboot requested"],
+  [/VirtualMachine\.(createSnapshot|createSnapshotEx)(_Task)?\b/i,      "snapshot","snapshot created"],
+  [/VirtualMachine\.(removeSnapshot|removeAllSnapshots|consolidateVMDisks)\w*(_Task)?\b/i,"snapshot","snapshot(s) removed / consolidated"],
+  [/VirtualMachine\.revertToSnapshot\w*(_Task)?\b/i,                    "snapshot","reverted to snapshot"],
+  [/VirtualMachine\.(relocate|migrate)(_Task)?\b|Drm\.ExecuteVMotionLRO/i,"migrate","VM migrated / relocated"]
+];
+function vmEvClassify(method){
+  for(var i=0;i<VM_EV_MAP.length;i++) if(VM_EV_MAP[i][0].test(method)) return {kind:VM_EV_MAP[i][1], what:VM_EV_MAP[i][2]};
+  return null;
+}
+function mkVmEv(ep,ts,vm,kind,what,method,actor,via,src){
+  return {epoch:ep, when:isoShort(ts), vm:vm, kind:kind, what:what, method:method, actor:actor||"", via:via||"", src:src,
+          blob:lc(vm+" "+kind+" "+what+" "+method+" "+(actor||"")+" "+(via||""))};
+}
+/* ESXi: hostd task entity is an objID; etc/vmware/hostd/vmInventory.xml maps objID -> .vmx path.
+   A VM that was UNREGISTERED is (correctly) absent from that file - so an unresolved objID is itself
+   consistent with the unregister rather than a parser failure, and is labelled as such. */
+function esxiObjIdMap(){
+  var txt=readMember("etc/vmware/hostd/vmInventory.xml")||"", map={}, m;
+  var re=/<objID>(\d+)<\/objID>\s*(?:<secDomain>[^<]*<\/secDomain>\s*)?<vmxCfgPath>([^<]+)<\/vmxCfgPath>/ig;
+  while((m=re.exec(txt))) map[m[1]]=baseName(trimStr(m[2])).replace(/\.vmx$/i,"");
+  return map;
+}
+function parseVmEvents(){
+  VMEV=[]; VMEV_SRC=""; var i, m;
+  if(BTYPE==="vcsa"){
+    var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel) return;
+    VMEV_SRC=rel;
+    var lines=logLinesRot(rel,false), names={};
+    /* Name fallback ONLY if parseVms did not already share a map. parseVcsaVms scans THIS SAME log with
+       THIS SAME regex and additionally cracks the vSAN-health baseline, so VM_MOREF_NAME is a superset -
+       running the scan again is pure duplicated work. When it IS needed, prefilter with indexOf and use
+       the hoisted regex: the old code built a NEW RegExp and exec'd it on EVERY line, i.e. ~220k regex
+       executions vs ~1.4k. V8 optimises that away so the Node harness shows no difference - JScript in
+       an HTA does not, which is exactly the kind of cost a Node harness cannot measure. */
+    var haveShared=false; for(var nk in VM_MOREF_NAME){ if(VM_MOREF_NAME.hasOwnProperty(nk)){ haveShared=true; break; } }
+    if(!haveShared){
+      for(i=0;i<lines.length;i++){ var ln=lines[i];
+        if(ln.indexOf("[vim.VirtualMachine:")<0) continue;      // cheap prefilter before the heavy regex
+        VM_NAME_RE.lastIndex=0;
+        while((m=VM_NAME_RE.exec(ln))) if(!names[m[1]]) names[m[1]]=trimStr(m[2]); }
+    }
+    for(i=0;i<lines.length;i++){ var l2=lines[i];
+      if(l2.indexOf("[VpxLRO] -- BEGIN")<0) continue;
+      m=l2.match(/^(\S+Z).*opID=(\S+?)\].*\[VpxLRO\] -- BEGIN \S+ -- (vm-\d+) -- (\S+)/);
+      if(!m) continue;
+      var c=vmEvClassify(m[4]); if(!c) continue;                       // read-only calls (queryChangedDiskAreas, acquireTicket) are not events
+      var who=nearestBefore(VPXD_HUMANS,toEpoch(m[1]));   // same attribution rule as Actions: nearest preceding HUMAN SAML login (approximate)
+      var vnm=VM_MOREF_NAME[m[3]]||names[m[3]]||m[3];   // parseVms runs first and resolves far more names than this pass can
+      VMEV.push(mkVmEv(toEpoch(m[1]),m[1],vnm,c.kind,c.what,m[4],who,m[2],baseName(rel)));
+    }
+  } else if(BTYPE==="esxi"){
+    var hrel=resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]); if(!hrel) return;
+    VMEV_SRC=hrel;
+    var hl=logLinesRot(hrel,DEEPROT), objs=esxiObjIdMap();
+    /* "Task Created" only - hostd logs Created AND Completed for the same task, and they are ONE event.
+       opID/user live in the [Originator@…] bracket; pull them from that bracket rather than trying to
+       thread optional groups through one regex (lazy quantifiers happily skip optional groups and
+       silently yield empty actor/via). */
+    for(i=0;i<hl.length;i++){ var h=hl[i];
+      if(h.indexOf("Task Created")<0) continue;
+      m=h.match(/^(\S+Z)\s.*Task Created\s*:\s*haTask-([^-]*)-(vim\.\S+?)-\d+/);
+      if(!m) continue;
+      var cc=vmEvClassify(m[3]); if(!cc) continue;
+      var br=(h.match(/\[Originator@[^\]]*\]/)||[""])[0];
+      var opid=(br.match(/opID=([^\s\]]+)/)||[])[1]||"";
+      var usr=(br.match(/user=([^\s\]]*)/)||[])[1]||"";
+      var oid=m[2], nm=objs[oid]||("(objID "+oid+" - not in vmInventory.xml, consistent with an unregister/delete)");
+      var via=/^esxui/i.test(opid)?"ESXi Host Client":(/^lro/i.test(opid)?"vCenter task":opid);
+      VMEV.push(mkVmEv(toEpoch(m[1]),m[1],nm,cc.kind,cc.what,m[3],trimStr(usr),via,baseName(hrel)));
+    }
+  }
+  VMEV.sort(function(a,b){ return b.epoch-a.epoch; });
+  if(VMEV.length>3000) VMEV=VMEV.slice(0,3000);
+  appendLog("  VM events: "+nf(VMEV.length)+(VMEV.length?"":" (none in the retained log window)"));
+}
+/* ---- Maintenance Events ----------------------------------------------------------------------
+   The node's own service history: boots, shutdown/reboot (with the REASON where the host records
+   one), maintenance-mode enter/exit, and patch/VIB installs. Answers "was this box touched, when,
+   and was it planned?" - and gives every other finding a backdrop (an action during a patch window
+   reads very differently to the same action at 3am on a quiet host).
+     ESXi    var/run/log/vobd.log + rotations - the host AUDIT stream. Rotations are always read
+             (they are small), so history reaches back well beyond the current boot.
+     vCenter applmgmt/PatchRunner.log (appliance patch start/succeeded/failed) + the vpxd header
+             "time the service was last started". A vc-support bundle has no vobd.
+   Deliberately NOT inferred: nothing here is guessed from absence - if a log was not captured the
+   table simply has no rows for it, and says so. */
+var MAINT=[], VPXD_HUMANS=[], VM_MOREF_NAME={};
+var VOBD_MAINT=[
+  [/esx\.audit\.host\.boot\b/i,                         "boot",        "Host booted"],
+  [/esx\.audit\.host\.stop\.reboot\b/i,                 "reboot",      "Host rebooting"],
+  [/esx\.audit\.host\.stop\.shutdown\b/i,               "shutdown",    "Host shutting down"],
+  [/esx\.audit\.(hostd\.)?host\.reboot\.reason[a-z.]*/i,"reboot",      "Reboot reason recorded"],
+  [/esx\.audit\.maintenancemode\.entering\b/i,          "maintenance", "Entering maintenance mode"],
+  [/esx\.audit\.maintenancemode\.entered\b/i,           "maintenance", "Entered maintenance mode"],
+  [/esx\.audit\.maintenancemode\.exited\b/i,            "maintenance", "Exited maintenance mode"],
+  [/esx\.audit\.esximage\.install\.securityalert\b/i,   "update",      "SECURITY ALERT on image install"],
+  [/esx\.audit\.esximage\.vib\.install\.successful\b/i, "update",      "VIB install completed"],
+  [/esx\.audit\.esximage\.software\.apply\.succeeded\b/i,"update",     "Software image applied"],
+  [/esx\.audit\.esximage\.profile\.update\.successful\b/i,"update",    "Image profile updated"]
+];
+function mkMaint(ep,ts,kind,what,detail,src){ return {epoch:ep, when:isoShort(ts), kind:kind, what:what, detail:trimStr(detail||""), src:src}; }
+function parseMaint(){
+  MAINT=[]; var i, m;
+  if(BTYPE==="esxi"){
+    var rel=resolveLog(["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]);
+    var lines=rel?logLinesRot(rel,true):[];              // force rotations: vobd is small and the history is the point
+    for(i=0;i<lines.length;i++){ var ln=lines[i];
+      if(ln.indexOf("esx.audit.")<0) continue;
+      var ts=(ln.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/)||[])[1]; if(!ts) continue;
+      for(var k=0;k<VOBD_MAINT.length;k++){ if(!VOBD_MAINT[k][0].test(ln)) continue;
+        var det=(ln.match(/\]\s*([^\r\n]+)$/)||[])[1]||"";
+        MAINT.push(mkMaint(toEpoch(ts),ts,VOBD_MAINT[k][1],VOBD_MAINT[k][2],trunc(det,150),baseName(rel)));
+        break; } }
+  } else if(BTYPE==="vcsa"){
+    var pr=resolveLog(["var/log/vmware/applmgmt/PatchRunner.log"]);
+    var pl=pr?logLinesRot(pr,false):[];
+    for(i=0;i<pl.length;i++){ var p=pl[i];
+      var pts=(p.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/)||[])[1]; if(!pts) continue;
+      if(/Start executing (\w+) of vCSA patching/i.test(p)){
+        m=p.match(/Start executing (\w+) of vCSA patching/i);
+        MAINT.push(mkMaint(toEpoch(pts),pts,"update","Appliance patch: "+lc(m[1])+" started","",baseName(pr))); }
+      else if(/Patch vCSA succeeded/i.test(p)) MAINT.push(mkMaint(toEpoch(pts),pts,"update","Appliance patch SUCCEEDED","",baseName(pr)));
+      else if(/Patch vCSA failed|patching failed/i.test(p)) MAINT.push(mkMaint(toEpoch(pts),pts,"update","Appliance patch FAILED",trunc(p,150),baseName(pr)));
+    }
+    /* vpxd records its own last start in every log header - the closest thing a vc-support bundle
+       has to a reboot marker (the service restarts on boot and on a patch). */
+    var vrel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
+    if(vrel){ var vl=logLines(vrel), seen={};
+      for(i=0;i<vl.length && i<400;i++){ m=vl[i].match(/time the service was last started (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/);
+        if(m && !seen[m[1]]){ seen[m[1]]=1; MAINT.push(mkMaint(toEpoch(m[1]),m[1],"service","vpxd service started","the vCenter service restarted - on a reboot, a patch, or a manual restart",baseName(vrel))); } } }
+  }
+  /* the derived boot time is itself an event, and on vCenter it is often the ONLY boot evidence */
+  if(NODE.bootedEpoch){
+    var have=false; for(i=0;i<MAINT.length;i++) if(MAINT[i].kind==="boot" && Math.abs(MAINT[i].epoch-NODE.bootedEpoch)<600) have=true;
+    if(!have) MAINT.push(mkMaint(NODE.bootedEpoch, new Date(NODE.bootedEpoch*1000).toISOString(), "boot",
+      "Booted (derived from uptime)", "capture time minus uptime ("+NODE.uptime+") - not a log entry", NODE.uptimeSrc||"uptime"));
+  }
+  MAINT.sort(function(a,b){ return b.epoch-a.epoch; });   // newest first: the recent history is what matters
+  if(MAINT.length>400) MAINT=MAINT.slice(0,400);
+  appendLog("  maintenance: "+nf(MAINT.length)+" event(s)");
+}
+function maintCls(k){ return k==="update"?"audit":(k==="maintenance"?"net":(k==="boot"?"auth":"danger")); }
+function renderMaint(){
+  if(!MAINT.length){ $("ovMaint").innerHTML=""; showEl("ovMaintWrap",false); return; }
+  showEl("ovMaintWrap",true);
+  var h='<div class="panel"><h4>Maintenance events <span class="sub">- '+MAINT.length+' (newest first)'
+    +(BTYPE==="esxi"?" from the vobd audit log + rotations":" from the appliance patch log + vpxd service starts")+'</span></h4>'
+    +'<div class="scroll" id="ovMaintScroll" style="max-height:30vh"><table id="ovMaintTbl"><thead><tr>'
+    +'<th title="When the event happened, UTC.">When (UTC)</th>'
+    +'<th title="boot / reboot / shutdown / maintenance mode / update. Colour-coded so a patch window is easy to spot behind the other findings.">Kind</th>'
+    +'<th title="What the node recorded. On ESXi these are esx.audit.* entries from the host&#39;s own audit stream, so they are the host&#39;s account of itself.">Event</th>'
+    +'<th title="The detail the host logged - e.g. the reboot reason, or which image profile was applied.">Detail</th>'
+    +'<th title="Which log the row came from - your evidence citation.">Log</th>'
+    +'</tr></thead><tbody>';
+  for(var i=0;i<MAINT.length;i++){ var e=MAINT[i];
+    h+='<tr><td class="mono">'+esc(e.when)+'</td>'
+      +'<td><span class="tag '+maintCls(e.kind)+'">'+esc(e.kind)+'</span></td>'
+      +'<td>'+esc(e.what)+'</td>'
+      +'<td class="mono muted" style="font-size:11px" title="'+esc(e.detail)+'">'+esc(trunc(e.detail,90)||"-")+'</td>'
+      +'<td class="mono muted" style="font-size:11px">'+esc(e.src)+'</td></tr>'; }
+  h+='</tbody></table></div></div>'; $("ovMaint").innerHTML=h;
+  /* Freeze the header row: the point of this table is scanning a long history, and a scrolled-away
+     header makes the columns unreadable. This panel is rebuilt via innerHTML, so its scroll div is a
+     NEW element each time - wireFreeze() re-attaches onscroll to it (a one-shot freezeThs() would only
+     set the header's initial position and never follow the scroll). Same pattern as netBody/corrBody. */
+  wireFreeze($("ovMaint"));
+}
+/* ---- uptime / boot time ---------------------------------------------------------------------
+   Two different sources, one answer:
+     ESXi    commands/localcli_system-stats-uptime-get.txt -> a bare MICROSECONDS-since-boot integer
+     vCenter commands/uptime.txt -> the Linux `uptime` line ("19:25:14 up 291 days,  5:54,  1 user, ...")
+   Boot time = capture time (commands/date.txt) MINUS uptime, so it can be lined up against the
+   Maintenance Events table. Cross-checked on both reference bundles and it holds:
+     ESXi    241.7d -> boot 19:53; the live vobd.log opens 19:55:23 with its boot event at 19:55:30.
+     vCenter 291d   -> boot 13:31; PatchRunner logged "Patch vCSA succeeded" 13:28:35 and vpxd
+                       restarted 13:32:00 - i.e. patched, rebooted, up ever since.
+   Two independent witnesses per bundle, so the parse is not taken on trust. */
+function humanDur(sec){
+  sec=Math.floor(sec); if(!(sec>0)) return "";
+  var d=Math.floor(sec/86400), h=Math.floor((sec%86400)/3600), m=Math.floor((sec%3600)/60);
+  if(d) return d+" day"+(d===1?"":"s")+(h?(" "+h+"h"):"")+(m&&!h?(" "+m+"m"):"");
+  if(h) return h+"h"+(m?(" "+m+"m"):"");
+  return m+"m";
+}
+function captureEpoch(){
+  var d=trimStr(readMember("commands/date.txt")||"");     // e.g. "Wed Jun 25 19:25:14 UTC 2025"
+  var m=d.match(/^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+\w+\s+(\d{4})/);
+  if(m){ var MO={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    var mo=MO[lc(m[1])]; if(mo!=null) return Math.floor(Date.UTC(+m[6],mo,+m[2],+m[3],+m[4],+m[5])/1000); }
+  var c=NODE.captured||""; var e=toEpoch(String(c).replace(" ","T")); if(e) return e;   // README "Captured on:"
+  return 0;
+}
+/* ---- install / deploy date ------------------------------------------------------------------
+   Neither platform records "install date" as a field, so BOTH values here are DERIVED and labelled as
+   such - the source is always shown so the number can be challenged.
+     ESXi    the MODAL VIB install date from `esxcli software vib list` = when the base image was laid
+             down (reference host: 84 VIBs on one date, then 2+2 on two later patch dates - the mode is
+             unambiguous). Reuses vibBaseDate(), the same function the Security tab already uses for
+             "VIBs added after the base image", so the two can never disagree.
+             NOT used: `software profile get` Creation Time - that is when the CURRENT image profile was
+             assembled (i.e. the last update - on the reference host that was ~18 months AFTER the real
+             install), not the original install itself.
+     vCenter the earliest timestamp in var/log/firstboot/cloudvm.log - firstboot runs when the appliance
+             is deployed. 21 KB, so it is cheap to read. NB patching re-runs some firstboot scripts (5 of
+             the reference host's 119 firstboot files carry the patch date), which is exactly why this
+             takes the EARLIEST entry of the deploy log rather than a directory mtime.
+   If the source is absent the field is simply omitted - never guessed. */
+function parseInstallDate(){
+  if(BTYPE==="esxi"){
+    var vl=(typeof parseVibs==="function")?parseVibs():[];
+    if(!vl.length) return;
+    var d=vibBaseDate(vl);
+    if(/^\d{4}-\d{2}-\d{2}/.test(d||"")){ NODE.install=d; NODE.installSrc="base image - most common VIB install date (esxcli software vib list)"; }
+  } else if(BTYPE==="vcsa"){
+    var txt=readMember("var/log/firstboot/cloudvm.log")||"";
+    var m=txt.match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);      // first ISO stamp = deploy start
+    if(m){ NODE.install=m[1]+" "+m[2]+" UTC"; NODE.installSrc="appliance deploy - earliest entry in var/log/firstboot/cloudvm.log"; }
+  }
+  if(NODE.install) appendLog("  install date: "+NODE.install+"  ("+NODE.installSrc+")");
+}
+function parseUptime(){
+  var secs=0, src="";
+  if(BTYPE==="esxi"){
+    var u=trimStr(readMember("commands/localcli_system-stats-uptime-get.txt")||"");
+    var mu=u.match(/^(\d{6,})\s*$/);                       // microseconds since boot
+    if(mu){ secs=Math.floor(parseInt(mu[1],10)/1000000); src="localcli system stats uptime get"; }
+  } else {
+    var t=trimStr(readMember("commands/uptime.txt")||"");
+    var mm=t.match(/\bup\s+(.+?),\s+\d+\s+user/i) || t.match(/\bup\s+(.+?)$/i);
+    if(mm){ var b=trimStr(mm[1]), s=0, x;
+      /* the tail is ONE of: "5:54" (h:mm) | "7 min" | "2 hours" - days may prefix any of them */
+      x=b.match(/(\d+)\s+day/i);                          if(x) s+=parseInt(x[1],10)*86400;
+      var hm=b.match(/(\d+):(\d{2})/);
+      if(hm) s+=parseInt(hm[1],10)*3600+parseInt(hm[2],10)*60;
+      else { x=b.match(/(\d+)\s+hour/i);                  if(x) s+=parseInt(x[1],10)*3600;
+             x=b.match(/(\d+)\s+min/i);                   if(x) s+=parseInt(x[1],10)*60; }
+      if(s>0){ secs=s; src="uptime"; } }
+  }
+  if(!secs) return;
+  NODE.uptimeSec=secs; NODE.uptime=humanDur(secs); NODE.uptimeSrc=src;
+  var cap=captureEpoch();
+  if(cap){ NODE.bootedEpoch=cap-secs; NODE.booted=isoShort(new Date((cap-secs)*1000).toISOString())+" UTC"; }
 }
 function parseNode(){
   NODE={}; NODE.type=typeLabel();
@@ -1352,7 +1656,7 @@ function openIocEditor(){
 }
 function closeIocEditor(){ showEl("iocModal",false); }
 function renderIocTable(){
-  var h='<table id="iocTbl" class="ioctbl"><tr><th>Value</th><th style="width:110px">Type</th><th>Note</th><th style="width:150px">Case</th><th style="width:34px"></th></tr>';
+  var h='<table id="iocTbl" class="ioctbl"><tr><th title="The indicator to sweep for: an IP, domain, hash, filename, path or keyword. Matched case-insensitively across the key logs.">Value</th><th style="width:110px" title="Classification for your own bookkeeping (hash / ip / domain / filename / path / keyword). It does not change how the sweep matches.">Type</th><th title="Free text - where the IOC came from, or what it means. Carried into the IOC.csv, not into matching.">Note</th><th style="width:150px" title="Which case this IOC belongs to, so one shared list can serve several investigations.">Case</th><th style="width:34px" title="Remove this IOC from the list."></th></tr>';
   for(var i=0;i<IOC_ROWS.length;i++){ var r=IOC_ROWS[i];
     h+='<tr><td><input class="txt" id="ioc_v_'+i+'" value="'+esc(r.v)+'" onchange="iocAutoType(this)"></td>';
     h+='<td><select id="ioc_t_'+i+'">';
@@ -1404,17 +1708,111 @@ function ipIsLocal(ip){ ip=String(ip||""); if(ip===""||ip==="*"||ip==="::"||ip==
 function isLoopback(ip){ ip=String(ip||""); return /^127\./.test(ip)||ip==="::1"||/^::ffff:127\./i.test(ip); }
 function isPrivUser(u){ u=lc(u); return u==="root"||u.indexOf("administrator@")===0||u==="administrator"||u==="vpxuser"===false&&/admin/.test(u); }
 /* ESXi attacker/ransomware command tells */
-function susCmd(c){ c=lc(c);
-  if(/esxcli\s+system\s+settings\s+encryption\s+(set|recovery)/.test(c)) return "host-encryption change / recovery-key access";
-  if(/vim-cmd\s+vmsvc\/power\.off|esxcli\s+vm\s+process\s+kill/.test(c)) return "VM power-off / process kill";
-  if(/vim-cmd\s+hostsvc\/(enable_ssh|start_ssh)|(tsm-ssh|ssh).*(enable|start)/.test(c)) return "SSH / ESXi Shell enabled";
-  if(/firewall\s+set\s+--enabled\s+(false|0)/.test(c)) return "firewall disabled";
-  if(/acceptance\s+set.*communitysupport|--level=communitysupport/.test(c)) return "VIB acceptance downgraded";
-  if(/(wget|curl)\b.*\|\s*(ba)?sh|base64\s+-d|python[0-9.]*\s+-c|\/dev\/tcp\//.test(c)) return "download/decoder/reverse-shell pattern";
-  if(/\bnc\b\s+-|ncat|socat/.test(c)) return "netcat/socat";
-  if(/(\/tmp\/|\/scratch\/)\S+\.(sh|py|pl|bin)|chmod\s+\+x\s+(\/tmp|\/scratch)/.test(c)) return "executable staged in tmp/scratch";
-  if(/vmkfstools.*vmx|for\b.*vmdk|\.vmdk.*(rm|delete|crypt)/.test(c)) return "bulk VMDK/VMX manipulation";
-  return "";
+/* ---- shell/sudo command scoring ----------------------------------------------------------------
+   Returns null, or {s:<score>, why:"<reason>"}. TIERED, because a single routine power-off is not the
+   same finding as a reverse shell (both were +3 before):
+     5 CRITICAL - no benign admin reading (ransom rename, C2, mass destruction, encryption disabled)
+     3 HIGH     - security-control change or destructive, but an admin legitimately might
+     2 MEDIUM   - notable in context (registration, lock tampering, hiding warnings, secret recon)
+     1 LOW      - enumeration; the step that precedes mass encryption in the ESXi kill chain
+   NB the indicator panel greps these reason strings by SUBSTRING via actCount() - the fragments
+   "host-encryption", "VM power-off", "SSH / ESXi Shell enabled", "firewall disabled", "bulk VMDK",
+   "download/decoder", "netcat", "executable staged" MUST survive any rewording here. */
+var ADMIN_SUFFIX=/^(bak|old|orig|save|sav|copy|tmp|temp|lck|lock|prev|new|\~|\d{1,3})$/i;
+/* ransom rename: mv/cp whose TARGET is a VM core file with a further extension appended
+   (web.vmx -> web.vmx.locked, disk.vmdk -> disk.vmdk.8base). Admin suffixes (.bak/.old/.lck...)
+   are excluded - an admin shuffling lock/backup copies is not a ransomware rename. */
+function ransomRename(c){
+  var re=/\b(?:mv|cp|rename)\b[^|;&]*?\.(?:vmx|vmdk|nvram|vmsd|vmxf)\.([a-z0-9_~-]{1,16})(?:["'\s]|$)/ig, m, hit="";
+  while((m=re.exec(c))){ if(!ADMIN_SUFFIX.test(m[1])){ hit=m[1]; break; } }
+  return hit;
+}
+/* ---- vCenter/vpxa TASK scoring (the API-side equivalent of susCmdT) --------------------------
+   An attacker who owns vCenter does the damage through the vSphere API, not a shell - so a vCenter
+   bundle needs its own ladder. ALL TESTS ARE CASE-INSENSITIVE: vpxd logs the lowercase-initial VMODL
+   name (`vim.VirtualMachine.powerOff_Task`), not the WSDL name (`PowerOff_Task`). The previous
+   scorer hard-coded WSDL casing with no /i flag, so 6 of its 7 patterns could never fire - the
+   "Destructive / authz-changing vCenter task" indicator would have read "clear / 0 task(s)" during a
+   live mass deletion. Tiers mirror susCmdT: 5 = destroys DATA, 3 = destroys/regrants ACCESS or state,
+   2 = notable. Deliberately NOT scored: reconfigure/relocate/migrate/clone and the read-only query
+   methods - they are the constant background of a healthy vCenter (>99% of tasks in the reference
+   bundle) and scoring them would bury the real findings. */
+function susTask(m){
+  if(!m) return null; var t=String(m);
+  function R(s,tag,why){ return {s:s, tag:tag, why:why}; }
+  /* ***** _Task IS OPTIONAL. ***** vpxd logs the bare VMODL name with NO suffix - the reference
+     bundle contains `vim.VirtualMachine.powerOff` and `vim.VirtualMachine.reset` and NOT ONE method
+     anywhere carrying `_Task`. v1.4.2 fixed the WSDL-vs-VMODL casing but kept the `_Task` suffix
+     assumption, so every real VM operation still scored 0 (2 genuine power-offs + a reset were being
+     missed). ESXi hostd differs again: `vim.VirtualMachine.unregister`, not `unregisterVM`.
+     So: suffix optional, and the ENTITY is named wherever the bare verb is ambiguous
+     (`vim.view.View.destroy` is UI teardown, not a VM deletion). */
+  /* 5: irreversible destruction of VM DATA via the API */
+  if(/\b(deleteDatastoreFile|deleteVirtualDisk|deleteDirectory|deleteFile)\w*(_Task)?\b/i.test(t)) return R(5,"DESTRUCTIVE","VM files/disks DELETED via the vCenter API");
+  /* 3: destroys VM state, or re-grants ACCESS */
+  if(/(VirtualMachine|ManagedEntity|Folder|Datacenter|ResourcePool|VirtualApp)\.destroy(_Task)?\b/i.test(t)) return R(3,"DESTRUCTIVE","entity destroyed (VM/folder deletion)");
+  if(/VirtualMachine\.unregister(VM)?\b/i.test(t)) return R(3,"DESTRUCTIVE","VM unregistered from inventory");
+  if(/VirtualMachine\.powerOff(_Task)?\b/i.test(t)) return R(3,"DESTRUCTIVE","VM powered off");
+  if(/VirtualMachine\.(removeSnapshot|removeAllSnapshots|consolidateVMDisks)\w*(_Task)?\b/i.test(t)) return R(3,"DESTRUCTIVE","snapshot(s) removed/consolidated - destroys restore points; review against any encryption window");
+  if(/VirtualMachine\.reset(_Task)?\b/i.test(t)) return R(3,"DESTRUCTIVE","VM hard-reset");
+  if(/\b(add|remove|update)AuthorizationRole\b/i.test(t)) return R(3,"AUTHZ","role added/removed/updated");
+  if(/\b(set|reset|remove)EntityPermissions\b/i.test(t)) return R(3,"AUTHZ","entity permissions changed");
+  if(/\b(create|delete|update)User\b|\baddGroup\b/i.test(t)) return R(3,"AUTHZ","SSO user/group changed");
+  if(/FirewallSystem\.(disableRuleset|updateDefaultPolicy)/i.test(t)) return R(3,"EXPOSURE","host firewall ruleset/default policy changed via vCenter");
+  /* 2: a host service was started//re-policied via vCenter. NOT destructive, and NOT necessarily SSH:
+     vpxd logs only the method + the serviceSystem MoRef - the SERVICE NAME IS NOT IN THE LOG, so this
+     cannot be graded higher without guessing. Enabling SSH this way is a real vCenter->host TTP, but so
+     is restarting ntpd. Say so, and point at where the answer actually lives. */
+  if(/host\.ServiceSystem\.(start|restart|updatePolicy)/i.test(t)) return R(2,"EXPOSURE","host service started/re-policied via vCenter - vpxd does NOT record WHICH service (could be SSH/TSM, ntpd, snmpd...). Confirm in that host's own bundle: vobd.log ssh.enabled / shell.enabled, or hostd");
+  if(/\bmarkAsTemplate\b|\bmarkAsVirtualMachine\b/i.test(t)) return R(2,"CONFIG","VM template state changed");
+  return null;
+}
+function susCmd(c){ var r=susCmdT(c); return r?r.why:""; }   // legacy string form
+/* NB `raw` keeps the ORIGINAL case on purpose: vmkfstools flags are case-sensitive and mean different
+   things - -U deletes a vdisk and -E renames one (destructive), while -D dumps lock info and -P queries
+   the fs (read-only diagnostics an admin runs on a locked VM). Lowercasing conflates them, which is how
+   a benign `vmkfstools -D <vm>.vmx` used to score +3 as "bulk VMDK/VMX manipulation". */
+function susCmdT(c){ var raw=String(c==null?"":c); c=lc(raw);
+  function R(s,why){ return {s:s, why:why}; }
+
+  /* ---- 5: CRITICAL ---- */
+  var rr=ransomRename(c);
+  if(rr) return R(5,"RANSOM-STYLE RENAME of VM files (bulk VMDK/VMX manipulation) - appended '."+rr+"'");
+  if(/\brm\b\s+-[a-z]*[rf][a-z]*\s+[^|;&]*\/vmfs\/volumes\//.test(c)) return R(5,"datastore files deleted (bulk VMDK/VMX manipulation) - rm -rf under /vmfs/volumes");
+  if(/\bfind\b[^|;&]*\.vmdk[^|;&]*-exec\s+rm|\bfor\b[^;]*\.vmdk[^;]*;\s*do[^;]*\brm\b/.test(c)) return R(5,"bulk VMDK delete loop (bulk VMDK/VMX manipulation)");
+  if(/vmkfstools\s+[^|;&]*(-U\b|--deletevirtualdisk)/.test(raw)) return R(5,"virtual disk DELETED (bulk VMDK/VMX manipulation) - vmkfstools -U");
+  if(/(wget|curl)\b[^|;&]*\|\s*(ba)?sh|base64\s+-d[^|;&]*\|\s*(ba)?sh|\/dev\/tcp\//.test(c)) return R(5,"download/decoder/reverse-shell pattern");
+  if(/\bnc\b\s+-[a-z]*e|ncat\b[^|;&]*-e|socat\b[^|;&]*exec/.test(c)) return R(5,"netcat/socat reverse shell");
+  if(/\bfor\b[^;]*;\s*do[^;]*(vim-cmd\s+vmsvc\/power\.off|vm\s+process\s+kill)/.test(c)) return R(5,"MASS VM power-off / kill loop");
+  if(/encryption\s+set[^|;&]*--mode=none/.test(c)) return R(5,"host-encryption DISABLED (--mode=none)");
+  if(/(^|[\s;&|])(\/tmp\/|\/scratch\/)\S+\.(sh|py|pl|bin)(\s|$|;|&|\|)/.test(c)) return R(5,"payload executed from tmp/scratch (executable staged in tmp/scratch)");
+  if(/>>?\s*\/var\/spool\/cron|crontab\s+[^|;&]*\/tmp\//.test(c)) return R(5,"cron persistence written");
+
+  /* ---- 3: HIGH ---- */
+  if(/esxcli\s+system\s+settings\s+encryption\s+(set|recovery)/.test(c)) return R(3,"host-encryption change / recovery-key access");
+  if(/vim-cmd\s+hostsvc\/(enable_ssh|start_ssh)|(tsm-ssh|ssh)[^|;&]*(enable|start)/.test(c)) return R(3,"SSH / ESXi Shell enabled");
+  if(/firewall\s+set\s+--enabled\s+(false|0)/.test(c)) return R(3,"firewall disabled");
+  if(/acceptance\s+set[^|;&]*communitysupport|--level=communitysupport/.test(c)) return R(3,"VIB acceptance downgraded");
+  if(/vim-cmd\s+vmsvc\/power\.off|esxcli\s+vm\s+process\s+kill/.test(c)) return R(3,"VM power-off / process kill");
+  if(/vmkfstools\s+[^|;&]*(-E\b|--renamevirtualdisk)/.test(raw)) return R(3,"virtual disk renamed (bulk VMDK/VMX manipulation) - vmkfstools -E");
+  if(/vmkfstools\s+[^|;&]*(-i\b|--clonevirtualdisk|-X\b|--extendvirtualdisk|-K\b|--punchzero)/.test(raw)) return R(3,"virtual disk cloned/extended (bulk VMDK/VMX manipulation)");
+  if(/vim-cmd\s+vmsvc\/unregister/.test(c)) return R(3,"VM unregistered");
+  if(/\b(cat|less|more|cp|scp|grep)\b[^|;&]*\/etc\/(shadow|passwd)\b/.test(c)) return R(3,"credential file access (/etc/shadow|passwd)");
+  if(/(^|[\s;&|>])(vi|vim|nano|sed|echo|cat|cp|mv)\b[^|;&]*\/etc\/rc\.local\.d\/|>>?\s*\/etc\/rc\.local\.d\//.test(c)) return R(3,"boot persistence edited (/etc/rc.local.d)");
+  if(/\bcrontab\b\s+-[er]/.test(c)) return R(3,"cron edited");
+  if(/chmod\s+[^|;&]*\+x[^|;&]*(\/tmp|\/scratch)/.test(c)) return R(3,"executable staged in tmp/scratch (chmod +x)");
+  if(/\bwget\b|\bcurl\b|\btftp\b|\bscp\b\s+\S+@/.test(c)) return R(3,"file download / transfer from the host");
+
+  /* ---- 2: MEDIUM ---- */
+  if(/vim-cmd\s+solo\/registervm|vim-cmd\s+vmsvc\/reload/.test(c)) return R(2,"VM registered / reloaded");
+  if(/\b(mv|cp|rm)\b[^|;&]*\.(vmx|vmdk)\.(lck|lock)\b|\.lck\b[^|;&]*\b(mv|rm)\b/.test(c)) return R(2,"VM lock file moved/removed (force-unlock)");
+  if(/settings\s+advanced\s+set[^|;&]*(suppressshellwarning|suppresshyperthreadingwarning|userworldswapenabled)/.test(c)) return R(2,"host warning suppressed (advanced setting)");
+  if(/esxcli\s+system\s+settings\s+encryption\s+get/.test(c)) return R(2,"host-encryption state queried");
+  if(/\besxcli\s+system\s+account\b|\buseradd\b|\bpasswd\b\s+\w/.test(c)) return R(2,"local account added / password changed");
+
+  /* ---- 1: LOW (enumeration - the ESXi kill-chain step before mass encryption) ---- */
+  if(/vim-cmd\s+vmsvc\/getallvms|esxcli\s+vm\s+process\s+list/.test(c)) return R(1,"VM enumeration");
+  return null;
 }
 function push(arr,r){ arr.push(r); }
 
@@ -1541,6 +1939,78 @@ function scoreLogon(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob)
   if(r.result==="FAIL"){ r.score+=1; r.tags.push("FAILED"); r.reasons.push("failed authentication"); }
   if(/^root$/i.test(r.user)||/^administrator(@|$)/i.test(r.user)){ r.score+=1; r.tags.push("PRIV"); r.reasons.push("privileged account: "+r.user); }
 }
+/* ---- brute-force / password-spray detection -------------------------------------------------
+   Keyed on SHAPE, not volume. A raw failure COUNT is close to meaningless here: websso.log is
+   long-lived (the reference vCenter's spans ~2 years), so any real estate accumulates hundreds of
+   benign failures - typos, stale saved passwords, a service account with an old secret - and a
+   "failures >= N" indicator then fires on every healthy vCenter forever. Real guessing is
+   CLUSTERED IN TIME:
+     BURST  same (ip,user):  >= BF_FAILS failures within BF_WIN               (credential guessing)
+     SPRAY  same ip:         >= BF_SPRAY_USERS distinct users within BF_SPRAY_WIN (password spray)
+     BREACH a BURST/SPRAY from an ip followed by a SUCCESS from it within BF_WIN - guessing that WORKED
+   A public source IP uses the lower BF_FAILS_EXT bar: internet-facing guessing is never routine.
+   Honest-negative check on the reference bundle: 245 failures / 39 users / 48 internal IPs, worst
+   single (ip,user) 7-in-5-min, and the top failing accounts succeed far more often than they fail
+   (a human mistyping, not an attacker) -> every signal correctly CLEAR. */
+var BF_WIN=300, BF_FAILS=10, BF_FAILS_EXT=5, BF_SPRAY_WIN=1800, BF_SPRAY_USERS=10;
+function bfAnalyze(){
+  var i, j, r, fails=[], oks=[];
+  for(i=0;i<LOGON.length;i++){ r=LOGON[i];
+    if(!r.ip && !r.user) continue;
+    if(!inWin(r.epoch)) continue;                 // honour the case window - the indicator must agree with the tab
+    if(r.result==="FAIL") fails.push(r); else if(r.result==="OK") oks.push(r); }
+  function byEp(a,b){ return a.epoch-b.epoch; }
+  fails.sort(byEp); oks.sort(byEp);
+  var res={bursts:[], sprays:[], breaches:[], worstBurst:0, worstSpray:0, nFail:fails.length};
+
+  /* BURST: sliding window over each (ip,user) */
+  var pairs={};
+  for(i=0;i<fails.length;i++){ r=fails[i]; var k=lc((r.ip||"?")+"|"+(r.user||"?"));
+    if(!pairs[k]) pairs[k]={ip:r.ip,user:r.user,rows:[]}; pairs[k].rows.push(r); }
+  for(var pk in pairs){ if(!pairs.hasOwnProperty(pk)) continue; var p=pairs[pk];
+    var need=(p.ip && !ipIsLocal(p.ip)) ? BF_FAILS_EXT : BF_FAILS;
+    var best=0, bestAt=null, s=0;
+    for(i=0;i<p.rows.length;i++){ while(p.rows[i].epoch-p.rows[s].epoch>BF_WIN) s++;
+      var n=i-s+1; if(n>best){ best=n; bestAt=p.rows[s]; } }
+    if(best>res.worstBurst) res.worstBurst=best;
+    if(best>=need){ res.bursts.push({ip:p.ip,user:p.user,n:best,when:bestAt?bestAt.when:"",ext:!!(p.ip&&!ipIsLocal(p.ip))});
+      for(i=0;i<p.rows.length;i++){ p.rows[i].bf="burst"; } } }
+
+  /* SPRAY: one ip, many DISTINCT users in a window */
+  var ips={};
+  for(i=0;i<fails.length;i++){ r=fails[i]; if(!r.ip) continue; var ik=lc(r.ip);
+    if(!ips[ik]) ips[ik]={ip:r.ip,rows:[]}; ips[ik].rows.push(r); }
+  for(var ik2 in ips){ if(!ips.hasOwnProperty(ik2)) continue; var q=ips[ik2];
+    var bestU=0, atU=null;
+    for(i=0;i<q.rows.length;i++){ var seen={}, c=0;
+      for(j=i;j<q.rows.length && q.rows[j].epoch-q.rows[i].epoch<=BF_SPRAY_WIN;j++){
+        var u=lc(q.rows[j].user||"?"); if(!seen[u]){ seen[u]=1; c++; } }
+      if(c>bestU){ bestU=c; atU=q.rows[i]; } }
+    if(bestU>res.worstSpray) res.worstSpray=bestU;
+    if(bestU>=BF_SPRAY_USERS){ res.sprays.push({ip:q.ip,users:bestU,when:atU?atU.when:"",ext:!!(q.ip&&!ipIsLocal(q.ip))});
+      for(i=0;i<q.rows.length;i++){ q.rows[i].bf=q.rows[i].bf||"spray"; } } }
+
+  /* BREACH: a flagged ip then succeeds shortly after - guessing that worked */
+  var hot={}; for(i=0;i<res.bursts.length;i++) hot[lc(res.bursts[i].ip||"?")]=1;
+  for(i=0;i<res.sprays.length;i++) hot[lc(res.sprays[i].ip||"?")]=1;
+  for(i=0;i<oks.length;i++){ var o=oks[i]; if(!o.ip || !hot[lc(o.ip)]) continue;
+    for(j=0;j<fails.length;j++){ var f=fails[j];
+      if(lc(f.ip||"")!==lc(o.ip)) continue;
+      if(o.epoch>=f.epoch && (o.epoch-f.epoch)<=BF_WIN){
+        res.breaches.push({ip:o.ip,user:o.user,when:o.when}); o.bf="breach"; break; } } }
+  return res;
+}
+/* apply the cluster verdict to the member rows: only rows that are PART of a real burst/spray get
+   tagged + scored, so a lone typo stays score 1 (FAILED) and never reads as an attack. */
+function bfApply(){
+  var bf=bfAnalyze(), i, r;
+  for(i=0;i<LOGON.length;i++){ r=LOGON[i]; if(!r.bf) continue;
+    if(r.bf==="breach"){ r.score+=5; r.tags.push("BREACH"); r.reasons.push("SUCCESSFUL login from an IP that was brute-forcing/spraying - treat as compromised"); }
+    else if(r.bf==="spray"){ r.score+=3; r.tags.push("SPRAY"); r.reasons.push("password spray: this source IP failed against many distinct users in a short window"); }
+    else { r.score+=3; r.tags.push("BURST"); r.reasons.push("brute-force burst: repeated failures for this user from this IP in a short window"); } }
+  BF=bf; return bf;
+}
+var BF=null;
 function parseActions(){
   ACTIONS=[]; var i,m,ep;
   if(BTYPE==="esxi"){
@@ -1558,6 +2028,7 @@ function parseActions(){
       var usr=trimStr(lm[2])+"@"+trimStr(lm[3]), lep=toEpoch(lm[1]); humans.push({ep:lep,user:usr});
       if(!lastPush[lc(usr)] || (lep-lastPush[lc(usr)])>60){ var lg=mkLogon(lep,lm[1],"OK",usr,"","vpxd/SAML","vpxd.log"); scoreLogon(lg); LOGON.push(lg); lastPush[lc(usr)]=lep; } }
     humans.sort(function(a,b){ return a.ep-b.ep; });
+    VPXD_HUMANS=humans;   // shared: parseVmEvents attributes VM events with the same nearest-preceding-login rule
     // pass 2: meaningful tasks, attributed to the nearest-preceding human login (approximate)
     for(i=0;i<vp.length;i++){ if(vp[i].indexOf("[VpxLRO] -- BEGIN")<0) continue;   // cheap prefilter before the heavy regex
       m=vp[i].match(/^(\S+Z).*opID=(\S+)\].*\[VpxLRO\] -- BEGIN (?:lro-\d+|task-\d+)(?:\s+--\s+session\[[^\]]*\]\S*)?\s+--\s+(?:\S+\s+--\s+)?(vim\.\S+)\s+--/);
@@ -1812,13 +2283,35 @@ function parseRhttp(){
   recent.reverse();
   return { kind:"esxi", title:"WEB / API CONNECTIONS - Host Client / API (rhttpproxy)", file:baseName(rel), path:ensureExtracted(rel), reqs:reqs, err:0, codes:{}, ips:arr, external:ext, sus:[], recent:recent, truncated:false };
 }
-var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup)/;
+/* CASE-INSENSITIVE on purpose. vpxd logs the VMODL name, which starts LOWERCASE
+   (`vim.ManagedEntity.destroy_Task`, `vim.AuthorizationManager.removeAuthorizationRole`) - not the
+   WSDL name (`Destroy_Task`, `RemoveAuthorizationRole`). Without /i this gate silently DROPPED
+   unregisterVM and every role change before they could reach the Actions tab, so an attacker granting
+   themselves a role was invisible. `vim.view.View.destroy` stays excluded - it has no `_Task` suffix
+   and is UI teardown noise (match `_Task`, never the bare word "destroy"). */
+/* `_Task` is OPTIONAL, not required: vpxd logs the bare VMODL name and the reference bundle contains
+   ZERO `_Task` methods - so a gate keyed on `_Task\b` dropped every real VM operation (2 genuine
+   powerOffs and a reset among them). The mutating VM verbs are therefore listed explicitly, entity-
+   qualified where the bare verb is ambiguous. `vim.view.View.destroy` must stay OUT (UI teardown), so
+   destroy is matched only on VirtualMachine/ManagedEntity/Folder. Read-only calls (queryChangedDiskAreas,
+   acquireTicket, retrieveContent...) are simply absent from the list. */
+var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup|ServiceSystem\.(start|restart|updatePolicy)|FirewallSystem\.(disableRuleset|updateDefaultPolicy)|deleteDirectory|deleteFile|deleteDatastoreFile|deleteVirtualDisk|(VirtualMachine|ManagedEntity|Folder)\.destroy\b|VirtualMachine\.(unregister(VM)?|powerOn|powerOff|reset|suspend|shutdownGuest|rebootGuest|standbyGuest|reconfigure|relocate|migrate|clone|createSnapshot(Ex)?|removeSnapshot|removeAllSnapshots|revertToSnapshot|consolidateVMDisks|markAsTemplate|markAsVirtualMachine|createVM|createChildVM|registerVM)\b|ManagedEntity\.rename\b)/i;
 function nearestBefore(arr,ep){ var best=""; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep) best=arr[i].user; else break; } return best; }
 function mkAct(ep,ts,actor,cmd,src,kind){ return {kind:"action",epoch:ep,when:isoShort(ts),actor:actor,cmd:cmd,src:src,akind:kind,score:0,tags:[],reasons:[],blob:lc(actor+" "+cmd+" "+src)}; }
 function scoreAction(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob);
   if(h){ r.score+=3; r.tags.push("IOC"); r.reasons.push("IOC/keyword: "+h); }
-  var s=susCmd(r.cmd); if(s){ r.score+=3; r.tags.push("SUSPECT"); r.reasons.push(s); }
-  if(/(Destroy_Task|PowerOff|UnregisterVM|Delete\w*_Task|RemoveAuthorizationRole|removeEntityPermissions)/.test(r.cmd)){ r.score+=2; r.tags.push("DESTRUCTIVE"); r.reasons.push("destructive/authz-changing vCenter task"); }
+  /* tiered: 5 critical / 3 high / 2 medium / 1 low (was a flat +3 for everything, which scored a
+     routine single power-off the same as a reverse shell). Only 3+ earns the SUSPECT tag. */
+  var s=susCmdT(r.cmd);
+  if(s){ r.score+=s.s; r.reasons.push(s.why);
+    if(s.s>=5) r.tags.push("CRITICAL");
+    if(s.s>=3) r.tags.push("SUSPECT");
+    else r.tags.push("NOTE"); }
+  /* tag by WHAT IT IS, not merely "susTask matched" - v1.4.2 tagged a service start DESTRUCTIVE,
+     which is simply untrue and erodes trust in every other tag. */
+  var tk=susTask(r.cmd);
+  if(tk){ r.score+=tk.s; r.tags.push(tk.tag); r.reasons.push(tk.tag==="DESTRUCTIVE"?("destructive vCenter task: "+tk.why):tk.why);
+    if(tk.s>=5) r.tags.push("CRITICAL"); }
   if(r.src==="vobd"){
     if(/lockdown\w*\.disabled|firewall\.disabled\b/i.test(r.cmd)){ r.score+=3; r.tags.push("SUSPECT"); r.reasons.push("protection disabled (vobd audit)"); }
     else if(/ssh\.enabled|shell\.enabled/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("remote shell access enabled (vobd audit)"); }
@@ -1856,12 +2349,12 @@ function runAnalysis(){
   appendLog("=== log analysis: "+typeLabel()+" bundle, mode="+MODE+" ===");
   $("anStatus").innerHTML="Parsing logs (decompressing on demand)…"; setStatus("Parsing logs…","muted");
   window.setTimeout(function(){
-    safeStep("logons", parseLogons); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
+    safeStep("uptime", parseUptime); safeStep("install", parseInstallDate); safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
     window.setTimeout(function(){ try{
       safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
       safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence);
       safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity);
-      safeStep("spec", buildSpec); safeStep("vms", parseVms); ANALYZED=true;
+      safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); ANALYZED=true;
       writeAnalysisOutputs();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
       var warn=ANALYSIS_ERRS.length?("  ("+ANALYSIS_ERRS.length+" stage(s) failed: "+ANALYSIS_ERRS.join(", ")+" - see Show log)"):"";
@@ -1885,7 +2378,10 @@ function actCount(sub){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;
 function logonExternal(){ var n=0,ips={}; for(var i=0;i<LOGON.length;i++){ var r=LOGON[i]; if(r.ip && !ipIsLocal(r.ip)){ n++; ips[r.ip]=1; } } var list=[]; for(var k in ips){ if(ips.hasOwnProperty(k)) list.push(k); } return {n:n, ips:list}; }
 function logonFail(){ var n=0; for(var i=0;i<LOGON.length;i++) if(LOGON[i].result==="FAIL") n++; return n; }
 function sshLoginCount(){ var n=0; for(var i=0;i<LOGON.length;i++) if(/ssh/i.test(LOGON[i].method)) n++; return n; }
-function destructiveCount(){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;j<ACTIONS[i].tags.length;j++){ if(ACTIONS[i].tags[j]==="DESTRUCTIVE"){ n++; break; } } } return n; }
+/* the indicator is "Destructive / authz-changing", so it must count BOTH tags now that they are
+   separate (EXPOSURE/CONFIG are deliberately excluded - a service start is neither). */
+function destructiveCount(){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;j<ACTIONS[i].tags.length;j++){ var t=ACTIONS[i].tags[j]; if(t==="DESTRUCTIVE"||t==="AUTHZ"){ n++; break; } } } return n; }
+function exposureCount(){ var n=0; for(var i=0;i<ACTIONS.length;i++){ for(var j=0;j<ACTIONS[i].tags.length;j++){ if(ACTIONS[i].tags[j]==="EXPOSURE"){ n++; break; } } } return n; }
 function ind(name,status,detail){ return {name:name,status:status,detail:detail}; }   // status: hit|clear|na
 function adJoined(){
   var s=readMember("commands/lw-lsa_get-status.txt");
@@ -1924,13 +2420,29 @@ function buildIndicators(){
     INDIC.push(ind("Download / decoder / reverse-shell", dl?"hit":"clear", dl?(dl+" command(s) - wget|sh / base64 / nc"):"none in shell.log"));
     INDIC.push(ind("Bulk VMDK / VMX manipulation", bulk?"hit":"clear", bulk?(bulk+" command(s)"):"none in shell.log"));
     var acc=NODE.acceptance||""; INDIC.push(ind("VIB acceptance downgraded", acc?(/community/i.test(acc)?"hit":"clear"):"na", acc?("acceptance level: "+acc):"software-acceptance-get not captured"));
-    INDIC.push(ind("Failed-login burst", logonFail()>=5?"hit":"clear", logonFail()+" failed auth event(s)"));
+    INDIC.push(bfIndicator());
   } else if(BTYPE==="vcsa"){
     INDIC.push(ind("External source IP on login", ext.n?"hit":"clear", ext.n?(ext.n+" login(s) from "+ext.ips.slice(0,4).join(", ")):"all logins from local/RFC1918"));
-    INDIC.push(ind("Failed-login burst (SSO/SSH)", logonFail()>=10?"hit":"clear", logonFail()+" failed auth event(s)"));
+    INDIC.push(bfIndicator());
     INDIC.push(ind("Suspicious sudo / shell command", actCount("download/decoder")+actCount("netcat")+actCount("executable staged")?"hit":"clear", "auth.log sudo command review"));
-    INDIC.push(ind("Destructive / authz-changing vCenter task", destructiveCount()?"hit":"clear", destructiveCount()+" task(s) - Destroy/PowerOff/role-permission change"));
+    INDIC.push(ind("Destructive / authz-changing vCenter task", destructiveCount()?"hit":"clear", destructiveCount()?(destructiveCount()+" task(s) - VM/file deletion, power-off, unregister, snapshot removal, or role/permission/user change"):"no VM deletion, power-off, unregister or authz change in the window"));
+    INDIC.push(ind("Host service / firewall changed via vCenter", exposureCount()?"hit":"clear", exposureCount()?(exposureCount()+" task(s) - enabling SSH on a host from vCenter is a known vCenter->ESXi step; vpxd does not name the service, so confirm in the host's own bundle (vobd ssh.enabled)"):"no host service or firewall change in the window"));
   }
+}
+/* One indicator for the whole family. Reports the SHAPE it found, and when clear says why the raw
+   failure count is not itself a finding - the old "failures >= 10" fired on every healthy vCenter. */
+function bfIndicator(){
+  var bf=BF||{bursts:[],sprays:[],breaches:[],worstBurst:0,worstSpray:0,nFail:logonFail()};
+  var nb=bf.bursts.length, ns=bf.sprays.length, nx=bf.breaches.length;
+  if(nx) return ind("Brute force / password spray", "hit",
+    nx+" SUCCESSFUL login(s) from an IP that was guessing ("+bf.breaches[0].user+" from "+bf.breaches[0].ip+") - treat as compromised");
+  if(nb||ns){ var d=[];
+    if(nb) d.push(nb+" brute-force burst(s), worst "+bf.worstBurst+" fails/"+(BF_WIN/60)+"min ("+bf.bursts[0].user+" from "+bf.bursts[0].ip+")");
+    if(ns) d.push(ns+" password spray(s), worst "+bf.worstSpray+" users/"+(BF_SPRAY_WIN/60)+"min from "+bf.sprays[0].ip);
+    return ind("Brute force / password spray", "hit", d.join("; ")); }
+  if(!bf.nFail) return ind("Brute force / password spray", "clear", "no failed authentications in the window");
+  return ind("Brute force / password spray", "clear",
+    bf.nFail+" failed auth event(s), but no attack SHAPE: worst burst "+bf.worstBurst+" fails/"+(BF_WIN/60)+"min for one user+IP (threshold "+BF_FAILS+", "+BF_FAILS_EXT+" if public), worst spray "+bf.worstSpray+" user(s)/"+(BF_SPRAY_WIN/60)+"min from one IP (threshold "+BF_SPRAY_USERS+") - scattered failures over a long log are typos / stale saved passwords, not guessing");
 }
 function indHits(){ var n=0; for(var i=0;i<INDIC.length;i++) if(INDIC[i].status==="hit") n++; return n; }
 
@@ -2241,7 +2753,7 @@ function secScoreOf(){ var p=0,t=0; for(var i=0;i<SECPOST.length;i++){ var s=SEC
 /* ============================================================
    SPECIFICATION (deep node config parsed from the bundle)
    ============================================================ */
-function specSec(title, kind){ var s={title:title, kind:kind||"kv", kv:[], head:[], rows:[]}; SPEC.push(s); return s; }
+function specSec(title, kind){ var s={title:title, kind:kind||"kv", kv:[], head:[], tips:[], rows:[]}; SPEC.push(s); return s; }
 function kvAdd(s,k,v){ if(v!=null && trimStr(String(v))!=="") s.kv.push([k,String(v)]); }
 function splitWs(line){ return trimStr(line).split(/\s{2,}/); }
 function wsRows(txt){ var lines=String(txt).split("\n"), rows=[], hdr=false;
@@ -2314,7 +2826,7 @@ function buildSpecEsxi(){
   kvAdd(net,"NTP servers", distinct(ns).join(", "));
   // vmknic table (IPv4 only)
   var vmk=readMember("commands/esxcfg-vmknic_-l.txt");
-  if(trimStr(vmk)){ var s1=specSec("VMkernel adapters (management / vMotion / storage)","tbl"); s1.head=["Interface","Port group","IP address","Netmask","MAC","Type"];
+  if(trimStr(vmk)){ var s1=specSec("VMkernel adapters (management / vMotion / storage)","tbl"); s1.head=["Interface","Port group","IP address","Netmask","MAC","Type"]; s1.tips=["VMkernel interface name (vmk0 is normally management).","Port group the vmk is attached to.","IP address of this VMkernel interface - vmk0 is usually the address you would connect to.","Subnet mask.","MAC address of the VMkernel interface.","What the interface is enabled for: management, vMotion, vSAN, provisioning. Management + vSAN on one interface is a resilience/exposure note."];
     var vr=wsRows(vmk); for(i=0;i<vr.length;i++){ var c=vr[i]; var isv4=false;
       for(var x=0;x<c.length;x++){ if(c[x]==="IPv4"){ isv4=true; break; } }
       if(!isv4) continue;
@@ -2326,18 +2838,18 @@ function buildSpecEsxi(){
       s1.rows.push([c[0]||"", c[1]||"", vip, vmask, vmac, vtyp]); } }
   // physical NICs
   var ni=readMember("commands/nicinfo.sh.txt");
-  if(trimStr(ni)){ var s2=specSec("Physical NICs","tbl"); s2.head=["vmnic","Driver","Link","Speed","MAC","Description"];
+  if(trimStr(ni)){ var s2=specSec("Physical NICs","tbl"); s2.head=["vmnic","Driver","Link","Speed","MAC","Description"]; s2.tips=["Physical NIC name.","Driver module bound to the NIC.","Link state (up/down) at capture time.","Negotiated link speed.","Hardware MAC address.","Vendor/model of the physical adapter."];
     var nr=wsRows(ni); for(i=0;i<nr.length;i++){ var n2=nr[i]; if(!/^(vmnic\d+|vusb\d+)$/.test(n2[0]||"")) continue; s2.rows.push([n2[0]||"",n2[2]||"",n2[4]||"",n2[5]||"",n2[7]||"",n2[9]||""]); } }
   // port groups & VLANs (standard vSwitch + distributed)
   var pgs=parsePortgroupsEsxi();
-  if(pgs.std.length){ var sp1=specSec("Port groups &amp; VLANs (standard vSwitch)","tbl"); sp1.head=["Port group","vSwitch","VLAN ID","Uplinks"];
+  if(pgs.std.length){ var sp1=specSec("Port groups &amp; VLANs (standard vSwitch)","tbl"); sp1.head=["Port group","vSwitch","VLAN ID","Uplinks"]; sp1.tips=["Port group name - what VMs attach to.","The standard vSwitch hosting it.","VLAN tag. 0 = untagged; 4095 = VGT/trunk (a VM sees all VLANs - worth explaining).","Physical NICs carrying this port group off the host."];
     for(i=0;i<pgs.std.length;i++){ var p1=pgs.std[i]; sp1.rows.push([p1.pg, p1.sw, p1.vlan, p1.uplinks||""]); } }
   if(pgs.dvs.length){ var sp2=specSec("Distributed port groups &amp; VLANs (DVS)"+(pgs.dvsNames.length?(" - "+distinct(pgs.dvsNames).join(", ")):""),"tbl");
-    sp2.head=["Port group","dvPortgroup ID","Distributed switch","VLAN","Host ports","Port aliases (sample)"];
+    sp2.head=["Port group","dvPortgroup ID","Distributed switch","VLAN","Host ports","Port aliases (sample)"]; sp2.tips=["Distributed port group name.","dvPortgroup ID as referenced by the VMs.","The distributed switch it belongs to.","VLAN tag. 0 = untagged; 4095 = VGT/trunk.","How many ports this host has on the port group.","Sample of port aliases, to tie ports back to VMs."];
     for(i=0;i<pgs.dvs.length;i++){ var p2=pgs.dvs[i]; sp2.rows.push([p2.pgName||"-", p2.pg, p2.dvs||"", p2.vlan, String(p2.ports), p2.aliases||""]); } }
   // datastores
   var st=readMember("commands/localcli_storage-filesystem-list--i.txt"); if(!trimStr(st)) st=readMember("commands/localcli_storage-filesystem-list.txt");
-  if(trimStr(st)){ var s3=specSec("Datastores / volumes","tbl"); s3.head=["Volume","Type","Size","Free","Mounted"];
+  if(trimStr(st)){ var s3=specSec("Datastores / volumes","tbl"); s3.head=["Volume","Type","Size","Free","Mounted"]; s3.tips=["Datastore / volume name as ESXi sees it.","Filesystem type - VMFS, vsan, NFS, vfat.","Total capacity.","Free space. Very low free space on a datastore during an incident can mean encrypted copies being written alongside originals.","Whether the volume is mounted. An unmounted datastore that should be mounted is a finding."];
     var sr=wsRows(st); for(i=0;i<sr.length;i++){ var d=sr[i]; if(!d[1]) continue; var sz=parseInt(d[5],10), fr=parseInt(d[6],10);
       s3.rows.push([d[1]||"",d[4]||"",isNaN(sz)?(d[5]||""):fmtSize(sz),isNaN(fr)?(d[6]||""):fmtSize(fr),d[3]||""]); } }
   // vSAN & disk layout (recovery scoping)
@@ -2348,10 +2860,10 @@ function buildSpecEsxi(){
   if(trimStr(st)){ var srr=wsRows(st); for(i=0;i<srr.length;i++){ if(/vsan/i.test(srr[i][4]||"")){ var vz=parseInt(srr[i][5],10), vf=parseInt(srr[i][6],10);
     kvAdd(stor,"vSAN datastore", (srr[i][1]||"")+" - "+(isNaN(vz)?"":fmtSize(vz)+" total")+(isNaN(vf)?"":", "+fmtSize(vf)+" free")+((!isNaN(vz)&&!isNaN(vf))?(" ("+fmtSize(vz-vf)+" used)"):"")); } } }
   var vs=readMember("commands/localcli_vsan-storage-list.txt");
-  if(trimStr(vs)){ var blocks=parseBlocks(vs); if(blocks.length){ var sg=specSec("vSAN disk groups / disks","tbl"); sg.head=["Disk (naa)","SSD","Tier","Disk group","Mounted","In CMMDS"];
+  if(trimStr(vs)){ var blocks=parseBlocks(vs); if(blocks.length){ var sg=specSec("vSAN disk groups / disks","tbl"); sg.head=["Disk (naa)","SSD","Tier","Disk group","Mounted","In CMMDS"]; sg.tips=["Physical disk device (naa identifier) claimed by vSAN.","Whether the device is flash/SSD.","Cache vs Capacity role in the disk group.","Which vSAN disk group the device belongs to.","Whether vSAN has the device mounted.","Whether the disk is published in CMMDS (the vSAN cluster directory). A claimed disk missing from CMMDS is a vSAN health problem worth noting before any recovery."];
     for(i=0;i<blocks.length;i++){ var k=blocks[i].kv; sg.rows.push([blocks[i].name, k["Is SSD"]||"", (lc(k["Is Capacity Tier"]||"")==="true"?"Capacity":"Cache"), k["VSAN Disk Group Name"]||"", k["Is Mounted"]||"", k["In CMMDS"]||""]); } } }
   var dc=readMember("commands/localcli_storage-core-device-capacity-list.txt");
-  if(trimStr(dc)){ var pd=specSec("Physical storage devices","tbl"); pd.head=["Device","Size","Format"]; var dr=wsRows(dc);
+  if(trimStr(dc)){ var pd=specSec("Physical storage devices","tbl"); pd.head=["Device","Size","Format"]; pd.tips=["Physical storage device presented to the host.","Raw capacity.","Partition/format reported for the device."]; var dr=wsRows(dc);
     for(i=0;i<dr.length;i++){ var dev=dr[i][0]; if(!dev) continue; var szc=dr[i][4]; var mib=parseInt(szc,10); pd.rows.push([dev, isNaN(mib)?(szc||""):fmtSize(mib*1048576), dr[i][5]||""]); } }
   // security posture
   var sec=specSec("Security posture");
@@ -2800,6 +3312,11 @@ function parseVcsaVms(){
     else if(!v.running && v.src["baseline"] && !v.src["vpxd"] && !v.src["backup-io"] && !eph.test(v.name) && !uuidName.test(v.name)) v.enc="not seen in current logs - review (deleted, or encrypted before the log window)";
     v.cfg=""; v.blob=lc(v.name+" "+v.mo.join(" ")+" "+v.moBase+" "+v.host+" "+v.status+" "+v.enc+" "+v.disks.join(" ")+" "+v.guidPath);
   }
+  /* share every moref->name we resolved (vpxd tokens AND the cracked vSAN-health baseline) so
+     parseVmEvents can name a VM the live vpxd window never mentions by name. */
+  VM_MOREF_NAME={};
+  for(var nk in vmName) if(vmName.hasOwnProperty(nk)) VM_MOREF_NAME[nk]=vmName[nk];
+  for(var bk in baseNames) if(baseNames.hasOwnProperty(bk) && !VM_MOREF_NAME[bk]) VM_MOREF_NAME[bk]=baseNames[bk];
   var nGp=0, nSp=0; for(i=0;i<order.length;i++){ if(order[i].guidPath) nGp++; if(order[i].vcpu) nSp++; }
   appendLog("  VMs: vSAN GUID path resolved for "+nf(nGp)+"/"+nf(order.length)+" VM(s); vCPU/vRAM from DRS VMData for "+nf(nSp)+" VM(s) (powered-on only; guest OS not available in a vCenter bundle)");
   // unresolved powered-on MoRefs (in DRS dump but never named in retained logs)
@@ -2900,6 +3417,7 @@ function renderVmsSimple(rows){
   setupColResizeFor($("vmsTbl"), BTYPE==="vcsa"?"vmsvcs":"vmssimp"); freezeThs($("vmsScroll"));
 }
 function renderVms(){
+  renderVmEvents();                      // the events table sits under whichever VM board is showing
   if(BTYPE==="vcsa"){ renderVcsaVms(); return; }
   if(BTYPE!=="esxi"){ $("vmsTbl").innerHTML='<thead><tr><th>VMs</th></tr></thead><tbody><tr><td class="muted">VM inventory is parsed from ESXi host bundles (.vmx files). A vCenter bundle does not carry the hosts’ VM configs - open the ESXi host bundles for their VMs.</td></tr></tbody>'; $("vmsInfo").innerHTML=""; return; }
   fillFilterSel("vmOs", mapField(VMS,"os"), VM_OS);
@@ -2977,6 +3495,91 @@ function renderVcsaVms(){
   h+='</tbody>'; $("vmsTbl").innerHTML=h;
   setupColResizeFor($("vmsTbl"),"vmsvc"); freezeThs($("vmsScroll"));
 }
+/* ---- Virtual Machine events: render + multiselect type filter ---- */
+var VMEV_F={create:1,delete:1,modify:1,start:1,stop:1,reboot:1,snapshot:1,migrate:1,other:1};
+function vmEvCls(k){
+  if(k==="delete") return "ioc";                       // destroyed / unregistered - red
+  if(k==="stop"||k==="reboot") return "danger";
+  if(k==="snapshot") return "audit";
+  if(k==="migrate") return "net";
+  if(k==="create") return "auth";
+  return "info";                                        // modify / start / other
+}
+function vmEvFiltered(){
+  var q=lc(trimStr(($("vmEvQ")&&$("vmEvQ").value)||"")), out=[];
+  for(var i=0;i<VMEV.length;i++){ var e=VMEV[i];
+    if(!VMEV_F[e.kind]) continue;
+    if(q && e.blob.indexOf(q)<0) continue;
+    out.push(e); }
+  return out;
+}
+function renderVmEvents(){
+  /* ALWAYS show the panel once a bundle is analysed. Hiding it when VMEV is empty made "no events in
+     this window", "the parse failed" and "the feature does not exist" look identical - so an empty
+     result must SAY which it is, not silently vanish. */
+  showEl("vmEvWrap", ANALYZED && (BTYPE==="esxi"||BTYPE==="vcsa"));
+  if(!ANALYZED || !(BTYPE==="esxi"||BTYPE==="vcsa")) return;
+  /* If the source log was capped, "no events" is NOT a finding - the newest bytes were never read.
+     Say so loudly rather than let an absence be mistaken for evidence of absence. */
+  var capped=logWasCapped(VMEV_SRC);
+  var capWarn = capped
+    ? '<div class="hit" style="font-size:11px;margin-top:6px"><b>Read cap hit - this list is INCOMPLETE.</b> '
+      +esc(capped)+'. The cap keeps the <b>oldest</b> bytes, so the <b>newest</b> VM activity was never read. '
+      +'This happens when the fast UTF-8 reader is unavailable (network / OneDrive / redirected path -> 8 MB cap instead of 48 MB): '
+      +'run the tool and the bundle from a <b>local</b> path and re-Analyze.</div>'
+    : '';
+  if(!VMEV.length){
+    $("vmEvInfo").innerHTML='<span class="'+(capped?"hit":"muted")+'">'+(capped?"log was capped - list incomplete":"no VM events in the retained log window")+'</span>';
+    $("vmEvTbl").innerHTML='<thead><tr><th title="No VM lifecycle events were found. This is a statement about the LOG WINDOW, not an assurance that nothing happened.">Virtual Machine events</th></tr></thead><tbody><tr><td class="muted">'
+      +(BTYPE==="vcsa"
+        ? 'No VM lifecycle tasks in the retained <span class="mono">vpxd</span> window - no create / delete / modify / power / snapshot / migrate operations were logged. Tick <b>incl. rotated logs</b> and re-Analyze to search the rotations as well.'
+        : 'No VM lifecycle tasks in the retained <span class="mono">hostd</span> window. ESXi <span class="mono">/var/run/log</span> is a RAM disk, so the live log only covers since the last boot - tick <b>incl. rotated logs</b> and re-Analyze to reach further back.')
+      +' If you expected events here, open <b>Show log</b> and look for a <span class="mono">[vmevents] FAILED</span> line.</td></tr></tbody>';
+    $("vmEvNote").innerHTML=capWarn; return; }
+  var rows=vmEvFiltered(), i;
+  var cnt={}; for(i=0;i<VMEV.length;i++) cnt[VMEV[i].kind]=(cnt[VMEV[i].kind]||0)+1;
+  var parts=[]; for(var k=0;k<VMEV_KINDS.length;k++){ var kk=VMEV_KINDS[k]; if(cnt[kk]) parts.push(cnt[kk]+" "+kk); }
+  $("vmEvInfo").innerHTML=nf(VMEV.length)+" event(s) &middot; "+esc(parts.join(", "))
+    +(rows.length<VMEV.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'):'');
+  $("vmEvNote").innerHTML = capWarn + ((BTYPE==="vcsa")
+    ? 'From the vpxd task stream (<span class="mono">[VpxLRO] -- BEGIN … vm-N -- vim.VirtualMachine.&lt;method&gt;</span>). Actor is the nearest preceding <b>human</b> SAML login - approximate. Read-only calls are excluded. Tick <b>incl. rotated logs</b> to widen the window.'
+    : 'From hostd&#39;s task stream (<span class="mono">haTask-&lt;objID&gt;-vim.VirtualMachine.&lt;method&gt;</span>), with the user and client it recorded. Object IDs are resolved to VM names via <span class="mono">etc/vmware/hostd/vmInventory.xml</span> - a VM that was unregistered is legitimately absent from that file. Tick <b>incl. rotated logs</b> to widen the window.');
+  var h='<thead><tr>'
+    +'<th title="The VM the event acted on. vCenter: resolved from the vm-N MoRef via the names vpxd logs. ESXi: resolved from the hostd task objID via vmInventory.xml - an unresolved objID means the VM is no longer in inventory, which is itself consistent with a delete/unregister.">VM</th>'
+    +'<th title="When the operation was requested, UTC.">When (UTC)</th>'
+    +'<th title="create / delete / modify / start / stop / reboot / snapshot / migrate - colour-coded, delete in red. Use the Type checkboxes above to narrow.">Type</th>'
+    +'<th title="What was done, in plain terms, derived from the method the node logged.">Event</th>'
+    +'<th title="The raw API method exactly as the log records it - vpxd writes the VMODL name (lowercase-initial, no _Task suffix); ESXi hostd writes e.g. vim.VirtualMachine.unregister. This is the verbatim evidence behind the Event column.">Method</th>'
+    +'<th title="Who asked for it. ESXi: the user hostd recorded on the task. vCenter: the nearest preceding human SAML login - APPROXIMATE, not a proven attribution.">Actor</th>'
+    +'<th title="Where the request came in: the ESXi Host Client, a vCenter task (opID lro-*), or the raw opID. An lro-* opID joins this event to the vCenter task chain.">Via</th>'
+    +'<th title="Which log the row was parsed from - your evidence citation.">Log</th>'
+    +'</tr></thead><tbody>';
+  if(!rows.length) h+='<tr><td colspan="8" class="muted">No VM events match the current Type filter.</td></tr>';
+  for(i=0;i<rows.length;i++){ var e=rows[i];
+    h+='<tr><td><b>'+esc(e.vm)+'</b></td>'
+      +'<td class="mono">'+esc(e.when)+'</td>'
+      +'<td><span class="tag '+vmEvCls(e.kind)+'">'+esc(e.kind)+'</span></td>'
+      +'<td>'+esc(e.what)+'</td>'
+      +'<td class="mono muted" style="font-size:11px">'+esc(e.method)+'</td>'
+      +'<td class="mono">'+esc(e.actor||"-")+'</td>'
+      +'<td class="mono muted" style="font-size:11px">'+esc(e.via||"-")+'</td>'
+      +'<td class="mono muted" style="font-size:11px">'+esc(e.src)+'</td></tr>'; }
+  h+='</tbody>'; $("vmEvTbl").innerHTML=h;
+  setupColResizeFor($("vmEvTbl"),"vmev"); freezeThs($("vmEvScroll"));
+}
+function vmEvExport(){
+  if(!VMEV.length){ setStatus("No VM events to export.","err"); return; }
+  if(!trimStr(LASTOUTDIR)){ setStatus("No output directory set - Analyze a bundle first.","err"); return; }
+  var sel=vmEvFiltered(); if(!sel.length){ setStatus("No VM events match the current filter - widen it to export.","err"); return; }
+  var out=["VM,When_UTC,Type,Event,Method,Actor,Via,Log"];
+  for(var i=0;i<sel.length;i++){ var e=sel[i];
+    out.push([cq(e.vm),cq(e.when),cq(e.kind),cq(e.what),cq(e.method),cq(e.actor),cq(e.via),cq(e.src)].join(",")); }
+  var p=LASTOUTDIR+"\\vm_events_"+nowStamp()+".csv";
+  try{ ensureDir(LASTOUTDIR); writeUtf8(p,out.join("\r\n"));
+    setStatus("Exported "+nf(sel.length)+(sel.length<VMEV.length?(" of "+nf(VMEV.length)+" (filtered)"):"")+" VM event(s) → "+p,"ok");
+    appendLog("VM events CSV: "+p); openInExplorer(p);
+  }catch(e2){ setStatus("VM events export failed: "+e2.message,"err"); }
+}
 function previewVmx(rel){ var txt=catMember(rel); if(!txt){ setStatus("Could not read "+baseName(rel),"err"); return; }
   if(txt.length>200000) txt=txt.substring(0,200000)+"\n…(truncated)";
   $("detBody").innerHTML='<div style="font-size:13px;margin-bottom:6px"><b>'+esc(baseName(rel))+'</b> <span class="muted mono">'+esc(rel)+'</span></div><div class="dl">'+esc(txt)+'</div>';
@@ -3033,7 +3636,7 @@ function openVm(cfgRel, vmName){
       +(poff?(' &middot; '+poff+' power-off'):'')+(gop?(' &middot; <span style="color:#ff8b8b">'+gop+' guest-op</span>'):'')
       +(vc?(' &middot; '+vc+' via vCenter'):'')+'. opID <span class="mono">lro-*</span> = a vCenter task (join it in vpxa/vpxd).</div>';
     if(!r.events.length) h+='<div class="muted" style="font-size:12px">No power / snapshot / migration / guest-op events (only routine guest-stats noise, filtered).</div>';
-    else { h+='<div class="scroll" style="max-height:44vh"><table><thead><tr><th>When (UTC)</th><th>Event</th><th>Kind</th><th>Initiator</th><th>opID</th><th>Detail</th><th>Log</th></tr></thead><tbody>';
+    else { h+='<div class="scroll" style="max-height:44vh"><table><thead><tr><th title="Event time from the VM&#39;s own vmware.log, UTC.">When (UTC)</th><th title="The VMX operation: power, snapshot, migration or guest-op. Snapshot delete/consolidate before an encryption window is the ransomware tell.">Event</th><th title="Grouping for the event: power / snapshot / migrate / guest-op.">Kind</th><th title="Where the operation came from: a vCenter task (opID lro-*), the ESXi Host Client, or a direct API / vim-cmd call on the host.">Initiator</th><th title="Operation ID. An lro-* value joins this VM event to vpxa/vpxd - the vCenter&rarr;host&rarr;VM chain.">opID</th><th title="Extra context for the event, e.g. the snapshot name.">Detail</th><th title="Which vmware.log (or rotation) the event came from.">Log</th></tr></thead><tbody>';
       for(i=0;i<r.events.length;i++){ var ev=r.events[i]; var cl=vmEvClass(ev.kind);
         h+='<tr'+(cl?' class="'+(cl==="hit"?"hl-ioc":"")+'"':'')+'><td class="mono">'+esc(ev.when)+'</td><td class="mono'+(cl==="warn"?'" style="color:#e3b341':'')+'">'+esc(ev.ev)+'</td><td>'+esc(ev.kind)+'</td><td'+(ev.via==="vCenter task"?' style="color:#79c0ff"':'')+'>'+esc(ev.via)+'</td><td class="mono muted">'+esc(ev.opID)+'</td><td class="mono">'+esc(ev.detail)+'</td><td class="mono muted">'+esc(ev.src)+'</td></tr>'; }
       h+='</tbody></table></div>'; }
@@ -3344,7 +3947,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -3359,9 +3962,9 @@ function processHostSync(path){
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
   buildInventory(); extractKeyFilesToc(); parseNode();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
   ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
-  safeStep("logons", parseLogons); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
+  safeStep("uptime", parseUptime); safeStep("install", parseInstallDate); safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
   safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
-  safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity); safeStep("spec", buildSpec); safeStep("vms", parseVms);
+  safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity); safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents);
   if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
@@ -3512,7 +4115,7 @@ function fmtAnalyzed(r){ var t=r.analyzedAt?isoShort(r.analyzedAt):"-";
 function renderRoster(){
   var q=lc(trimStr($("fq").value||"")); var rows=[];
   for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; if(q && (r.host+" "+r.type+" "+r.build+" "+(r.serial||"")).toLowerCase().indexOf(q)<0) continue; rows.push(r); }
-  var h='<thead><tr><th>Host</th><th>Cluster</th><th>Type</th><th>Version / build</th><th>Serial / service tag</th><th>VMs</th><th>Key files</th><th>Logons (flagged)</th><th>Actions (flagged)</th><th>Persist</th><th>Indicators</th><th>CVE</th><th>Risk</th><th>Analyzed</th></tr></thead><tbody>';
+  var h='<thead><tr><th title="The host each bundle belongs to, from the bundle content (not the folder name). Click a row to drill into that host&#39;s full triage.">Host</th><th title="vSAN sub-cluster the host belongs to, so cluster-mates sit together. A vCenter is tied to a cluster when it shares task opIDs with, or manages, that cluster&#39;s hosts.">Cluster</th><th title="ESXi (vm-support) or vCenter (vc-support) - detected from the bundle content, which decides the whole analysis surface.">Type</th><th title="Product version and build, used for the CVE-exposure comparison.">Version / build</th><th title="Hardware serial / service tag, for tying a host to the physical asset.">Serial / service tag</th><th title="VMs found for this host (running in brackets). ESXi: from .vmx. vCenter: reconstructed from logs.">VMs</th><th title="Curated key artifacts present vs expected. A low ratio means a thin bundle - findings may be absent simply because the evidence was not collected.">Key files</th><th title="Total logons parsed, and how many scored 3+ (external IP, failure clusters, privileged). External source IPs are counted separately in the risk score.">Logons (flagged)</th><th title="Total actions parsed, and how many scored 3+ (suspicious shell commands, destructive/authz vCenter tasks).">Actions (flagged)</th><th title="Persistence &amp; tampering checks that came back suspect/review for this host.">Persist</th><th title="Intrusion / ransomware indicators triggered on this host.">Indicators</th><th title="Known-CVE exposure verdicts needing attention (advisory - confirm against the VMSA).">CVE</th><th title="Composite sort key: indicators*3 + persistence*2 + flagged logons + flagged actions + IOC*2 + external logons. A ranking aid to order the work, NOT a verdict.">Risk</th><th title="When this host was last processed. Re-runs reuse the saved analysis from _Processed when the source bundle is unchanged (untick &quot;reuse cached&quot; to force a fresh pass).">Analyzed</th></tr></thead><tbody>';
   if(!rows.length) h+='<tr><td colspan="14" class="muted">No hosts yet.</td></tr>';
   for(i=0;i<rows.length;i++){ var r=rows[i]; var rc=r.risk>=8?"row-flag":(r.risk>=3?"row-warn":"");
     var clCls = (r.clusterLabel&&r.clusterLabel.indexOf("Cluster")===0)?"tag cfg":(r.clusterLabel==="standalone"?"muted":"tag info");
@@ -3604,7 +4207,7 @@ function renderCorrelation(){
   // clusters
   var groups=clusterGroups();
   h+=corrPanel("Clusters","vSAN sub-cluster grouping; missing = members named by a present host but not in this fleet");
-  h+='<table><thead><tr><th>Cluster</th><th>vSAN UUID</th><th>Hosts present</th><th>vCenter</th><th>Members not in fleet</th></tr></thead><tbody>';
+  h+='<table><thead><tr><th title="vSAN sub-cluster identified across the fleet.">Cluster</th><th title="The vSAN sub-cluster UUID - also the datastore UUID in /vmfs/volumes/vsan:&lt;uuid&gt;.">vSAN UUID</th><th title="Cluster members whose bundle you actually have.">Hosts present</th><th title="The vCenter managing this cluster, where one is in the fleet.">vCenter</th><th title="Hosts this cluster claims as members but whose bundles are MISSING - blind spots in the collection, and the first thing to go and collect.">Members not in fleet</th></tr></thead><tbody>';
   for(i=0;i<groups.length;i++){ var g=groups[i]; var present={}; for(var p=0;p<g.hosts.length;p++) present[lc(g.hosts[p])]=1;
     var missing=[]; for(key in g.members){ if(g.members.hasOwnProperty(key) && !present[key] && !present[key.split(".")[0]]){ var mn=g.members[key]; var found=false; for(var pp=0;pp<g.hosts.length;pp++){ if(lc(g.hosts[pp]).indexOf(key.split(".")[0])===0){ found=true; break; } } if(!found) missing.push(mn); } }
     h+='<tr><td><b>'+esc(g.label)+'</b></td><td class="mono muted">'+esc(g.uuid||"-")+'</td><td class="mono">'+esc(g.hosts.join(", ")||"-")+'</td><td class="mono">'+esc(g.vc.join(", ")||"-")+'</td><td class="mono muted" title="'+esc(missing.join(", "))+'">'+(missing.length?(nf(missing.length)+": "+esc(trunc(missing.join(", "),80))):"-")+'</td></tr>'; }
@@ -3614,7 +4217,7 @@ function renderCorrelation(){
   var ipRows=[]; for(key in C.ipMap){ if(C.ipMap.hasOwnProperty(key)){ var hs=distinct(C.ipMap[key]); ipRows.push({ip:key,hosts:hs}); } }
   ipRows.sort(function(a,b){ return b.hosts.length-a.hosts.length; });
   if(!ipRows.length) h+='<div class="muted" style="font-size:12px">No external login source IPs recorded across the fleet.</div>';
-  else { h+='<table><thead><tr><th>Source IP</th><th># hosts</th><th>Hosts</th></tr></thead><tbody>';
+  else { h+='<table><thead><tr><th title="A source IP seen on more than one host. The same address authenticating across hosts is the classic lateral-movement signal.">Source IP</th><th title="Source IPs seen on this many different hosts - more hosts, more lateral movement."># hosts</th><th title="Which hosts that source IP appeared on.">Hosts</th></tr></thead><tbody>';
     for(i=0;i<ipRows.length;i++){ var multi=ipRows[i].hosts.length>1; h+='<tr'+(multi?' class="row-flag"':'')+'><td class="mono'+(multi?' first':'')+'">'+esc(ipRows[i].ip)+'</td><td class="mono">'+ipRows[i].hosts.length+'</td><td class="mono">'+esc(ipRows[i].hosts.join(", "))+'</td></tr>'; } h+='</tbody></table>'; }
   h+='</div>';
   // shared accounts
@@ -3622,7 +4225,7 @@ function renderCorrelation(){
   var uRows=[]; for(key in C.userMap){ if(C.userMap.hasOwnProperty(key) && C.userMap[key].hosts.length>1) uRows.push(C.userMap[key]); }
   uRows.sort(function(a,b){ return b.hosts.length-a.hosts.length; });
   if(!uRows.length) h+='<div class="muted" style="font-size:12px">No account appears on more than one host.</div>';
-  else { h+='<table><thead><tr><th>Account</th><th># hosts</th><th>Hosts</th></tr></thead><tbody>';
+  else { h+='<table><thead><tr><th title="An account seen on more than one host - shared admin, or a compromised credential being reused.">Account</th><th title="This account authenticated on this many different hosts."># hosts</th><th title="Which hosts that account appeared on.">Hosts</th></tr></thead><tbody>';
     for(i=0;i<uRows.length;i++) h+='<tr><td class="mono">'+esc(uRows[i].disp)+'</td><td class="mono">'+uRows[i].hosts.length+'</td><td class="mono">'+esc(uRows[i].hosts.join(", "))+'</td></tr>'; h+='</tbody></table>'; }
   h+='</div>';
   // shared IOCs
@@ -3630,7 +4233,7 @@ function renderCorrelation(){
   var ioRows=[]; for(key in C.iocMap){ if(C.iocMap.hasOwnProperty(key)){ ioRows.push({ioc:key,hosts:distinct(C.iocMap[key])}); } }
   ioRows.sort(function(a,b){ return b.hosts.length-a.hosts.length; });
   if(!ioRows.length) h+='<div class="muted" style="font-size:12px">No IOC hits across the fleet (load an IOC.txt to enable).</div>';
-  else { h+='<table><thead><tr><th>IOC</th><th># hosts</th><th>Hosts</th></tr></thead><tbody>';
+  else { h+='<table><thead><tr><th title="An IOC term that hit on more than one host.">IOC</th><th title="This IOC hit on this many different hosts."># hosts</th><th title="Which hosts that IOC hit on.">Hosts</th></tr></thead><tbody>';
     for(i=0;i<ioRows.length;i++) h+='<tr class="ioc"><td class="mono first"><span class="tag ioc">'+esc(ioRows[i].ioc)+'</span></td><td class="mono">'+ioRows[i].hosts.length+'</td><td class="mono">'+esc(ioRows[i].hosts.join(", "))+'</td></tr>'; h+='</tbody></table>'; }
   h+='</div>';
   // coordinated indicators
@@ -3638,14 +4241,14 @@ function renderCorrelation(){
   var inRows=[]; for(key in C.indMap){ if(C.indMap.hasOwnProperty(key) && C.indMap[key].length>1) inRows.push({name:key,hosts:distinct(C.indMap[key])}); }
   inRows.sort(function(a,b){ return b.hosts.length-a.hosts.length; });
   if(!inRows.length) h+='<div class="muted" style="font-size:12px">No indicator triggered on more than one host.</div>';
-  else { h+='<table><thead><tr><th>Indicator</th><th># hosts</th><th>Hosts</th></tr></thead><tbody>';
+  else { h+='<table><thead><tr><th title="The same intrusion/ransomware indicator triggering on multiple hosts - coordinated activity rather than a one-off.">Indicator</th><th title="This indicator triggered on this many different hosts."># hosts</th><th title="Which hosts the indicator triggered on.">Hosts</th></tr></thead><tbody>';
     for(i=0;i<inRows.length;i++) h+='<tr class="row-flag"><td class="first">'+esc(inRows[i].name)+'</td><td class="mono">'+inRows[i].hosts.length+'</td><td class="mono">'+esc(inRows[i].hosts.join(", "))+'</td></tr>'; h+='</tbody></table>'; }
   h+='</div>';
   // vCenter -> ESXi chain
   h+=corrPanel("vCenter → ESXi task chain","opID shared between a vCenter (vpxd) task and the host (vpxa) that executed it");
   if(!C.chain.length){ var hasVc=false,hasEsxi=false; for(i=0;i<FLEET.length;i++){ if(FLEET[i].btype==="vcsa")hasVc=true; if(FLEET[i].btype==="esxi")hasEsxi=true; }
     h+='<div class="muted" style="font-size:12px">'+((hasVc&&hasEsxi)?"No shared task opIDs found - the vCenter and ESXi bundles are from different clusters, or no vCenter-initiated tasks overlap the captured windows.":"Needs at least one vCenter and one ESXi bundle from the same cluster in the fleet.")+'</div>'; }
-  else { h+='<table><thead><tr><th>When (UTC)</th><th>vCenter</th><th>Task (vim method)</th><th>opID</th><th>Executed on host</th></tr></thead><tbody>';
+  else { h+='<table><thead><tr><th title="When the vCenter task began (UTC).">When (UTC)</th><th title="The vCenter that issued the task.">vCenter</th><th title="The vCenter task, joined to the ESXi host that executed it by shared opID - the vCenter&rarr;ESXi chain that proves where an action landed.">Task (vim method)</th><th title="The shared operation ID - the join between the vCenter task and the executing host&#39;s vpxa log. This is what proves the two are the same operation.">opID</th><th title="The ESXi host whose vpxa log carries the same opID as the vCenter task.">Executed on host</th></tr></thead><tbody>';
     for(i=0;i<C.chain.length && i<300;i++){ var c=C.chain[i]; h+='<tr><td class="mono">'+esc(isoShort(c.ts))+'</td><td class="mono">'+esc(c.vc)+'</td><td class="mono">'+esc(c.method)+'</td><td class="mono muted">'+esc(c.opID)+'</td><td class="mono">'+esc(c.host)+'</td></tr>'; } h+='</tbody></table>'; }
   h+='</div>';
   // unified cross-host flagged-event timeline
@@ -3653,7 +4256,7 @@ function renderCorrelation(){
   var tl=[]; for(i=0;i<FLEET.length;i++){ var fr=FLEET[i]; for(var t=0;t<(fr.flagged||[]).length;t++){ var f=fr.flagged[t]; tl.push({host:fr.host,cluster:fr.clusterLabel||"",when:f.when,kind:f.kind,detail:f.detail,score:f.score,ep:f.ep||0}); } }
   tl.sort(function(a,b){ return (a.ep||0)-(b.ep||0); });
   if(!tl.length) h+='<div class="muted" style="font-size:12px">No flagged events across the fleet.</div>';
-  else { h+='<div class="scroll" style="max-height:40vh"><table><thead><tr><th>When (UTC)</th><th>Host</th><th>Cluster</th><th>Kind</th><th>Score</th><th>Detail</th></tr></thead><tbody>';
+  else { h+='<div class="scroll" style="max-height:40vh"><table><thead><tr><th title="Event time (UTC), merged across every host in the fleet and ordered so a cross-host sequence reads as one story.">When (UTC)</th><th title="Which host in the fleet this event came from.">Host</th><th title="That host&#39;s vSAN cluster, so you can see activity spreading within or across clusters.">Cluster</th><th title="What kind of event: a logon, or an action/command.">Kind</th><th title="Risk score for the event - only flagged (3+) events are merged into this cross-host view.">Score</th><th title="The event itself: who authenticated from where, or what ran.">Detail</th></tr></thead><tbody>';
     for(i=0;i<tl.length && i<600;i++){ var x=tl[i]; var rc=x.score>=5?"row-flag":"row-warn";
       h+='<tr class="'+rc+'"><td class="mono">'+esc(x.when)+'</td><td class="mono">'+esc(x.host)+'</td><td class="mono muted">'+esc(x.cluster)+'</td><td class="mono muted">'+esc(x.kind)+'</td><td class="mono"><span class="sc '+scClass(x.score)+'">'+x.score+'</span></td><td class="mono" title="'+esc(x.detail)+'">'+esc(trunc(x.detail,90))+'</td></tr>'; }
     h+='</tbody></table></div>'+(tl.length>600?('<div class="muted" style="font-size:11px">showing 600 of '+nf(tl.length)+' - export for the full set</div>'):''); }
@@ -3718,7 +4321,9 @@ function render(){
   if(TAB==="logon") renderLogon(); else if(TAB==="act") renderAct(); else if(TAB==="time") renderTime(); else if(TAB==="persist") renderPersist(); else if(TAB==="ioc") renderIoc();
 }
 
-function kvRow(k,v){ return v?('<div><span class="k">'+esc(k)+'</span> '+esc(v)+'</div>'):""; }
+/* optional 3rd arg = hover text. Used to name the SOURCE of a derived field (install / uptime / booted
+   are computed, not read from a field the platform records) so the value can always be challenged. */
+function kvRow(k,v,t){ return v?('<div'+(t?(' title="'+esc(t)+'"'):'')+'><span class="k">'+esc(k)+'</span> '+esc(v)+'</div>'):""; }
 function statCard(n,l,cls,tab){ return '<span class="stat'+(cls?(" "+cls):"")+'"'+(tab?(' data-tab="'+tab+'" style="cursor:pointer" title="Open the '+esc(l)+' tab"'):'')+'><span class="n">'+esc(n)+'</span><span class="l">'+esc(l)+'</span></span>'; }
 function wireStatTabs(el){ var sp=el.getElementsByTagName("span"); for(var i=0;i<sp.length;i++){ if(sp[i].getAttribute("data-tab")){ sp[i].onclick=function(){ userTab(this.getAttribute("data-tab")); }; } } }
 function renderOverview(){
@@ -3728,6 +4333,9 @@ function renderOverview(){
   h+=kvRow("Product", NODE.product);
   h+=kvRow("Version", NODE.version);
   h+=kvRow("Build", NODE.build);
+  h+=kvRow("Installed", NODE.install, NODE.installSrc?("DERIVED - neither platform records an install date as a field. Source: "+NODE.installSrc+". Compare with Maintenance events for the update history."):"");
+  h+=kvRow("Uptime", NODE.uptime, NODE.uptimeSrc?("Source: "+NODE.uptimeSrc+"."+(NODE.booted?(" Cross-check it against the boot entry in Maintenance events."):"")):"");
+  h+=kvRow("Booted", NODE.booted, NODE.uptime?("DERIVED: capture time minus uptime ("+NODE.uptime+"), so it is accurate to about a minute. A logged boot event in Maintenance events (ESXi vobd) is the independent confirmation."):"");
   h+=kvRow("Serial / service tag", NODE.serial);
   h+=kvRow("Management IP", NODE.mgmtIp);
   h+=kvRow(BTYPE==="vcsa"?"vSphere Client (web)":"Web client (ESXi)", NODE.webUi);
@@ -3752,7 +4360,7 @@ function renderOverview(){
   if(miss.length){ var mh='<div class="muted" style="font-size:12px"><b style="color:#e3b341">Absent critical artifacts</b> (each is itself a finding):<br>';
     mh+=esc(miss.join(", "))+"</div>"; $("ovMissing").innerHTML=mh; }
   else $("ovMissing").innerHTML='<div class="ok" style="font-size:12px">All critical artifacts present.</div>';
-  renderAnStats(); renderCves();   // indicators moved to the Security tab (rendered by renderSecurity)
+  renderAnStats(); renderMaint(); renderCves();   // indicators moved to the Security tab (rendered by renderSecurity)
 }
 /* Owns the visibility of its own card: analysis finishing calls render() (NOT setTab), so if the user is
    already sitting on the Security tab when it completes, setTab's showEl never re-runs - deciding here
@@ -3781,7 +4389,7 @@ function renderSpec(){
   var h="";
   for(var i=0;i<SPEC.length;i++){ var s=SPEC[i]; h+='<div class="panel" style="margin-bottom:10px"><h4>'+esc(s.title)+'</h4>';
     if(s.kind==="tbl"){ if(!s.rows.length){ h+='<div class="muted" style="font-size:12px">none captured</div>'; }
-      else { h+='<div class="scroll" style="max-height:34vh"><table><thead><tr>'; for(var c=0;c<s.head.length;c++) h+='<th>'+esc(s.head[c])+'</th>'; h+='</tr></thead><tbody>';
+      else { h+='<div class="scroll" style="max-height:34vh"><table><thead><tr>'; for(var c=0;c<s.head.length;c++) h+='<th'+((s.tips&&s.tips[c])?(' title="'+esc(s.tips[c])+'"'):'')+'>'+esc(s.head[c])+'</th>'; h+='</tr></thead><tbody>';
         for(var r=0;r<s.rows.length;r++){ h+='<tr>'; for(c=0;c<s.head.length;c++) h+='<td class="mono">'+esc(s.rows[r][c]||"")+'</td>'; h+='</tr>'; } h+='</tbody></table></div>'; } }
     else { if(!s.kv.length){ h+='<div class="muted" style="font-size:12px">not captured in this bundle</div>'; }
       else { h+='<div class="kvgrid">'; for(var k=0;k<s.kv.length;k++) h+='<div><span class="k">'+esc(s.kv[k][0])+'</span> '+esc(s.kv[k][1])+'</div>'; h+='</div>'; } }
@@ -3803,7 +4411,7 @@ function renderNetwork(){
       +'<span style="float:right;font-weight:400;text-transform:none"><label title="Hide loopback (127.0.0.1 / ::1) clients - the appliance\'s own internal services - from both tables in this panel"><input type="checkbox" id="webHideLoop"'+(WEB_HIDELOOP?" checked":"")+'> hide loopback</label></span></h4>';
     if(w.sus.length){ h+='<div style="color:#ff8b8b;font-size:12px;margin-bottom:4px"><b>'+w.sus.length+' request(s) match web-attack patterns:</b></div><div class="dl" style="max-height:18vh">';
       for(i=0;i<w.sus.length;i++) h+=esc(w.sus[i].ip+"  "+w.sus[i].meth+" "+w.sus[i].code+"  "+w.sus[i].path)+"\n"; h+='</div>'; }
-    h+='<div class="scroll" style="max-height:26vh"><table><thead><tr><th>Client IP</th><th>Scope</th><th>Requests</th><th>Errors</th><th>Methods</th></tr></thead><tbody>';
+    h+='<div class="scroll" style="max-height:26vh"><table><thead><tr><th title="Source address that made web/API requests to this node. Loopback is hidden by default - untick to include it.">Client IP</th><th title="Whether that client is loopback, private (RFC1918) or a public address. Public clients on a management interface deserve a look.">Scope</th><th title="How many requests that client made in the captured window.">Requests</th><th title="How many of those failed. A high error ratio can mean probing or a broken integration.">Errors</th><th title="HTTP methods used by that client - PUT/POST/DELETE mean it was changing things, not just reading.">Methods</th></tr></thead><tbody>';
     if(!sumIps.length) h+='<tr><td colspan="5" class="muted">No client IPs to show'+(WEB_HIDELOOP&&loopIps?" - all "+loopIps+" client(s) were loopback":"")+'.</td></tr>';
     for(i=0;i<sumIps.length && i<40;i++){ var ci=sumIps[i]; h+='<tr'+(ci.ext?' class="hl-ioc"':'')+'><td class="mono">'+esc(ci.ip)+'</td><td'+(ci.ext?' style="color:#e3b341"':' class="muted"')+'>'+(ci.ext?"external (public)":"private/local")+'</td><td class="mono">'+nf(ci.n)+'</td><td class="mono'+(ci.err?' hl-ioc':'')+'">'+ci.err+'</td><td class="mono muted">'+esc(ci.methods)+'</td></tr>'; }
     h+='</tbody></table></div></div>';
@@ -3820,8 +4428,8 @@ function renderNetwork(){
         +'show <select id="envoyRows">'+[25,50,100].map(function(n){return '<option value="'+n+'"'+(n===ENVOY_ROWS?' selected':'')+'>'+n+'</option>';}).join("")+'</select> rows'
         +(w.path?(' &middot; <span class="lnk" data-raw="'+esc(w.path)+'">open raw log</span>'):'')+'</span></h4>';
       var ncol=esxiWeb?4:6;
-      if(esxiWeb) h+='<div class="scroll" style="max-height:36vh"><table><thead><tr><th>When (UTC)</th><th>Source IP</th><th>Protocol</th><th>Service / path</th></tr></thead><tbody>';
-      else h+='<div class="scroll" style="max-height:36vh"><table><thead><tr><th>When (UTC)</th><th>Source IP</th><th>Method</th><th>Response</th><th>Path</th><th>Operation / UA</th></tr></thead><tbody>';
+      if(esxiWeb) h+='<div class="scroll" style="max-height:36vh"><table><thead><tr><th title="Time of the request (UTC).">When (UTC)</th><th title="Where the connection came from.">Source IP</th><th title="The protocol/service the connection used.">Protocol</th><th title="What was accessed.">Service / path</th></tr></thead><tbody>';
+      else h+='<div class="scroll" style="max-height:36vh"><table><thead><tr><th title="Time of the request (UTC).">When (UTC)</th><th title="Client address that made the request.">Source IP</th><th title="HTTP method - PUT/POST/DELETE are changes, GET is a read. A datastore file PUT is how a VM gets uploaded or restored.">Method</th><th title="HTTP status returned. 401/403 bursts mean rejected access attempts.">Response</th><th title="The URL path requested. /folder/... paths are direct datastore file access.">Path</th><th title="The vSphere operation and the client user-agent - a non-standard UA on a management API is worth explaining.">Operation / UA</th></tr></thead><tbody>';
       if(!shown) h+='<tr><td colspan="'+ncol+'" class="muted">No matching '+(esxiWeb?"connections":"requests")+(simp?" - no Login/Logout events in the captured window (a long-lived session\'s login may pre-date it)":"")+(WEB_HIDELOOP?" (all were loopback)":"")+'.</td></tr>';
       for(i=0;i<shown;i++){ var rq=rows[i]; var ec=/^[45]/.test(rq.code);
         var pathCell='<td class="mono"><span class="lnk" data-raw="'+(w.path?esc(w.path):'')+'" title="'+esc(rq.path)+' - click to open the raw log">'+esc(trunc(rq.path,90))+'</span></td>';
@@ -3834,14 +4442,14 @@ function renderNetwork(){
     h+='<div class="dl" style="max-height:20vh">'; for(i=0;i<NETINFO.sus.length;i++) h+=esc(NETINFO.sus[i])+"\n"; h+='</div></div>'; }
   h+='<div class="panel" style="margin-bottom:10px"><h4>External connections <span class="sub">- established sessions to non-private (public) IPs; '+NETINFO.ext.length+' found</span></h4>';
   if(!NETINFO.ext.length) h+='<div class="muted" style="font-size:12px">none - all established sessions are to private/local addresses</div>';
-  else { h+='<div class="scroll" style="max-height:30vh"><table><thead><tr><th>Proto</th><th>Local</th><th>Foreign (external)</th><th>Process</th></tr></thead><tbody>';
+  else { h+='<div class="scroll" style="max-height:30vh"><table><thead><tr><th title="Socket protocol (TCP/UDP).">Proto</th><th title="Local address:port on this node - the side of the connection the appliance owns.">Local</th><th title="The remote end of an ESTABLISHED connection to a non-local address - an outbound connection from an appliance is unusual and worth explaining.">Foreign (external)</th><th title="The process holding the socket.">Process</th></tr></thead><tbody>';
     for(i=0;i<NETINFO.ext.length;i++){ var e=NETINFO.ext[i]; h+='<tr class="hl-ioc"><td class="mono">'+esc(e.proto)+'</td><td class="mono">'+esc(e.local)+'</td><td class="mono">'+esc(e.foreign)+'</td><td class="mono">'+esc(e.proc)+'</td></tr>'; }
     h+='</tbody></table></div>'; }
   h+='</div>';
   var loopN=0; for(i=0;i<NETINFO.listen.length;i++){ if(NETINFO.listen[i].scope==="loopback") loopN++; }
   h+='<div class="panel"><h4>Listening services <span class="sub">- '+NETINFO.listenN+' listener(s), '+NETINFO.netFacing+' network-facing'+(LISTEN_HIDELOOP&&loopN?', '+loopN+' loopback-only hidden':'')+'</span>'
     +'<span style="float:right;font-weight:400;text-transform:none"><label title="Hide loopback-only listeners (bound to 127.0.0.1 / ::1) - not reachable off-host. On by default; network-facing listeners are always shown."><input type="checkbox" id="listenHideLoop"'+(LISTEN_HIDELOOP?" checked":"")+'> hide loopback</label></span></h4>';
-  h+='<div class="scroll" style="max-height:40vh"><table><thead><tr><th>Proto</th><th>Local address</th><th>Scope</th><th>Process</th></tr></thead><tbody>';
+  h+='<div class="scroll" style="max-height:40vh"><table><thead><tr><th title="Socket protocol (TCP/UDP).">Proto</th><th title="Address:port the service is bound to. 0.0.0.0 / :: means every interface - reachable off-box.">Local address</th><th title="Loopback-only (not reachable off-host) vs network-facing (it is). Network-facing listeners are the attack surface.">Scope</th><th title="The process owning the listener. An unexpected process listening on a management interface is a finding.">Process</th></tr></thead><tbody>';
   var lshown=0; for(i=0;i<NETINFO.listen.length;i++){ var l=NETINFO.listen[i]; if(LISTEN_HIDELOOP && l.scope==="loopback") continue; var nf2=l.scope.indexOf("network")===0;
     h+='<tr><td class="mono">'+esc(l.proto)+'</td><td class="mono">'+esc(l.local)+'</td><td'+(nf2?' style="color:#e3b341"':' class="muted"')+'>'+esc(l.scope)+'</td><td class="mono">'+esc(l.proc)+'</td></tr>'; lshown++; }
   if(!lshown) h+='<tr><td colspan="4" class="muted">No listeners to show'+(LISTEN_HIDELOOP&&loopN?" - all "+loopN+" were loopback-only (untick <b>hide loopback</b> to see them)":"")+'.</td></tr>';
@@ -3875,7 +4483,7 @@ function renderSecurity(){
     h+='</div>'; }
   if(VIBS_NOTABLE.length){
     h+='<div class="panel" style="margin-bottom:10px"><h4>Third-party &amp; non-standard VIBs <span class="sub" style="font-weight:400;text-transform:none;color:#8b949e">- '+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages (VMwareCertified VMware VIBs omitted). Confirm any unsigned / unrecognized-vendor / recently-added entry.</span></h4>';
-    h+='<div class="scroll" style="max-height:34vh"><table><thead><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr></thead><tbody>';
+    h+='<div class="scroll" style="max-height:34vh"><table><thead><tr><th title="Installed VMware Installation Bundle (package) on the host.">VIB</th><th title="Package version - part of the patch-state picture.">Version</th><th title="Who signed it. An unrecognized vendor on an ESXi host warrants explanation.">Vendor</th><th title="Signing level: VMwareCertified / VMwareAccepted / PartnerSupported / CommunitySupported. CommunitySupported means unsigned-by-VMware code - a known ransomware persistence route.">Acceptance</th><th title="When the VIB was installed. Anything installed after the base image date is called out - that is how a rogue VIB shows up.">Install date</th></tr></thead><tbody>';
     for(var v=0;v<VIBS_NOTABLE.length;v++){ var vb=VIBS_NOTABLE[v];
       var tint=vb.trust===0?' class="hl-ioc"':(vb.trust===1||!vb.known?' style="color:#e3b341"':'');
       h+='<tr'+tint+'><td class="mono">'+esc(vb.name)+'</td><td class="mono muted">'+esc(vb.ver)+'</td><td class="mono">'+esc(vb.vendor)+(vb.known||vb.vmware?'':' <span class="tag sus">unknown</span>')+'</td><td class="mono">'+esc(vb.acc)+'</td><td class="mono">'+esc(vb.date)+'</td></tr>'; }
@@ -3884,13 +4492,16 @@ function renderSecurity(){
   $("secBody").innerHTML=h; wireFreeze($("secBody"));
 }
 
+/* Column tooltip: every COLS entry carries `t:` and the three <th> builders render it. The sort arrow
+   is appended after the label, so the tip also explains what sorting that column gives you. */
+function colTip(c){ return (c&&c.t) ? (' title="'+esc(c.t)+'"') : ''; }
 var ICOLS=[
-  {h:"Category", sk:function(r){return r.cat;}, cell:function(r){ return '<td class="first"><span class="tag '+catTag(r.cat)+'">'+esc(r.cat)+'</span></td>'; }},
-  {h:"File", sk:function(r){return lc(r.name);}, cell:function(r){ return '<td>'+(r.key?'<b>':'')+esc(r.name)+(r.key?'</b>':'')+'</td>'; }},
-  {h:"Description", sk:function(r){return lc(r.desc);}, cell:function(r){ return '<td class="muted" title="'+esc(r.rel||"")+'">'+esc(r.desc)+'</td>'; }},
-  {h:"Present", sk:function(r){return r.present?1:0;}, cell:function(r){ return '<td>'+(r.present?'<span class="pgood">present</span>':'<span class="'+(r.key?"pkey":"pmiss")+'">absent</span>')+'</td>'; }},
-  {h:"Size", sk:function(r){return r.size||0;}, cell:function(r){ return '<td class="mono" style="text-align:right">'+esc(r.present?(r.dir?(nf(r.count)+" files, "+fmtSize(r.size)):fmtSize(r.size)):"-")+'</td>'; }},
-  {h:"Open", sk:function(r){return 0;}, cell:function(r){
+  {h:"Category", t:"What the artifact is for: Config, Auth/Logons, Actions/Audit, Network, Persistence or Command-capture. Sort to group the board by investigative purpose.", sk:function(r){return r.cat;}, cell:function(r){ return '<td class="first"><span class="tag '+catTag(r.cat)+'">'+esc(r.cat)+'</span></td>'; }},
+  {h:"File", t:"Artifact name. Bold = a CRITICAL artifact for this bundle type - if one of those is absent, the absence is itself a finding.", sk:function(r){return lc(r.name);}, cell:function(r){ return '<td>'+(r.key?'<b>':'')+esc(r.name)+(r.key?'</b>':'')+'</td>'; }},
+  {h:"Description", t:"Why this file matters forensically. Hover the cell for its path inside the bundle.", sk:function(r){return lc(r.desc);}, cell:function(r){ return '<td class="muted" title="'+esc(r.rel||"")+'">'+esc(r.desc)+'</td>'; }},
+  {h:"Present", t:"Whether the file exists in THIS bundle. Bundles are targeted, so absence is expected for some artifacts and a finding for others - sort to bring absent criticals to the top.", sk:function(r){return r.present?1:0;}, cell:function(r){ return '<td>'+(r.present?'<span class="pgood">present</span>':'<span class="'+(r.key?"pkey":"pmiss")+'">absent</span>')+'</td>'; }},
+  {h:"Size", t:"Size read from the archive index (no extraction needed). A 0-byte or suspiciously small key log is flagged amber: truncation or a wipe.", sk:function(r){return r.size||0;}, cell:function(r){ return '<td class="mono" style="text-align:right">'+esc(r.present?(r.dir?(nf(r.count)+" files, "+fmtSize(r.size)):fmtSize(r.size)):"-")+'</td>'; }},
+  {h:"Open", t:"Open the file in your default viewer, or reveal its folder in Explorer. Extracted on demand; .gz/.zst decompressed first.", sk:function(r){return 0;}, cell:function(r){
       if(!r.present) return '<td class="muted">-</td>';
       var folder='<span class="lnk" data-open="folder" data-rel="'+esc(r.rel)+'" data-dir="'+(r.dir?1:0)+'">folder</span>';
       var file = r.dir ? '' : ' &middot; <span class="lnk" data-open="file" data-rel="'+esc(r.rel)+'" data-dir="0">file</span>';
@@ -3908,7 +4519,7 @@ function renderInventory(){
   rows.sort(function(a,b){ var x=sk(a),y=sk(b);
     if(typeof x==="number"&&typeof y==="number") return (x-y)*dir; x=String(x); y=String(y); return x<y?-dir:(x>y?dir:0); });
   var html="<thead><tr>";
-  for(var c=0;c<ICOLS.length;c++){ var arrow=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'">'+esc(ICOLS[c].h)+arrow+'</th>'; }
+  for(var c=0;c<ICOLS.length;c++){ var arrow=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'"'+colTip(ICOLS[c])+'>'+esc(ICOLS[c].h)+arrow+'</th>'; }
   html+="</tr></thead><tbody>";
   for(i=0;i<rows.length;i++){ var r=rows[i];
     html+='<tr class="'+(r.key?"key":"")+(r.present?"":" absent")+'">';
@@ -3949,7 +4560,11 @@ function renderAnStats(){
 /* ---------- shared analysis table rendering ---------- */
 function scClass(s){ return s>=5?"sc5":(s>=3?"sc3":(s>=1?"sc1":"sc0")); }
 function tagCls(t){ t=String(t).toUpperCase();
-  if(t==="IOC") return "ioc";
+  if(t==="IOC"||t==="CRITICAL"||t==="BREACH") return "ioc";   // BREACH = guessing that SUCCEEDED
+  if(t==="BURST"||t==="SPRAY") return "danger";
+  if(t==="NOTE"||t==="CONFIG") return "info";       // low-tier (enumeration / context) - muted
+  if(t==="AUTHZ") return "audit";                   // access re-granted - amber, not "destructive"
+  if(t==="EXPOSURE") return "net";                  // attack surface widened (service/firewall)
   if(t==="SUSPECT"||t==="DESTRUCTIVE") return "danger";
   if(t==="EXTERNAL") return "net";
   if(t==="FAILED") return "audit";
@@ -3965,7 +4580,7 @@ function rowCls(r){ var c=""; if(r.score>=5) c="row-flag"; else if(r.score>=3) c
 function anPass(r,useWin){ if(FLAGONLY && r.score<3) return false; if(!scorePass(r.score)) return false; if(TQUERY && r.blob.indexOf(TQUERY)<0) return false; if(useWin && (DFROM||DTO) && r.epoch && !inWin(r.epoch)) return false; return true; }
 function drawTable(cols, rows, st, key){
   var shown=rows.length>ANMAXROWS?ANMAXROWS:rows.length;
-  var html="<thead><tr>"; for(var c=0;c<cols.length;c++){ var ar=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'">'+esc(cols[c].h)+ar+'</th>'; }
+  var html="<thead><tr>"; for(var c=0;c<cols.length;c++){ var ar=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'"'+colTip(cols[c])+'>'+esc(cols[c].h)+ar+'</th>'; }
   html+="</tr></thead><tbody>";
   for(var i=0;i<shown;i++){ var r=rows[i]; var rc=rowCls(r); html+='<tr data-i="'+i+'"'+(rc?(' class="'+rc+'"'):'')+' style="cursor:pointer">';
     for(var k=0;k<cols.length;k++) html+=cols[k].cell(r); html+="</tr>"; }
@@ -3987,13 +4602,13 @@ function anDetail(r){ if(!r) return; var h='<div style="font-size:13px;margin-bo
   $("detBody").innerHTML=h; showEl("detailCard",true);
 }
 var LCOLS=[
-  {h:"Score / tags", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
-  {h:"When (UTC)", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
-  {h:"Result", sk:function(r){return r.result;}, cell:function(r){return '<td class="mono">'+esc(r.result)+'</td>';}},
-  {h:"User", sk:function(r){return lc(r.user);}, cell:function(r){return '<td class="mono">'+esc(r.user)+'</td>';}},
-  {h:"Source IP", sk:function(r){return lc(r.ip);}, cell:function(r){return '<td class="mono" title="'+esc(r.ip)+'">'+esc(r.ip||"(local)")+'</td>';}},
-  {h:"Method", sk:function(r){return r.method;}, cell:function(r){return '<td class="mono muted">'+esc(r.method)+'</td>';}},
-  {h:"Log", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
+  {h:"Score / tags", t:"Risk score and why. FAILED +1, privileged account +1, public source IP +2, IOC hit +3, brute-force BURST/SPRAY +3, BREACH (guessing that then SUCCEEDED) +5. Sort to bring the worst logons to the top; hover a tag for its reason.", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
+  {h:"When (UTC)", t:"Event time, always UTC. Filtered by the case window (/from /to) when one is set.", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
+  {h:"Result", t:"OK = authentication succeeded, FAIL = it did not. A lone FAIL is usually a typo; FAILs that CLUSTER in time are what the brute-force tags mark.", sk:function(r){return r.result;}, cell:function(r){return '<td class="mono">'+esc(r.result)+'</td>';}},
+  {h:"User", t:"The principal that authenticated. root / administrator score +1 as privileged.", sk:function(r){return lc(r.user);}, cell:function(r){return '<td class="mono">'+esc(r.user)+'</td>';}},
+  {h:"Source IP", t:"Where the login came from. Blank/(local) = console or loopback. A public (non-RFC1918) address scores +2 and lowers the brute-force threshold.", sk:function(r){return lc(r.ip);}, cell:function(r){return '<td class="mono" title="'+esc(r.ip)+'">'+esc(r.ip||"(local)")+'</td>';}},
+  {h:"Method", t:"How they authenticated - SSH, DCUI, PAM, vpxd/SAML, SSO websso, or hostd SOAP.", sk:function(r){return r.method;}, cell:function(r){return '<td class="mono muted">'+esc(r.method)+'</td>';}},
+  {h:"Log", t:"Which log this row was parsed from - your evidence citation for the case note.", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
 ];
 function renderLogon(){
   if(SESS_VIEW){ renderSessions(); return; }
@@ -4001,14 +4616,14 @@ function renderLogon(){
   sortRows(rows,LCOLS,SORT.logon); drawTable(LCOLS,rows,SORT.logon,"logon");
   if(!LOGON.length) $("tbl").innerHTML='<thead><tr><th>Logons</th></tr></thead><tbody><tr><td class="muted">No login events parsed (auth.log / hostd / websso). A quiet or short-window bundle can legitimately have none.</td></tr></tbody>'; }
 var SESSCOLS=[
-  {h:"Login (UTC)", sk:function(r){return r.inEp||r.outEp;}, cell:function(r){return '<td class="mono'+(r.inTs?'':' muted')+'">'+esc(r.inTs||"(pre-window)")+'</td>';}},
-  {h:"Logout (UTC)", sk:function(r){return r.outEp;}, cell:function(r){return '<td class="mono'+(r.outTs?'':' muted')+'" '+(r.outTs?'':'title="No logout in the captured window - still active, window end, or a failed login attempt"')+'>'+esc(r.outTs||"-")+'</td>';}},
-  {h:"Duration", sk:function(r){return r.dur;}, cell:function(r){return '<td class="mono">'+esc(fmtDur(r.dur))+'</td>';}},
-  {h:"User", sk:function(r){return lc(r.user);}, cell:function(r){return '<td class="mono">'+esc(r.user||"(unknown)")+(r.sol?' <span class="tag info" title="solution / service account (isSolution=true)">svc</span>':'')+'</td>';}},
-  {h:"Source IP", sk:function(r){return lc(r.ip);}, cell:function(r){ var ext=r.ip&&!ipIsLocal(r.ip);
+  {h:"Login (UTC)", t:"Session start - when the API session was established.", sk:function(r){return r.inEp||r.outEp;}, cell:function(r){return '<td class="mono'+(r.inTs?'':' muted')+'">'+esc(r.inTs||"(pre-window)")+'</td>';}},
+  {h:"Logout (UTC)", t:"Session end. Blank = never paired: still active at capture, started before the log window, or a failed login.", sk:function(r){return r.outEp;}, cell:function(r){return '<td class="mono'+(r.outTs?'':' muted')+'" '+(r.outTs?'':'title="No logout in the captured window - still active, window end, or a failed login attempt"')+'>'+esc(r.outTs||"-")+'</td>';}},
+  {h:"Duration", t:"Login to logout. A very long session from an unexpected client, or many brief automated ones, are both worth a look.", sk:function(r){return r.dur;}, cell:function(r){return '<td class="mono">'+esc(fmtDur(r.dur))+'</td>';}},
+  {h:"User", t:"Principal for the session (from the SAML token on vCenter).", sk:function(r){return lc(r.user);}, cell:function(r){return '<td class="mono">'+esc(r.user||"(unknown)")+(r.sol?' <span class="tag info" title="solution / service account (isSolution=true)">svc</span>':'')+'</td>';}},
+  {h:"Source IP", t:"Client address, time-joined from the envoy access log where unambiguous. Blank when it could not be resolved safely.", sk:function(r){return lc(r.ip);}, cell:function(r){ var ext=r.ip&&!ipIsLocal(r.ip);
     return '<td class="mono'+(r.ip?'':' muted')+'"'+(ext?' style="color:#e3b341"':'')+' title="'+esc(r.ip?(r.ipNote?("joined from "+r.ipNote):r.ip):(r.ipNote||"not resolvable from this log"))+'">'+esc(r.ip||"-")+'</td>';}},
-  {h:"Session ID", sk:function(r){return r.sess;}, cell:function(r){return '<td class="mono" title="'+esc(r.sess+(r.src==="hostd.log"?" (hostd opID chain - hostd events carry no session GUID)":""))+'">'+esc(trunc(r.sess,22))+'</td>';}},
-  {h:"Via / client", sk:function(r){return lc(r.via);}, cell:function(r){return '<td class="mono muted" title="'+esc(r.via+(r.api?(" - "+r.api+" API invocation(s)"):""))+'">'+esc(trunc(r.via,40))+'</td>';}},
+  {h:"Session ID", t:"The vCenter SessionManager GUID (or ESXi hostd opID chain) used to pair login to logout. An API session is ANY client, not only an interactive human.", sk:function(r){return r.sess;}, cell:function(r){return '<td class="mono" title="'+esc(r.sess+(r.src==="hostd.log"?" (hostd opID chain - hostd events carry no session GUID)":""))+'">'+esc(trunc(r.sess,22))+'</td>';}},
+  {h:"Via / client", t:"The client / user-agent that opened the session - vSphere Client, PowerCLI, a solution user, or something unexpected.", sk:function(r){return lc(r.via);}, cell:function(r){return '<td class="mono muted" title="'+esc(r.via+(r.api?(" - "+r.api+" API invocation(s)"):""))+'">'+esc(trunc(r.via,40))+'</td>';}},
   {h:"Log", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
 ];
 function renderSessions(){
@@ -4024,12 +4639,12 @@ function renderSessions(){
   if(hid.length && SESSIONS.length) $("tcount").innerHTML+=' <span class="muted">&middot; '+hid.join(", ")+" hidden</span>";
   if(!SESSIONS.length) $("tbl").innerHTML='<thead><tr><th>Login sessions</th></tr></thead><tbody><tr><td class="muted">No pairable session events parsed ('+(BTYPE==="vcsa"?"vpxd SessionManager login/logout - note vpxd.log often covers only a few hours":"hostd \"logged in/out\" events")+'). The raw Logons view (untick the checkbox) may still have login events from other logs.</td></tr></tbody>'; }
 var ACOLS=[
-  {h:"Score / tags", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
-  {h:"When (UTC)", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
-  {h:"Actor", sk:function(r){return lc(r.actor);}, cell:function(r){return '<td class="mono">'+esc(r.actor)+'</td>';}},
-  {h:"Action / command", sk:function(r){return lc(r.cmd);}, cell:function(r){return '<td class="mono" title="'+esc(r.cmd)+'">'+esc(trunc(r.cmd,150))+'</td>';}},
-  {h:"Kind", sk:function(r){return r.akind;}, cell:function(r){return '<td class="mono">'+kindLabel(r.akind)+'</td>';}},
-  {h:"Log", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
+  {h:"Score / tags", t:"Risk score and why. Shell: 5 CRITICAL (ransom rename, reverse shell, mass power-off, encryption disabled), 3 SUSPECT (SSH enable, firewall off, single power-off), 2 NOTE, 1 enumeration. vCenter tasks: DESTRUCTIVE / AUTHZ / EXPOSURE / CONFIG. IOC +3. Sort worst-first; hover a tag for the evidence.", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
+  {h:"When (UTC)", t:"When the command ran, or the task began. Always UTC.", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
+  {h:"Actor", t:"Who did it. ESXi: the shell user. vCenter: the nearest preceding human SAML login (approximate - shown as \"user approx\"), or the service account.", sk:function(r){return lc(r.actor);}, cell:function(r){return '<td class="mono">'+esc(r.actor)+'</td>';}},
+  {h:"Action / command", t:"The shell command as executed, or the vCenter API method. vpxd logs the VMODL name, which starts lowercase (e.g. powerOff_Task).", sk:function(r){return lc(r.cmd);}, cell:function(r){return '<td class="mono" title="'+esc(r.cmd)+'">'+esc(trunc(r.cmd,150))+'</td>';}},
+  {h:"Kind", t:"Where the action came from: a shell command, sudo, or a vpxd task. Colour-coded - a shell command touches the datastore directly.", sk:function(r){return r.akind;}, cell:function(r){return '<td class="mono">'+kindLabel(r.akind)+'</td>';}},
+  {h:"Log", t:"Which log this row came from - your evidence citation.", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
 ];
 function renderAct(){
   fillFilterSel("actActor", mapField(ACTIONS,"actor"), ACT_ACTOR);
@@ -4039,10 +4654,10 @@ function renderAct(){
   sortRows(rows,ACOLS,SORT.act); drawTable(ACOLS,rows,SORT.act,"act");
   if(!ACTIONS.length) $("tbl").innerHTML='<thead><tr><th>Actions</th></tr></thead><tbody><tr><td class="muted">No actions parsed. ESXi = shell.log commands; vCenter = vpxd mutating (_Task) operations + sudo. A healthy vCenter with no VM changes in the captured window shows none here.</td></tr></tbody>'; }
 var TCOLS=[
-  {h:"Score / tags", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
-  {h:"When (UTC)", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
-  {h:"Kind", sk:function(r){return r.kind;}, cell:function(r){return '<td class="mono">'+kindLabel(r.kind)+'</td>';}},
-  {h:"Detail", sk:function(r){return lc(r.detail);}, cell:function(r){return '<td class="mono" title="'+esc(r.detail)+'">'+esc(trunc(r.detail,170))+'</td>';}},
+  {h:"Score / tags", t:"Risk score and why, on the same scale as Logons and Actions. Sort to surface the worst moments in the case window.", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
+  {h:"When (UTC)", t:"Event time, UTC. This view is time-ordered so a sequence reads as a story - filtered by the case window (/from /to).", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
+  {h:"Kind", t:"What kind of event: a logon, a shell command, sudo, or a vCenter task. Colour-coded so a shell command stands out from a login.", sk:function(r){return r.kind;}, cell:function(r){return '<td class="mono">'+kindLabel(r.kind)+'</td>';}},
+  {h:"Detail", t:"The event itself - who authenticated from where, or what command / task ran.", sk:function(r){return lc(r.detail);}, cell:function(r){return '<td class="mono" title="'+esc(r.detail)+'">'+esc(trunc(r.detail,170))+'</td>';}},
   {h:"Log", sk:function(r){return r.src;}, cell:function(r){return '<td class="mono muted">'+esc(r.src)+'</td>';}}
 ];
 function renderTime(){
@@ -4052,14 +4667,14 @@ function renderTime(){
   sortRows(rows,TCOLS,SORT.time); drawTable(TCOLS,rows,SORT.time,"time"); }
 function mapField(arr,f){ var o=[]; for(var i=0;i<arr.length;i++) o.push(arr[i][f]); return o; }
 var IOCCOLS=[
-  {h:"Log", sk:function(r){return lc(r.file);}, cell:function(r){return '<td class="mono first" title="'+esc(r.file)+'">'+esc(r.file)+'</td>';}},
-  {h:"Line", sk:function(r){return r.line;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(r.line)+'</td>';}},
-  {h:"IOC", sk:function(r){return r.ioc;}, cell:function(r){return '<td class="mono"><span class="tag ioc">'+esc(r.ioc)+'</span></td>';}},
-  {h:"Excerpt", sk:function(r){return lc(r.excerpt);}, cell:function(r){return '<td class="mono" title="'+esc(r.excerpt)+'">'+esc(trunc(r.excerpt,150))+'</td>';}}
+  {h:"Log", t:"Which log the hit was found in. The sweep covers the key logs present in this bundle, not the whole tree.", sk:function(r){return lc(r.file);}, cell:function(r){return '<td class="mono first" title="'+esc(r.file)+'">'+esc(r.file)+'</td>';}},
+  {h:"Line", t:"Line number within that log, so you can cite it and find it again.", sk:function(r){return r.line;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(r.line)+'</td>';}},
+  {h:"IOC", t:"The term from your IOC list that matched (IOC.csv / IOC.txt next to the app - edit it with Create IOC list).", sk:function(r){return r.ioc;}, cell:function(r){return '<td class="mono"><span class="tag ioc">'+esc(r.ioc)+'</span></td>';}},
+  {h:"Excerpt", t:"The matching line. Any IOC hit scores +3 wherever it appears.", sk:function(r){return lc(r.excerpt);}, cell:function(r){return '<td class="mono" title="'+esc(r.excerpt)+'">'+esc(trunc(r.excerpt,150))+'</td>';}}
 ];
 function renderIoc(){ var rows=[]; for(var i=0;i<IOCHITS.length;i++){ if(TQUERY){ var bl=lc(IOCHITS[i].file+" "+IOCHITS[i].ioc+" "+IOCHITS[i].excerpt); if(bl.indexOf(TQUERY)<0) continue; } rows.push(IOCHITS[i]); }
   var st=SORT.ioc; sortRows(rows,IOCCOLS,st);
-  var html="<thead><tr>"; for(var c=0;c<IOCCOLS.length;c++){ var ar=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'">'+esc(IOCCOLS[c].h)+ar+'</th>'; }
+  var html="<thead><tr>"; for(var c=0;c<IOCCOLS.length;c++){ var ar=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'"'+colTip(IOCCOLS[c])+'>'+esc(IOCCOLS[c].h)+ar+'</th>'; }
   html+="</tr></thead><tbody>";
   if(!IOCS.length) html+='<tr><td colspan="4" class="muted">No IOC terms loaded. Put an IOC.txt next to this app (one term per line) and re-run analysis.</td></tr>';
   else if(!rows.length) html+='<tr><td colspan="4" class="ok">No IOC hits in the swept key logs.</td></tr>';
@@ -4075,7 +4690,7 @@ function persistCls(v){ return v==="suspect"?"hit":(v==="review"?"warn":(v==="na
 function renderPersist(){
   var rows=[]; for(var i=0;i<PERSIST.length;i++){ var p=PERSIST[i]; if(TQUERY && p.blob.indexOf(TQUERY)<0) continue; if(FLAGONLY && !(p.verdict==="suspect"||p.verdict==="review")) continue; rows.push(p); }
   rows.sort(function(a,b){ return persistRank(a.verdict)-persistRank(b.verdict); });
-  var html='<thead><tr><th>Category</th><th>Finding</th><th>Verdict</th><th>Detail</th><th>File</th></tr></thead><tbody>';
+  var html='<thead><tr><th title="What area the check covers: boot persistence, syslog, DCUI banner, VIB acceptance, cron/systemd, log integrity, SSH keys.">Category</th><th title="The specific check performed.">Finding</th><th title="suspect / review / clean / n-a. IMPORTANT: n-a means the source was NOT CAPTURED in this bundle - it is never an assurance that the thing is clean. suspect and review float to the top.">Verdict</th><th title="The evidence behind the verdict - what was actually found in the file.">Detail</th><th title="The artifact the check read, so you can open it and verify the verdict yourself.">File</th></tr></thead><tbody>';
   if(!PERSIST.length) html+='<tr><td colspan="5" class="muted">No persistence findings (analysis not run, or bundle type unsupported).</td></tr>';
   for(i=0;i<rows.length;i++){ var r=rows[i]; var cl=persistCls(r.verdict);
     var open = r.rel ? '<span class="lnk" data-popen="'+esc(r.rel)+'">open</span>' : '<span class="muted">-</span>';
@@ -4322,6 +4937,7 @@ function init(){
   $("invScroll").onscroll=applyFreeze;
   $("tblScroll").onscroll=applyFreezeTbl;
   $("vmsScroll").onscroll=function(){ freezeThs($("vmsScroll")); };
+  $("vmEvScroll").onscroll=function(){ freezeThs($("vmEvScroll")); };   // VM events: static markup, so wire once here
   $("fleetScroll").onscroll=function(){ freezeThs($("fleetScroll")); };
   // delegated row-click for the analysis table (#tbl persists across innerHTML rebuilds; rows carry data-i)
   $("tbl").onclick=function(e){ e=e||window.event; var el=e.target||e.srcElement;
@@ -4386,6 +5002,10 @@ function init(){
   $("vmq").onkeyup=function(){ renderVms(); };
   $("vmOs").onchange=function(){ VM_OS=this.value; renderVms(); };
   $("vmSimple").onclick=function(){ VM_SIMPLE=!!this.checked; renderVms(); };
+  var evk=document.getElementsByClassName("vmEvK");
+  for(var q=0;q<evk.length;q++){ evk[q].onclick=function(){ VMEV_F[this.value]=!!this.checked; renderVmEvents(); }; }
+  $("vmEvQ").onkeyup=function(){ renderVmEvents(); };
+  $("vmEvExport").onclick=vmEvExport;
   $("vmsExport").onclick=vmsExport;
   $("specExport").onclick=specExport;
   $("secExport").onclick=securityExport;

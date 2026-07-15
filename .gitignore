@@ -26,6 +26,7 @@ IOC.csv
 *_export_*.csv
 roster_*.csv
 vms_*.csv
+vm_events_*.csv
 inventory_*.csv
 logon_*.csv
 act_*.csv
