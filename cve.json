@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "reviewed": "2026-07-15",
+  "reviewedBy": "",
+  "staleAfterDays": 180,
+  "advisoryIndex": "https://www.broadcom.com/support/vmware-security-advisories",
+  "_README": [
+    "CVE DATA - EDIT THIS FILE, NOT THE HTA. The tool ships no CVE facts in its code.",
+    "",
+    "Nothing here is fetched automatically. Broadcom's VMware advisory portal is login-gated and",
+    "JavaScript-driven, the old vmware.com advisories.xml RSS feed is gone (404), and per-advisory URLs",
+    "use opaque numeric content IDs that cannot be built from a VMSA number. There is therefore no",
+    "machine-readable source for VMware FIX BUILD numbers: that mapping exists only in the advisory text.",
+    "NVD carries the CVE description and CVSS, but NOT the fix build, so a live NVD lookup could not",
+    "populate this file either. These builds have to be read off the VMSA by a human.",
+    "",
+    "HOW TO UPDATE:",
+    "  1. Open the advisory index: https://www.broadcom.com/support/vmware-security-advisories",
+    "  2. For each CVE below, confirm the fixed build for the affected line against its VMSA.",
+    "  3. Correct the numbers, add new entries, and set \"reviewed\" to today (YYYY-MM-DD).",
+    "  4. Set \"reviewedBy\" to your initials so the report can say who last checked.",
+    "The tool warns in the UI and in the report once \"reviewed\" is older than staleAfterDays.",
+    "",
+    "PROVENANCE WARNING: these values were originally authored from an AI model's memory and have NOT",
+    "been confirmed against the advisories by a human. Treat every build below as unverified until you",
+    "have checked it and stamped \"reviewed\"/\"reviewedBy\" yourself.",
+    "",
+    "rule = how the verdict is reached:",
+    "  slp   - compare build vs fix, and cross-check the SLP service state (mitigated if not running)",
+    "  ad    - no build compare; verdict depends on whether the host is AD-integrated",
+    "  line  - ESXi: pick the fix build from THIS host's version + update level (builds are NOT",
+    "          monotonic across trains, e.g. 8.0 U3f 24784735 < 8.0 U2e 24789317)",
+    "  multi - vCenter: only a build number is exposed and 7.0/8.0 ranges overlap, so compare",
+    "          conservatively vs every fix build (patched only if >= the highest)"
+  ],
+
+  "esxi": [
+    {
+      "id": "CVE-2021-21974",
+      "vmsa": "VMSA-2021-0002",
+      "title": "OpenSLP heap overflow RCE (ESXiArgs mass ransomware)",
+      "rule": "slp",
+      "fix": 17325551,
+      "fixLabel": "7.0 build 17325551 (7.0 U1c)"
+    },
+    {
+      "id": "CVE-2024-37085",
+      "vmsa": "VMSA-2024-0013",
+      "title": "ESXi Active Directory 'ESX Admins' auth bypass (abused by ransomware)",
+      "rule": "ad"
+    },
+    {
+      "id": "CVE-2025-22224",
+      "vmsa": "VMSA-2025-0004",
+      "title": "VMCI TOCTOU out-of-bounds write - guest-to-host VMX escape (EXPLOITED IN THE WILD 2025-03)",
+      "rule": "line",
+      "line": {
+        "v7": 24585291,
+        "d7": "7.0 U3s (24585291)",
+        "v8u3": 24585383,
+        "d8u3": "8.0 U3d (24585383)",
+        "d8other": "8.0 U2d line",
+        "v9": "not affected (ESX 9.x shipped after the fix)"
+      }
+    },
+    {
+      "id": "CVE-2025-41236",
+      "vmsa": "VMSA-2025-0013",
+      "title": "VMXNET3 integer overflow - guest-to-host escape (Pwn2Own 2025; +CVE-2025-41237/38/39)",
+      "rule": "line",
+      "line": {
+        "v7": 24784741,
+        "d7": "7.0 U3w (24784741)",
+        "v8u3": 24784735,
+        "d8u3": "8.0 U3f (24784735)",
+        "v8u2": 24789317,
+        "d8u2": "8.0 U2e (24789317)",
+        "v9": "fixed in ESX 9.0.0.0100 - verify this 9.x build vs the VMSA"
+      }
+    }
+  ],
+
+  "vcsa": [
+    {
+      "id": "CVE-2023-34048",
+      "vmsa": "VMSA-2023-0023",
+      "title": "vCenter DCERPC out-of-bounds write - unauth RCE (exploited in the wild)",
+      "rule": "multi",
+      "fixes": [22357613, 22368047],
+      "fixLabel": "7.0 U3o (22357613) / 8.0 U1d (22368047)"
+    },
+    {
+      "id": "CVE-2024-38812",
+      "vmsa": "VMSA-2024-0019",
+      "title": "vCenter DCERPC heap overflow - unauth RCE",
+      "rule": "multi",
+      "fixes": [24145809, 24262322],
+      "fixLabel": "7.0 U3s (24145809) / 8.0 U3b (24262322)"
+    },
+    {
+      "id": "CVE-2025-41225",
+      "vmsa": "VMSA-2025-0010",
+      "title": "vCenter authenticated command execution via alarm script actions",
+      "rule": "multi",
+      "fixes": [24730281, 24674346],
+      "fixLabel": "7.0 U3v (24730281) / 8.0 U3e (24674346)"
+    }
+  ]
+}

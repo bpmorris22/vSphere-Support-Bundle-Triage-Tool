@@ -452,7 +452,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.8.2";
+var APP_VERSION = "1.10.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -828,7 +828,7 @@ function analyze(){
   if(!requireHost()) return;
   var outdir=trimStr($("outDir").value); if(!outdir){ syncOutDir(); outdir=trimStr($("outDir").value); }
   LASTOUTDIR=outdir; EXDIR=outdir+"\\_extracted"; NODEDIR=outdir+"\\_nodecfg"; ensureDir(outdir);
-  ANALYZED=false; LOGON=[]; BF=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[];
+  ANALYZED=false; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[];
   $("anStats").innerHTML=""; $("ovIndic").innerHTML=""; $("ovCve").innerHTML=""; $("anStatus").innerHTML="Logons / Actions / Timeline / Persistence / IOC not parsed yet.";
 
   // folder input?
@@ -2360,6 +2360,7 @@ function runAnalysis(){
     safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); $("anStatus").innerHTML="Parsed logons ("+nf(LOGON.length)+")… actions…";
     window.setTimeout(function(){ try{
       safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
+      safeStep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
       safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence);
       safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity);
       safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); ANALYZED=true;
@@ -2412,22 +2413,123 @@ function ransomFileScan(){
       try{ var s=new Enumerator(fo.SubFolders); for(;!s.atEnd();s.moveNext()) walk(s.item().Path+"",dep+1); }catch(e2){} })(dv,0); } }catch(e){} }
   return hits;
 }
+/* ---- ransomware RENAME detection, by SHAPE rather than signature -------------------------------
+   RANSOM_FILE above is a signature list (akira|lockbit|conti|...). Families like Qilin generate the
+   extension PER VICTIM at random, so no allowlist can ever match one - and the ransom note is named
+   after that same random extension ("<ext>_RECOVER.txt"), so the note pattern misses it too. A reference
+   bundle proved the cost: the host's whole log directory renamed to one random extension, a ransom note
+   sitting beside it, and every signature check reporting clean.
+   What does NOT vary is the SHAPE: an encryptor renames MANY files in a directory to ONE new suffix and
+   the originals disappear. Match that, the way bfIndicator() matches an attack shape instead of a count.
+   Deliberately narrow to keep false positives at zero: the suffix must be unknown, and the name with the
+   suffix stripped must still look like a real artifact (hostd.log.<ext> -> "hostd.log"). */
+var ENC_SUFFIX_OK=/^(log|gz|zst|txt|json|xml|conf|cfg|dat|db|old|bak|core|dump|sh|py|pl|tgz|tar|iso|md5|sha256|[0-9]{1,4}|FRAG-\d{4,6})$/i;
+var ENC_MIN_FILES=5;      // one or two odd names are noise; a directory full of them is an encryptor
+function encExtOf(name){
+  var m=String(name).match(/^(.+)\.([A-Za-z0-9_-]{3,24})$/); if(!m) return "";
+  var base=m[1], ext=m[2];
+  if(ENC_SUFFIX_OK.test(ext)) return "";                                        // ordinary rotation / compression
+  if(!/\.(log|gz|zst|txt)$/i.test(base) && !/\.\d{1,3}\.gz$/i.test(base)) return "";   // stripped name must still read as an artifact
+  return ext;
+}
+/* A ransom note identifies itself by CONTENT, not by filename - the filename is attacker-chosen and in
+   this family is derived from the random extension. Name is only the cheap prefilter. */
+var RANSOM_NOTE_NAME=/(recover|readme|read_me|decrypt|restore|unlock|ransom|how[ _-]?to)/i;
+var RANSOM_NOTE_TEXT=/\.onion\b|tor browser|your (network|system|files|data)[^\n]{0,60}(encrypted|locked)|decrypt(ion)?[ _-]?(key|software|tool)|cipher key|\bbitcoin\b|we have (downloaded|encrypted)/i;
+/* IO seam: plain files directly under a bundle-relative directory, in either mode. Kept separate from
+   the shape logic so the logic is testable without a filesystem (the harness stubs this). */
+function dirFiles(relDir){
+  var out=[], pre=String(relDir).replace(/\/+$/,"")+"/", i;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ var r=TOC[i].rel;
+      if(r.indexOf(pre)!==0) continue; if(r.substring(pre.length).indexOf("/")>=0) continue;
+      out.push({rel:r, name:baseName(r), size:TOC[i].size}); } return out; }
+  if(!ROOT) return out;
+  try{ var fso=new ActiveXObject("Scripting.FileSystemObject"), d=ROOT+"\\"+winRel(relDir);
+    if(!fso.FolderExists(d)) return out;
+    var e=new Enumerator(fso.GetFolder(d).Files);
+    for(;!e.atEnd();e.moveNext()){ var f=e.item(); out.push({rel:pre+(f.Name+""), name:f.Name+"", size:f.Size}); }
+  }catch(e2){}
+  return out;
+}
+var RANSOM=null;   // {ext:{ext,n,samples[],bases{},dirs{}}|null, notes:[rel]}
+var ENC_LOGDIRS_ESXI=["var/run/log","scratch/log","var/log"];
+var ENC_LOGDIRS_VCSA=["var/log","var/log/vmware","var/log/vmware/vpxd","var/log/vmware/sso","var/log/audit"];
+function ransomScan(){
+  RANSOM={ext:null, notes:[]};
+  var dirs=(BTYPE==="vcsa")?ENC_LOGDIRS_VCSA:ENC_LOGDIRS_ESXI, byExt={}, d, i, k;
+  for(d=0; d<dirs.length; d++){
+    var fl=dirFiles(dirs[d]);
+    for(i=0;i<fl.length;i++){ var f=fl[i], ext=encExtOf(f.name);
+      if(ext){ if(!byExt[ext]) byExt[ext]={ext:ext, n:0, samples:[], bases:{}, dirs:{}};
+        var g=byExt[ext]; g.n++; g.dirs[dirs[d]]=1;
+        g.bases[lc(f.name.substring(0, f.name.length-ext.length-1))]=1;
+        if(g.samples.length<8) g.samples.push(f.name); }
+      if(f.size<=131072 && /\.(txt|html|hta)$/i.test(f.name) && RANSOM_NOTE_NAME.test(f.name)){
+        var t=readMember(f.rel); if(t && RANSOM_NOTE_TEXT.test(t)) RANSOM.notes.push(f.rel); }
+    }
+  }
+  for(k in byExt){ if(byExt[k].n>=ENC_MIN_FILES && (!RANSOM.ext || byExt[k].n>RANSOM.ext.n)) RANSOM.ext=byExt[k]; }
+  appendLog("ransom rename scan: "+(RANSOM.ext?(nf(RANSOM.ext.n)+" file(s) renamed to ."+RANSOM.ext.ext):"no mass-rename")+", "+RANSOM.notes.length+" ransom note(s)");
+  return RANSOM;
+}
+/* Was the log this indicator depends on actually READABLE? "clear" has to mean "read it, found nothing"
+   and must never mean "could not read it" - that is the difference between a quiet host and a host whose
+   evidence the attacker destroyed. */
+function srcState(rels){
+  var rel=resolveLog(rels); if(rel) return {ok:true, rel:rel};
+  var base=baseName(rels[0]);
+  if(RANSOM && RANSOM.ext && RANSOM.ext.bases[lc(base)])
+    return {ok:false, enc:true, why:base+" was ENCRYPTED by the ransomware ("+base+"."+RANSOM.ext.ext+") - its contents cannot be recovered from this bundle, so this check is UNKNOWABLE, not clear"};
+  return {ok:false, enc:false, why:base+" not captured in this bundle - not checkable"};
+}
+var SHELL_RELS=["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"];
+var AUTH_RELS =["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"];
+/* count>0 always wins (the evidence exists elsewhere); otherwise an unreadable source is n/a, not clear */
+function indSrc(name, count, hitDetail, src, clearDetail){
+  if(count) return ind(name,"hit",hitDetail);
+  if(!src.ok) return ind(name,"na",src.why);
+  return ind(name,"clear",clearDetail);
+}
+/* Encrypted does NOT always mean gone. A service that kept running (hostd, vpxa, rhttpproxy) re-creates
+   its log after the encryptor renames it, so a plain file can exist alongside the ciphertext - it just
+   starts at the encryption and covers only what came AFTER. Claiming those are destroyed would
+   contradict the Logons tab, which is parsing one of them; claiming the survivor is complete would be
+   worse. So: split them, and say what each half means. */
+function ransomLogInd(){
+  var r=RANSOM;
+  if(!r || !r.ext) return ind("Log directory encrypted (anti-forensics)","clear","no mass-rename of the host log directory");
+  var e=r.ext, dirs=[], k, lost=[], kept=[], i;
+  for(k in e.dirs) if(e.dirs.hasOwnProperty(k)) dirs.push(k);
+  var KEY=["shell.log","auth.log","vobd.log","esxupdate.log","hostd.log","vmkernel.log","rhttpproxy.log","vpxa.log","messages"];
+  for(i=0;i<KEY.length;i++){ if(!e.bases[lc(KEY[i])]) continue;
+    (resolveLog(["var/run/log/"+KEY[i],"scratch/log/"+KEY[i],"var/log/"+KEY[i]]) ? kept : lost).push(KEY[i]); }
+  return ind("Log directory encrypted (anti-forensics)","hit",
+    nf(e.n)+" file(s) in "+dirs.join(", ")+" renamed to one unknown extension ."+e.ext+" (e.g. "+e.samples.slice(0,2).join(", ")+")"
+    +(lost.length?(" - EVIDENCE DESTROYED: "+lost.join(", ")+" exist ONLY as ciphertext, so any check reading them is UNKNOWABLE, not clear."):"")
+    +(kept.length?(" - PARTIAL: "+kept.join(", ")+" were encrypted too, but a plain replacement exists (the service re-created it after the rename), so it covers only what happened AFTER the encryption - treat its start time as the encryption window, not as the start of activity."):""));
+}
 function buildIndicators(){
   INDIC=[]; var ext=logonExternal();
   if(BTYPE==="esxi"){
-    var rn=ransomFileScan();
-    INDIC.push(ind("Ransom notes / encrypted files on datastore", rn.length?"hit":"clear", rn.length?(nf(rn.length)+" suspicious file(s): "+trunc(rn.join(", "),140)):"none found on vmfs/volumes"));
+    var rn=ransomFileScan(), notes=rn.concat((RANSOM&&RANSOM.notes)||[]);
+    INDIC.push(ind("Ransom notes / encrypted files", notes.length?"hit":"clear", notes.length?(nf(notes.length)+" suspicious file(s): "+trunc(notes.join(", "),140)):"none on vmfs/volumes or in the log directories"));
+    INDIC.push(ransomLogInd());
+    var shSt=srcState(SHELL_RELS), auSt=srcState(AUTH_RELS);
     var ssh=sshLoginCount(), encT=actCount("host-encryption"), pk=actCount("VM power-off"),
         fw=actCount("firewall disabled"), tmp=actCount("executable staged"),
         dl=actCount("download/decoder")+actCount("netcat"), bulk=actCount("bulk VMDK"), sshEn=actCount("SSH / ESXi Shell enabled");
-    INDIC.push(ind("SSH / ESXi Shell used", (ssh||sshEn)?"hit":"clear", (ssh?(ssh+" SSH login(s)"):"")+(sshEn?(sshEn+" enable command(s)"):(ssh?"":"no SSH logins in auth.log"))));
+    /* Every one of these used to say "clear - none in shell.log" whether shell.log was READ AND CLEAN or
+       ENCRYPTED BY THE ATTACKER. On a genuinely ransomed host that produced 0 of 11 triggered: a clean
+       bill of health written from destroyed evidence. srcState() makes the difference explicit. */
+    INDIC.push(indSrc("SSH / ESXi Shell used", (ssh||sshEn), (ssh?(ssh+" SSH login(s)"):"")+(sshEn?((ssh?", ":"")+sshEn+" enable command(s)"):""),
+      auSt.ok?shSt:auSt, "no SSH logins in auth.log, no enable command in shell.log"));
     INDIC.push(ind("External source IP on login", ext.n?"hit":"clear", ext.n?(ext.n+" login(s) from "+ext.ips.slice(0,4).join(", ")):"all logins from local/RFC1918"));
-    INDIC.push(ind("Host-encryption change / recovery-key access", encT?"hit":"clear", encT?(encT+" command(s) - esxcli system settings encryption"):"none in shell.log"));
-    INDIC.push(ind("Mass VM power-off / process kill", pk?"hit":"clear", pk?(pk+" command(s)"):"none in shell.log"));
-    INDIC.push(ind("Firewall disabled", fw?"hit":"clear", fw?(fw+" command(s)"):"none in shell.log"));
-    INDIC.push(ind("Payload staged in /tmp or /scratch", tmp?"hit":"clear", tmp?(tmp+" command(s)"):"none in shell.log"));
-    INDIC.push(ind("Download / decoder / reverse-shell", dl?"hit":"clear", dl?(dl+" command(s) - wget|sh / base64 / nc"):"none in shell.log"));
-    INDIC.push(ind("Bulk VMDK / VMX manipulation", bulk?"hit":"clear", bulk?(bulk+" command(s)"):"none in shell.log"));
+    INDIC.push(indSrc("Host-encryption change / recovery-key access", encT, encT+" command(s) - esxcli system settings encryption", shSt, "none in shell.log"));
+    INDIC.push(indSrc("Mass VM power-off / process kill", pk, pk+" command(s)", shSt, "none in shell.log"));
+    INDIC.push(indSrc("Firewall disabled", fw, fw+" command(s)", shSt, "none in shell.log"));
+    INDIC.push(indSrc("Payload staged in /tmp or /scratch", tmp, tmp+" command(s)", shSt, "none in shell.log"));
+    INDIC.push(indSrc("Download / decoder / reverse-shell", dl, dl+" command(s) - wget|sh / base64 / nc", shSt, "none in shell.log"));
+    INDIC.push(indSrc("Bulk VMDK / VMX manipulation", bulk, bulk+" command(s)", shSt, "none in shell.log"));
     var acc=NODE.acceptance||""; INDIC.push(ind("VIB acceptance downgraded", acc?(/community/i.test(acc)?"hit":"clear"):"na", acc?("acceptance level: "+acc):"software-acceptance-get not captured"));
     INDIC.push(bfIndicator());
   } else if(BTYPE==="vcsa"){
@@ -2459,34 +2561,77 @@ function indHits(){ var n=0; for(var i=0;i<INDIC.length;i++) if(INDIC[i].status=
    and layers config cross-checks. Always shows the VMSA to verify against. */
 function buildNumOf(){ return parseInt(String(NODE.build||"").replace(/[^0-9]/g,""),10)||0; }
 function cve(id,vmsa,title,verdict,basis){ return {id:id,vmsa:vmsa,title:title,verdict:verdict,basis:basis}; }
+/* ---- CVE data lives in cve.json, NOT in this file ---------------------------------------------
+   The code owns the RULES (how a build is compared, which cross-checks apply); the FACTS (CVE ids,
+   VMSA ids, fix builds) live in cve.json next to the HTA, so they can be corrected without touching
+   code and it is obvious they are data someone must maintain.
+
+   Why nothing is fetched: Broadcom's VMware advisory portal is login-gated and JavaScript-driven, the
+   old vmware.com advisories.xml RSS feed is gone (404), and per-advisory URLs use opaque numeric
+   content ids that cannot be constructed from a VMSA number. There is no machine-readable source for
+   VMware FIX BUILD numbers - that mapping exists only in the advisory text. NVD carries the CVE
+   description and CVSS but NOT the fix build, so a live NVD lookup could not populate this either.
+   So the tool never claims to have checked: it shows the data's review date and, when that date is
+   stale/absent/unreadable, says plainly that it must be verified by hand against the advisory index. */
+var CVEDATA=null, CVEDATA_ERR="", CVE_INDEX_URL="https://www.broadcom.com/support/vmware-security-advisories";
+function cveDataPath(){ return (htaFolder()||".")+"\\cve.json"; }
+function loadCveData(){
+  CVEDATA=null; CVEDATA_ERR="";
+  var p=cveDataPath();
+  if(!fileExists(p)){ CVEDATA_ERR="cve.json not found next to the app ("+p+")"; return null; }
+  var txt=""; try{ txt=readUtf8(p); }catch(e){ CVEDATA_ERR="cve.json could not be read: "+(e.message||e); return null; }
+  if(!trimStr(txt)){ CVEDATA_ERR="cve.json is empty"; return null; }
+  try{ CVEDATA=JSON.parse(txt); }catch(e2){ CVEDATA_ERR="cve.json is not valid JSON: "+(e2.message||e2)+" - fix the file or the CVE section stays unassessed"; return null; }
+  if(!CVEDATA || (!CVEDATA.esxi && !CVEDATA.vcsa)){ CVEDATA_ERR="cve.json has no esxi/vcsa entries"; CVEDATA=null; return null; }
+  if(CVEDATA.advisoryIndex) CVE_INDEX_URL=String(CVEDATA.advisoryIndex);
+  appendLog("cve.json: "+((CVEDATA.esxi||[]).length)+" ESXi + "+((CVEDATA.vcsa||[]).length)+" vCenter entr(ies), reviewed "+(CVEDATA.reviewed||"never"));
+  return CVEDATA;
+}
+/* Days since the data was last reviewed by a human. -1 = never/unparseable, which is treated as stale:
+   an unstamped file is exactly as trustworthy as an old one. */
+function cveAgeDays(){
+  if(!CVEDATA || !CVEDATA.reviewed) return -1;
+  var m=String(CVEDATA.reviewed).match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m) return -1;
+  var then=Date.UTC(+m[1], +m[2]-1, +m[3]), now=new Date();
+  var d=Math.floor((Date.UTC(now.getFullYear(),now.getMonth(),now.getDate())-then)/86400000);
+  return d<0?0:d;
+}
+function cveStale(){ var d=cveAgeDays(); var lim=(CVEDATA&&CVEDATA.staleAfterDays)||180; return (d<0)||(d>lim); }
+/* One sentence the UI and the report both print, so they can never disagree about how trustworthy the
+   CVE section is. Never says "checked" - the tool cannot check. */
+function cveProvenance(){
+  if(!CVEDATA) return "CVE exposure NOT ASSESSED: "+CVEDATA_ERR+". Nothing was checked - verify this host's build by hand against the VMware advisories ("+CVE_INDEX_URL+").";
+  var d=cveAgeDays(), who=trimStr(CVEDATA.reviewedBy||"");
+  var s="Fix builds are read from cve.json (data, not code)"+(who?(", last reviewed by "+who):"")+
+        ((d<0)?", NEVER stamped with a review date":(", last reviewed "+CVEDATA.reviewed+" ("+nf(d)+" day(s) ago)"))+". ";
+  s += "The tool does not and cannot query Broadcom: the advisory portal is login-gated and JavaScript-driven, and no feed publishes VMware fix builds. These verdicts are ADVISORY - confirm against the VMSA by hand ("+CVE_INDEX_URL+").";
+  if(cveStale()) s += "  DATA IS STALE - re-check the advisories and update cve.json before relying on this section.";
+  return s;
+}
 function buildCves(){
-  CVES=[]; var b=buildNumOf();
-  if(BTYPE==="esxi"){
-    var slp=readMember("commands/localcli_system-slp-stats-get.txt"); var slpRun = slp && !/not running/i.test(slp);
-    var fix2021=17325551; // ESXi 7.0 U1c
-    CVES.push(cve("CVE-2021-21974","VMSA-2021-0002","OpenSLP heap overflow RCE (ESXiArgs mass ransomware)",
-      slpRun ? (b<fix2021?"exposed":"review") : (b>=fix2021?"patched":"mitigated"),
-      "host build "+(b||"?")+"; fixed ≥ 7.0 build "+fix2021+"; SLP service "+(slp?(slpRun?"RUNNING":"not running (mitigated)"):"state not captured")));
-    var ad=adJoined();
-    CVES.push(cve("CVE-2024-37085","VMSA-2024-0013","ESXi Active Directory 'ESX Admins' auth bypass (abused by ransomware)",
-      ad?"review":"na",
-      ad ? ("AD integration "+(ad==="maybe"?"config present (verify join)":"joined")+" - confirm patch vs VMSA-2024-0013 (host build "+(b||"?")+")") : "host not AD-integrated"));
-    // 2025 advisories - the fix line is picked by THIS host's version + update level, because
-    // build numbers are NOT monotonic across trains (e.g. 8.0 U3f 24784735 < 8.0 U2e 24789317).
-    // Fix builds verified from the VMSAs / release notes (2026-07).
-    var mj=parseInt(String(NODE.version||"").split(".")[0],10)||0;
-    var up=parseInt(NODE.update||"",10); if(isNaN(up)) up=-1;
-    cveEsxiLine("CVE-2025-22224","VMSA-2025-0004","VMCI TOCTOU out-of-bounds write - guest-to-host VMX escape (EXPLOITED IN THE WILD 2025-03)", b, mj, up,
-      { v7:24585291, d7:"7.0 U3s (24585291)", v8u3:24585383, d8u3:"8.0 U3d (24585383)", d8other:"8.0 U2d line", v9:"not affected (ESX 9.x shipped after the fix)" });
-    cveEsxiLine("CVE-2025-41236","VMSA-2025-0013","VMXNET3 integer overflow - guest-to-host escape (Pwn2Own 2025; +CVE-2025-41237/38/39)", b, mj, up,
-      { v7:24784741, d7:"7.0 U3w (24784741)", v8u3:24784735, d8u3:"8.0 U3f (24784735)", v8u2:24789317, d8u2:"8.0 U2e (24789317)", v9:"fixed in ESX 9.0.0.0100 - verify this 9.x build vs the VMSA" });
-  } else if(BTYPE==="vcsa"){
-    // vCenter exposes only a build number (no version line) and 7.0/8.0 build ranges OVERLAP, so
-    // compare CONSERVATIVELY vs per-line fix builds: patched only if >= the HIGHEST fix, review if
-    // below the LOWEST, else verify. Fix builds verified from the VMSAs (2026-07).
-    cveMulti("CVE-2023-34048","VMSA-2023-0023","vCenter DCERPC out-of-bounds write - unauth RCE (exploited in the wild)", b, [22357613,22368047], "7.0 U3o (22357613) / 8.0 U1d (22368047)");
-    cveMulti("CVE-2024-38812","VMSA-2024-0019","vCenter DCERPC heap overflow - unauth RCE", b, [24145809,24262322], "7.0 U3s (24145809) / 8.0 U3b (24262322)");
-    cveMulti("CVE-2025-41225","VMSA-2025-0010","vCenter authenticated command execution via alarm script actions", b, [24730281,24674346], "7.0 U3v (24730281) / 8.0 U3e (24674346)");
+  CVES=[]; var b=buildNumOf(), i;
+  if(!CVEDATA) loadCveData();
+  if(!CVEDATA) return;                                  // no data -> no verdicts, and the panel says why
+  var list=(BTYPE==="esxi")?(CVEDATA.esxi||[]):((BTYPE==="vcsa")?(CVEDATA.vcsa||[]):[]);
+  var mj=parseInt(String(NODE.version||"").split(".")[0],10)||0;
+  var up=parseInt(NODE.update||"",10); if(isNaN(up)) up=-1;
+  for(i=0;i<list.length;i++){ var c=list[i]; if(!c||!c.id) continue;
+    try{
+      if(c.rule==="slp"){
+        var slp=readMember("commands/localcli_system-slp-stats-get.txt"), slpRun = slp && !/not running/i.test(slp);
+        CVES.push(cve(c.id,c.vmsa,c.title,
+          slpRun ? (b<c.fix?"exposed":"review") : (b>=c.fix?"patched":"mitigated"),
+          "host build "+(b||"?")+"; fixed ≥ "+(c.fixLabel||c.fix)+"; SLP service "+(slp?(slpRun?"RUNNING":"not running (mitigated)"):"state not captured")));
+      } else if(c.rule==="ad"){
+        var ad=adJoined();
+        CVES.push(cve(c.id,c.vmsa,c.title, ad?"review":"na",
+          ad ? ("AD integration "+(ad==="maybe"?"config present (verify join)":"joined")+" - confirm patch vs "+c.vmsa+" (host build "+(b||"?")+")") : "host not AD-integrated"));
+      } else if(c.rule==="line"){
+        cveEsxiLine(c.id,c.vmsa,c.title, b, mj, up, c.line||{});
+      } else if(c.rule==="multi"){
+        cveMulti(c.id,c.vmsa,c.title, b, c.fixes||[], c.fixLabel||"see VMSA");
+      }
+    }catch(e){ appendLog("cve.json entry "+c.id+" skipped: "+(e.message||e)); }
   }
 }
 /* per-version/per-update fix-line compare for ESXi (which, unlike vCenter, exposes version+update) */
@@ -2573,7 +2718,71 @@ function persistHits(){ var n=0; for(var i=0;i<PERSIST.length;i++){ var v=PERSIS
    against config captures AND parsed log evidence.
    Bundles are targeted: missing source => "na", never "pass".
    ============================================================ */
-function secAdd(grp,name,status,detail){ SECPOST.push({grp:grp,name:name,status:status,detail:detail}); }
+/* Tooltips for the Security tab, keyed by CONTROL NAME rather than passed at each of the ~48 secAdd
+   call sites. Two reasons: most controls are added from more than one branch (a "not captured" -> na
+   variant and a real graded variant) under the same name, so one entry covers both and they cannot
+   drift apart; and the text lives in one readable block instead of being smeared through the parsers.
+   Each answers the three questions the analyst actually has: what IS this, why does it matter, and what
+   does a fail/warn mean here. A name with no entry simply gets no tooltip - never a broken one. */
+var SEC_TIPS={
+ "Installed VIBs (software integrity)":"Every VMware Installation Bundle (package) installed on the host, from localcli software vib list. This is the host's software bill of materials: a rogue VIB is the classic way ransomware persists across an ESXi reboot, because it survives patching and looks like a normal package.",
+ "VIB inventory":"The count of installed packages and how many are non-VMware. Context for the checks below, not a verdict by itself.",
+ "Unsigned VIBs (CommunitySupported)":"VIBs whose acceptance level is CommunitySupported, meaning nothing verified the code. Legitimate on lab hosts; on a production host it is a known ransomware persistence route (the attacker installs their own VIB). FAIL means at least one unsigned package is installed - identify the vendor and confirm it was intended.",
+ "Unrecognized VIB vendor":"VIBs whose vendor string is not VMware or a hardware OEM the tool recognises. REVIEW is not an accusation: it means nobody can tell you from the bundle alone whether that vendor belongs on this host, so a human must confirm it.",
+ "VIBs added after the base image":"Packages whose install date is later than the bulk of the image. A VIB installed long after the host was built, especially inside the case window, is exactly what a rogue package looks like. Cross-check the date against the Maintenance events and Actions tabs.",
+ "Known-CVE exposure (advisory)":"Whether this host's build is at or below the fix build for the CVEs the tool knows about. ADVISORY only. The fix builds come from cve.json (data, not code) and are only as current as the date stamped in it - the tool cannot query Broadcom, whose advisory portal is login-gated with no machine-readable feed. ESXi and vCenter build numbers are also not comparable across major lines. Confirm against the VMSA by hand before reporting it.",
+ "Known-CVE exposure":"Whether this host's build is at or below the fix build for the CVEs the tool knows about. ADVISORY only. The fix builds come from cve.json (data, not code) and are only as current as the date stamped in it - the tool cannot query Broadcom, whose advisory portal is login-gated with no machine-readable feed. Build numbers are also not comparable across major lines. Confirm against the VMSA by hand before reporting it.",
+ "VIB acceptance level (host policy)":"The host's POLICY for what it will install (VMwareCertified / VMwareAccepted / PartnerSupported / CommunitySupported). This is the gate, not the packages. FAIL = CommunitySupported: the host will accept unsigned code, so a rogue VIB needs no further weakening. Attackers downgrade this deliberately - check the Actions tab for the command that changed it.",
+ "Host encryption mode":"ESXi host encryption / key-provider state. Relevant two ways: it protects VM data at rest, and an ATTACKER who reaches the recovery key or flips the mode can lock the host's own config. TPM-sealed is best practice; anything else means the key material is less protected.",
+ "execInstalledOnly":"When true, ESXi refuses to execute a binary that did not arrive in an installed VIB. This is the single most effective anti-ransomware setting on ESXi, because the encryptor is an arbitrary binary dropped in /tmp. WARN means arbitrary binaries are allowed to run.",
+ "Require Secure Boot":"Whether the host demands a signed boot chain. WARN means an unsigned or modified boot chain would still boot, so bootkit and modified-hypervisor tampering is possible and would not be evident from the running system.",
+ "TPM / measured boot":"Whether a TPM is present and measuring the boot chain (and whether DRTM is on). Without it, nothing independently attests that the running hypervisor is the one that was installed, and Secure Boot / host encryption lose their hardware root of trust.",
+ "Managed Object Browser (MOB)":"The vSphere Managed Object Browser: a web UI exposing the host's full API object model. It is disabled by default and has no routine operational use. FAIL means someone deliberately enabled it - it is a known reconnaissance and exploitation surface, so find out who turned it on and when.",
+ "Account lockout":"How many failed authentications before an account locks (Security.AccountLockFailures). FAIL = 0, which DISABLES lockout entirely and makes password guessing unlimited. Read this next to the Logons tab brute-force panel: no lockout plus failures is a very different story from no lockout and none.",
+ "Password quality policy":"The host's password complexity rule (Security.PasswordQualityControl). Reported as changed-from-default or at default. A weakened policy makes the guessing that the brute-force detector looks for far more likely to succeed.",
+ "Shell/SSH idle timeout":"Whether an idle ESXi Shell / SSH session is closed automatically (ESXiShellTimeOut / ESXiShellInteractiveTimeOut). WARN means a forgotten or hijacked session stays open indefinitely, which is both an exposure and a reason a session in the Logons tab may look impossibly long.",
+ "DCUI access list":"Which accounts may use the console (DCUI.Access). Changed from default means someone granted console access outside the normal path - review who is on the list, since DCUI access bypasses much of the remote-access hardening.",
+ "Advanced-settings checks (MOB / lockout / timeouts / DCUI)":"The advanced-settings capture (localcli system settings advanced list -d) that MOB, account lockout, timeouts and DCUI are all read from. n/a here means that ONE capture is missing, so every check depending on it is unknowable - not compliant.",
+ "Remote syslog":"Whether the host forwards its logs off-box (Syslog.global.logHost). WARN = logs are LOCAL ONLY, which is why the bundle you are holding may be the only copy: an attacker with host access can trivially wipe or encrypt local logs. If this host was ransomed, this setting is why evidence is missing.",
+ "Remote syslog forwarding":"Whether the appliance's rsyslog forwards off-host. WARN = no off-host copy, so anyone with root on the appliance can edit or delete the only copy of the evidence.",
+ "NTP time sync":"Whether time is configured AND actually synchronised. This underpins every timestamp in this report: if the host's clock drifts, correlating its logs against vCenter, EDR or firewall data is unreliable, and a timeline built from it can mislead.",
+ "SSO identity sources":"Whether vCenter authenticates against an external AD/LDAP source or only the built-in vsphere.local domain. Determines where the accounts in the Logons tab actually live, and therefore where you must go to disable or investigate them.",
+ "SSO password / lockout policy":"vCenter SSO password and lockout policy. Not captured in a vc-support bundle, so it is n/a here by construction: check it via VAMI or dir-cli rather than assuming it is at default.",
+ "SSO configuration":"The SSO configuration capture that identity-source and policy checks read. n/a means the capture is absent, so these are unknowable rather than compliant.",
+ "SSH access observed in logs":"Whether SSH authentications appear in the logs at all. SSH is disabled by default on ESXi and is not routinely needed; its use is not automatically malicious, but on a ransomed host it is the usual delivery path. Correlate with the Actions tab.",
+ "ESXi Shell usage observed":"Shell commands recorded in shell.log. The ESXi Shell is off by default, so commands here mean an interactive operator (or an intruder) was on the host. Every ESXi ransomware case runs through this log, which is also why attackers destroy it.",
+ "Logons from external (public) IPs":"Authentications sourced from non-RFC1918 addresses. A management interface should never be reachable from a public address. FAIL means it was, and those logons are the first thing to explain.",
+ "Failed-login volume":"How many authentications failed. Volume alone is not an attack (stale saved passwords produce plenty), which is why the Logons tab scores the SHAPE. Read this as context for the brute-force panel, not as a verdict.",
+ "Log integrity":"Whether key logs are empty, truncated, or have time gaps. This is the anti-forensics check: an empty shell.log on a host someone clearly used, or a gap across the incident window, is itself a finding. WARN means at least one key log is not intact - see the Persistence tab for which.",
+ "Host audit events (vobd)":"The host's own audit stream (esx.audit.*) from vobd: SSH and shell enable/disable, lockdown changes, firewall changes. This is the host's account of itself, independent of shell.log, so it can corroborate activity even when the shell history is gone.",
+ "Suspicious processes":"Processes holding sockets that match attacker-tool patterns (netcat, reverse shells, miners, interpreters run from /tmp). FAIL means a process on this host looks like tooling rather than platform software - identify it before anything else in this report.",
+ "External connections":"Established sessions from this node to public addresses at capture time. A hypervisor should talk to its management estate, not the internet. WARN means it was: an outbound session from an ESXi host is command-and-control until proven otherwise.",
+ "Network-facing listeners":"Services bound to a routable interface rather than loopback. This is the host's attack surface at capture time. Not a verdict on its own: judge it against what this host is supposed to expose (443 for the API, and little else).",
+ "Web/API clients from public IPs":"Clients that reached the web/API plane from public addresses. The management API being consumed from the internet is the exposure that precedes most vSphere intrusions.",
+ "Web-plane suspicious requests":"Requests whose path matches web-attack patterns (traversal, JNDI, injection, shell paths). FAIL means someone probed or exploited the management web plane - pair the source IP with the Logons tab to see whether it then authenticated.",
+ "Appliance firewall (iptables INPUT policy)":"The appliance's default INPUT policy. DROP/REJECT means unsolicited inbound traffic is refused by default; ACCEPT means the firewall permits anything not explicitly denied, so the appliance's exposure is whatever happens to be listening.",
+ "Appliance firewall (iptables)":"The iptables capture the firewall check reads. Absent means the policy is unknowable from this bundle, not that it is open.",
+ "Backup posture":"Whether any backup configuration or scheduler was captured. Directly relevant to ransomware: it tells you whether recovery is even possible, and attackers target backup infrastructure first. n/a means nothing was captured - verify it outside the bundle rather than assuming it exists."
+};
+/* Indicator tooltips (the panel above Security posture), same contract as SEC_TIPS. */
+var IND_TIPS={
+ "Ransom notes / encrypted files":"Ransom notes and encrypted files found on the datastores AND in the host log directories. Notes are matched by CONTENT (tor/onion/decrypt wording), not by filename, because the filename is attacker-chosen and often derived from a per-victim random extension.",
+ "Log directory encrypted (anti-forensics)":"Whether the host's own log directory was mass-renamed to a single unknown extension, i.e. the attacker encrypted the evidence. Detected by SHAPE (many files, one unknown suffix, originals gone) rather than by a signature list, because families such as Qilin generate the extension per victim. When this triggers, an empty Actions or Timeline tab means the history was DESTROYED, not that nothing happened.",
+ "SSH / ESXi Shell used":"SSH logins (auth.log) or shell-enable commands (shell.log). Both are off by default on ESXi, so their use marks interactive access to the hypervisor. n/a means those logs could not be read - which is not the same as no access.",
+ "External source IP on login":"Any authentication from a non-RFC1918 address. A hypervisor management interface reachable from a public address is the exposure that starts most of these cases.",
+ "Host-encryption change / recovery-key access":"esxcli system settings encryption commands: changing the host's encryption mode or reading the recovery key. Attackers do this to lock the host's own configuration, and it is a step in several ESXi ransomware playbooks.",
+ "Mass VM power-off / process kill":"Bulk VM power-off or vmx process kills. The encryptor must release the file locks before it can encrypt VMDKs, so a burst of power-offs is usually the moment the encryption started.",
+ "Firewall disabled":"Commands disabling the ESXi firewall. Widens the attack surface and is a common precursor to staging tooling on the host.",
+ "Payload staged in /tmp or /scratch":"Executables written to or run from /tmp or /scratch. Nothing legitimate ships from there; this is where the encryptor binary lands.",
+ "Download / decoder / reverse-shell":"wget|sh pipelines, base64 decoders, or netcat-style reverse shells in the shell history. Delivery and remote-access tradecraft.",
+ "Bulk VMDK / VMX manipulation":"Bulk operations against VMDK/VMX files from the shell. Either the encryption itself, or the renaming that precedes it.",
+ "VIB acceptance downgraded":"Whether the host's VIB acceptance policy was lowered to CommunitySupported, which lets unsigned code install as a package and persist across reboots.",
+ "Brute force / password spray":"Password guessing detected by SHAPE, not by raw failure count: a burst (many failures for one user from one IP) or a spray (one IP against many users). BREACH means an IP that was guessing then SUCCEEDED - treat that account as compromised.",
+ "Suspicious sudo / shell command":"Appliance shell commands matching delivery or tooling patterns, from auth.log sudo entries.",
+ "Destructive / authz-changing vCenter task":"vCenter tasks that destroy data (VM/file deletion, power-off, unregister, snapshot removal) or change who holds access (role/permission/user changes). The authz half is how an intruder keeps access after a password reset.",
+ "Host service / firewall changed via vCenter":"Host service or firewall changes issued FROM vCenter. Enabling SSH on a host from vCenter is a known vCenter-to-ESXi pivot; vpxd does not name the service, so confirm in the host's own bundle (vobd ssh.enabled)."
+};
+function secAdd(grp,name,status,detail){ SECPOST.push({grp:grp,name:name,status:status,detail:detail,tip:SEC_TIPS[name]||""}); }
 /* advanced settings CHANGED from default (localcli ... advanced-list -d).
    Presence = operator changed it; absence = still at ESXi default. */
 function advChangedMap(){
@@ -3949,8 +4158,11 @@ function buildReportHtml(){
   else h.push('<p class="muted">No indicator set for this bundle type.</p>');
 
   /* ---- CVEs ---- */
-  if(CVES.length){ h.push(rSection("r-cve","CVE exposure","advisory - verify against the linked VMSA"));
-    h.push('<table><tr><th>CVE</th><th>VMSA</th><th>Summary</th><th>Status</th><th>Basis</th></tr>');
+  if(CVES.length){ h.push(rSection("r-cve","CVE exposure","advisory - verify each VMSA by hand"));
+    /* The report used to tell the reader to "verify against the linked VMSA" while linking a URL that
+       404s. State where the numbers came from, how old they are, and that nothing was auto-checked. */
+    h.push('<p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
+    h.push('<table><tr><th>CVE</th><th>Advisory</th><th>Summary</th><th>Status</th><th>Basis</th></tr>');
     for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=(cv.verdict==="exposed")?"hit":(cv.verdict==="review"?"warn":(cv.verdict==="na"?"na":"clear"));
       h.push('<tr'+(cv.verdict==="exposed"?' class="rf"':'')+'><td class="mono"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
         +'<td class="mono"><a href="'+rEsc(vmsaUrl(cv.vmsa))+'" target="_blank">'+rEsc(cv.vmsa)+'</a></td><td>'+rEsc(cv.title)+'</td>'
@@ -4080,7 +4292,7 @@ function buildReportHtml(){
     h.push('</div>'); }
   else h.push('<p class="muted">No log hit the read cap; every parsed log was read in full.</p>');
 
-  h.push('<p class="muted" style="margin-top:24px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'. The CVE and security-posture sections are advisory; confirm builds against the linked VMSA. All times UTC.</p>');
+  h.push('<p class="muted" style="margin-top:24px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'. The CVE and security-posture sections are advisory; the CVE fix builds are local data (cve.json) that nothing auto-verifies - confirm each build against its VMSA by hand. All times UTC.</p>');
   /* Scroll-spy for the nav pane: marks the section you are reading, and keeps that link in view inside
      the rail. Progressive enhancement only - the links are plain anchors, so navigation still works with
      script disabled or blocked.
@@ -4162,7 +4374,7 @@ function buildSecurityHtml(){
     for(i=0;i<warns.length;i++){ h.push('<tr><td class="warn">WARN</td><td>'+rEsc(warns[i].grp)+'</td><td>'+rEsc(warns[i].name)+'</td><td>'+rEsc(warns[i].detail)+'</td></tr>'); }
     h.push('</table>'); }
   // patch state / CVE
-  if(CVES.length){ h.push('<h2>Patch state &amp; CVE exposure</h2><p class="muted">Advisory - confirm against the linked VMSA and the host\'s exact build.</p>');
+  if(CVES.length){ h.push('<h2>Patch state &amp; CVE exposure</h2><p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
     h.push('<table><tr><th>CVE</th><th>VMSA</th><th>Verdict</th><th>Basis</th><th>Title</th></tr>');
     for(i=0;i<CVES.length;i++){ var c=CVES[i]; h.push('<tr><td class="mono">'+rEsc(c.id)+'</td><td class="mono">'+rEsc(c.vmsa)+'</td><td class="'+cveCls(c.verdict)+'">'+rEsc(c.verdict.toUpperCase())+'</td><td>'+rEsc(c.basis)+'</td><td>'+rEsc(c.title)+'</td></tr>'); }
     h.push('</table>'); }
@@ -4268,7 +4480,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -4284,6 +4496,7 @@ function processHostSync(path){
   buildInventory(); extractKeyFilesToc(); parseNode();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
   ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
   safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
+  safeStep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
   safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
   safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity); safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents);
   if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
@@ -4691,14 +4904,40 @@ function renderIndicators(){
   showEl("secIndicCard", TAB==="sec");
   var h='<div class="panel"><h4>Intrusion / ransomware indicators <span class="sub">- '+indHits()+' of '+INDIC.length+' triggered'+(BTYPE==="esxi"?" (ESXi kill-chain)":"")+'</span></h4>';
   for(var i=0;i<INDIC.length;i++){ var it=INDIC[i]; var dc=it.status==="hit"?"hit":(it.status==="na"?"na":""); var sc=it.status==="hit"?"hit":(it.status==="na"?"na":"clear"); var lbl=it.status==="hit"?"TRIGGERED":(it.status==="na"?"n/a":"clear");
-    h+='<div class="ind"><span class="dot '+dc+'"></span><span class="nm">'+esc(it.name)+'</span><span class="st '+sc+'">'+lbl+'</span><span class="dt">'+esc(it.detail)+'</span></div>'; }
+    var tt=indTip(it);
+    h+='<div class="ind"'+(tt?(' title="'+esc(tt)+'"'):'')+'><span class="dot '+dc+'"></span><span class="nm">'+esc(it.name)+'</span><span class="st '+sc+'">'+lbl+'</span><span class="dt">'+esc(it.detail)+'</span></div>'; }
   h+='</div>'; $("ovIndic").innerHTML=h;
 }
 function cveUrl(id){ return "https://nvd.nist.gov/vuln/detail/"+encodeURIComponent(id); }
-function vmsaUrl(v){ return "https://www.vmware.com/security/advisories/"+encodeURIComponent(v)+".html"; }
+/* The pre-Broadcom per-advisory deep link (the old vendor host, /security/advisories/<VMSA>.html) now
+   404s, so every VMSA link this tool ever rendered was broken - including the one the report tells you
+   to go and confirm against. Broadcom's replacement URLs use opaque numeric content ids that cannot be
+   built from a VMSA number, so there is no honest per-advisory deep link: point at the advisory INDEX,
+   which resolves, and let the reader search the VMSA id (shown next to the link). The index URL itself
+   is data, not code - it comes from cve.json (advisoryIndex). */
+function vmsaUrl(v){ return CVE_INDEX_URL; }
 function renderCves(){
-  if(!ANALYZED || !CVES.length){ $("ovCve").innerHTML=""; return; }
-  var h='<div class="panel"><h4>CVE exposure <span class="sub">- advisory; click the CVE / VMSA to open the KB, and verify</span></h4>';
+  if(!ANALYZED){ $("ovCve").innerHTML=""; return; }
+  /* A fleet snapshot restores CVES without going through buildCves(), so the data file may not have been
+     read in this session - load it before quoting its review date. Cached after the first read. */
+  if(!CVEDATA && !CVEDATA_ERR) loadCveData();
+  /* No data file, bad JSON, or nothing for this bundle type: say so loudly. An absent CVE panel would
+     read as "no CVE exposure", which is the one thing it must never mean. */
+  if(!CVES.length){
+    if(!BTYPE){ $("ovCve").innerHTML=""; return; }
+    $("ovCve").innerHTML='<div class="panel"><h4>CVE exposure <span class="sub">- NOT ASSESSED</span></h4>'
+      +'<div class="ind"><span class="dot na"></span><span class="nm">Known-CVE exposure</span><span class="st na">n/a</span>'
+      +'<span class="dt" title="'+esc(cveProvenance())+'">'+esc(CVEDATA?("no CVE entries for a "+typeLabel()+" bundle in cve.json"):CVEDATA_ERR)
+      +' - nothing was checked. Verify manually: <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'">VMware security advisories</span></span></div></div>';
+    var sp0=$("ovCve").getElementsByTagName("span");
+    for(var z=0;z<sp0.length;z++){ if(/\blnk\b/.test(sp0[z].className+"") && sp0[z].getAttribute("data-url")){ sp0[z].onclick=function(){ openUrl(this.getAttribute("data-url")); }; } }
+    return;
+  }
+  var stale=cveStale();
+  var h='<div class="panel"><h4>CVE exposure <span class="sub" title="'+esc(cveProvenance())+'">- advisory'
+    +(stale?', <span style="color:#e3b341;font-weight:700">DATA STALE - re-check the advisories and update cve.json</span>':(', fix builds reviewed '+esc(CVEDATA.reviewed||"never")))
+    +'; the tool cannot query Broadcom - confirm by hand</span>'
+    +'<span style="float:right;font-weight:400;text-transform:none"><span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'" title="Open the VMware (Broadcom) security advisory index and search for the VMSA id. Per-advisory deep links are not constructible, and the old vmware.com advisory URLs 404.">Check advisories</span></span></h4>';
   for(var i=0;i<CVES.length;i++){ var c=CVES[i]; var v=c.verdict; var dc=(v==="exposed")?"hit":(v==="review"?"warn":(v==="na"?"na":"")); var sc=(v==="exposed")?"hit":(v==="review"?"warn":(v==="na"?"na":"clear"));
     h+='<div class="ind"><span class="dot '+dc+'"></span><span class="nm mono"><span class="lnk" data-url="'+esc(cveUrl(c.id))+'" title="Open '+esc(c.id)+' on NVD">'+esc(c.id)+'</span> <span class="lnk dt" data-url="'+esc(vmsaUrl(c.vmsa))+'" title="Open '+esc(c.vmsa)+' advisory">'+esc(c.vmsa)+'</span></span><span class="st '+sc+'">'+esc(v.toUpperCase())+'</span><span class="dt">'+esc(c.title)+' - '+esc(c.basis)+'</span></div>'; }
   h+='</div>'; $("ovCve").innerHTML=h;
@@ -4785,6 +5024,18 @@ function renderNetwork(){
   var lhl=$("listenHideLoop"); if(lhl){ lhl.onclick=function(){ LISTEN_HIDELOOP=!!this.checked; renderNetwork(); }; }
   wireFreeze($("netBody"));
 }
+/* The tooltip explains the CONTROL; the n/a suffix explains why this particular run cannot grade it.
+   Spelling that out on the row is the whole point: "na" must never be read as "pass". */
+function secTip(r){
+  var t=r.tip||"";
+  if(r.status==="na") t+=(t?"  ":"")+"n/a here: the source this reads was not captured in this bundle (or could not be read), so the control is UNKNOWABLE - it is not a pass.";
+  return t;
+}
+function indTip(it){
+  var t=IND_TIPS[it.name]||"";
+  if(it.status==="na") t+=(t?"  ":"")+"n/a here: the log this indicator reads is missing or unreadable, so this is UNKNOWABLE rather than clear.";
+  return t;
+}
 function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"")); }
 function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"clear")); }
 function renderSecurity(){
@@ -4800,7 +5051,10 @@ function renderSecurity(){
   for(var g=0;g<groups.length;g++){ var grp=groups[g];
     h+='<div class="panel" style="margin-bottom:10px"><h4>'+esc(grp)+'</h4>';
     for(i=0;i<SECPOST.length;i++){ var r=SECPOST[i]; if(r.grp!==grp) continue;
-      h+='<div class="ind"><span class="dot '+secDotCls(r.status)+'"></span><span class="nm">'+esc(r.name)+'</span><span class="st '+secStCls(r.status)+'">'+esc(r.status==="na"?"n/a":r.status.toUpperCase())+'</span><span class="dt">'+esc(r.detail)+'</span></div>'; }
+      /* tooltip on the WHOLE row: the control name, its verdict and its evidence are one thought, and
+         hovering any of the three should explain the same thing. */
+      var st=secTip(r);
+      h+='<div class="ind"'+(st?(' title="'+esc(st)+'"'):'')+'><span class="dot '+secDotCls(r.status)+'"></span><span class="nm">'+esc(r.name)+'</span><span class="st '+secStCls(r.status)+'">'+esc(r.status==="na"?"n/a":r.status.toUpperCase())+'</span><span class="dt">'+esc(r.detail)+'</span></div>'; }
     h+='</div>'; }
   if(VIBS_NOTABLE.length){
     h+='<div class="panel" style="margin-bottom:10px"><h4>Third-party &amp; non-standard VIBs <span class="sub" style="font-weight:400;text-transform:none;color:#8b949e">- '+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages (VMwareCertified VMware VIBs omitted). Confirm any unsigned / unrecognized-vendor / recently-added entry.</span></h4>';
@@ -4973,7 +5227,30 @@ function renderAct(){
   var rows=[]; for(var i=0;i<ACTIONS.length;i++){ var r=ACTIONS[i]; if(!anPass(r,false)) continue;
     if(ACT_ACTOR && r.actor!==ACT_ACTOR) continue; if(ACT_KIND && r.akind!==ACT_KIND) continue; rows.push(r); }
   sortRows(rows,ACOLS,SORT.act); drawTable(ACOLS,rows,SORT.act,"act");
-  if(!ACTIONS.length) $("tbl").innerHTML='<thead><tr><th>Actions</th></tr></thead><tbody><tr><td class="muted">No actions parsed. ESXi = shell.log commands; vCenter = vpxd mutating (_Task) operations + sudo. A healthy vCenter with no VM changes in the captured window shows none here.</td></tr></tbody>'; }
+  if(!ACTIONS.length) $("tbl").innerHTML='<thead><tr><th>Actions</th></tr></thead><tbody><tr><td class="muted">'+emptyWhy("actions")+'</td></tr></tbody>'; }
+/* An empty table has two very different causes and the tab must not blur them: "the log was read and
+   nothing matched" (a quiet host) vs "the log the parser reads is gone or ENCRYPTED" (evidence
+   destroyed). The reference ransomware bundle hit the second and read as the first. */
+function encSrcNote(rels){
+  var st=srcState(rels);
+  if(st.ok) return "";
+  return '<div style="color:#ff8b8b;margin-top:6px"><b>'+esc(baseName(rels[0]))+' is not readable in this bundle.</b> '+esc(st.why)+'</div>';
+}
+function emptyWhy(kind){
+  var base = (kind==="actions")
+    ? 'No actions parsed. ESXi = shell.log commands + vobd audit events + esxupdate; vCenter = vpxd mutating (_Task) operations + sudo. A healthy vCenter with no VM changes in the captured window shows none here.'
+    : 'No timeline events. The timeline is Logons + Actions merged, so it is empty only when both are.';
+  if(BTYPE!=="esxi") return base;
+  var extra="";
+  if(RANSOM && RANSOM.ext){
+    var lost=[], KEY=["shell.log","vobd.log","esxupdate.log","auth.log"], i;
+    for(i=0;i<KEY.length;i++) if(RANSOM.ext.bases[lc(KEY[i])] && !resolveLog(["var/run/log/"+KEY[i],"scratch/log/"+KEY[i],"var/log/"+KEY[i]])) lost.push(KEY[i]);
+    if(lost.length) extra='<div style="color:#ff8b8b;margin-top:8px"><b>This is not "nothing happened".</b> '+esc(lost.join(", "))
+      +' exist in this bundle ONLY as ciphertext - renamed to .'+esc(RANSOM.ext.ext)+' by ransomware ('+nf(RANSOM.ext.n)
+      +' file(s) encrypted). The command history this tab is built from was destroyed by the attacker. See the Security tab.</div>';
+  } else extra=encSrcNote(SHELL_RELS);
+  return base+extra;
+}
 var TCOLS=[
   {h:"Score / tags", t:"Risk score and why, on the same scale as Logons and Actions. Sort to surface the worst moments in the case window.", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
   {h:"When (UTC)", t:"Event time, UTC. This view is time-ordered so a sequence reads as a story - filtered by the case window (/from /to).", sk:function(r){return r.epoch;}, cell:function(r){return '<td class="mono">'+esc(r.when)+'</td>';}},
@@ -4985,7 +5262,18 @@ function renderTime(){
   fillFilterSel("timeKind", mapField(TIMELINE,"kind"), TIME_KIND);
   var rows=[]; for(var i=0;i<TIMELINE.length;i++){ var r=TIMELINE[i]; if(!anPass(r,true)) continue;
     if(TIME_KIND && r.kind!==TIME_KIND) continue; rows.push(r); }
-  sortRows(rows,TCOLS,SORT.time); drawTable(TCOLS,rows,SORT.time,"time"); }
+  sortRows(rows,TCOLS,SORT.time); drawTable(TCOLS,rows,SORT.time,"time");
+  /* Zero rows drawn from a NON-empty dataset means the filters ate them - say which, rather than
+     leaving a blank table that reads as "the host did nothing". */
+  if(!rows.length){
+    var why = TIMELINE.length
+      ? 'All '+nf(TIMELINE.length)+' timeline event(s) are hidden by the current filters'
+        +((DFROM||DTO)?(' - case window '+esc(($("dfrom").value||"(open)"))+' to '+esc(($("dto").value||"(open)"))+' (clear it to see everything)'):'')
+        +(FLAGONLY?' - "flagged only" is ticked and nothing scored 3+':'')
+        +(TIME_KIND?(' - kind = '+esc(TIME_KIND)):'')+'.'
+      : emptyWhy("timeline");
+    $("tbl").innerHTML='<thead><tr><th>Timeline</th></tr></thead><tbody><tr><td class="muted">'+why+'</td></tr></tbody>';
+  } }
 function mapField(arr,f){ var o=[]; for(var i=0;i<arr.length;i++) o.push(arr[i][f]); return o; }
 var IOCCOLS=[
   {h:"Log", t:"Which log the hit was found in. The sweep covers the key logs present in this bundle, not the whole tree.", sk:function(r){return lc(r.file);}, cell:function(r){return '<td class="mono first" title="'+esc(r.file)+'">'+esc(r.file)+'</td>';}},

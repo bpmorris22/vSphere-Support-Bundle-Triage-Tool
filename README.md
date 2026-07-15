@@ -27,7 +27,7 @@ _Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NE
 
 ## Features
 
-- **Overview** - node summary (product, build, **install date**, **uptime + derived boot time**), key-file coverage, a **Maintenance events** table (boots, reboot/shutdown *with the recorded reason*, maintenance-mode enter/exit, VIB/image installs), and a **CVE-exposure** panel (links to NVD + the VMSA). Derived values (install / uptime / booted) name their source on hover - they are computed, not fields the platform records.
+- **Overview** - node summary (product, build, **install date**, **uptime + derived boot time**), key-file coverage, a **Maintenance events** table (boots, reboot/shutdown *with the recorded reason*, maintenance-mode enter/exit, VIB/image installs), and a **CVE-exposure** panel (per-CVE links to NVD, plus the Broadcom advisory index; fix builds come from the editable `cve.json`). Derived values (install / uptime / booted) name their source on hover - they are computed, not fields the platform records.
 - **Security** - opens with the **ransomware / intrusion indicator** panel, then a graded posture review: VIB integrity (unsigned / CommunitySupported / added after the base image), acceptance level, host encryption mode, Secure Boot / TPM, MOB, lockout + password policy, DCUI access list.
 - **Specification** - deep config: identity, networking (VMkernel adapters, physical NICs, DNS/NTP), **datastores + vSAN & physical-disk layout** (for vDisk recovery scoping), security posture (AD join, VIB acceptance, syslog), and for vCenter the SSO identity sources / AD integration and **managed ESXi hosts**.
 - **VMs** - the hosted VM inventory, **including when the VMs are ransomware-encrypted**:
@@ -65,7 +65,7 @@ Command line: `mshta.exe "vSphere-Bundle-Triage.hta" "<archiveOrFolder>" ["<outD
 
 ## Notes & caveats
 
-- **CVE verdicts are advisory** - confirm against the linked VMSA (vCenter exposes only a build number and 7.0/8.0 build ranges overlap, so the tool is deliberately conservative).
+- **CVE verdicts are advisory, and the CVE facts are DATA not code** - they live in `cve.json` next to the HTA (edit it, then stamp `reviewed` / `reviewedBy`; the panel and both reports print that date and warn once it is stale or was never stamped). Nothing is fetched: Broadcom's advisory portal is login-gated with no machine-readable feed, and no feed publishes VMware *fix build* numbers at all - only the VMSA text does, so a human must confirm them. If `cve.json` is missing or invalid the panel says **NOT ASSESSED** rather than showing nothing. vCenter exposes only a build number and 7.0/8.0 ranges overlap, so the comparison is deliberately conservative.
 - **Support bundles are targeted**, not disk images - artifacts the bundle doesn't capture are shown as "not captured", not "clean".
 - **Guest IPs** come from a vCenter in the same fleet (ESXi bundles don't carry them).
 - **vCenter task&rarr;user attribution** is approximate (nearest human login) - corroborate with the Logons tab.
