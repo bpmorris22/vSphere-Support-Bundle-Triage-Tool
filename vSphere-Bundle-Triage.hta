@@ -455,7 +455,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.11.1";
+var APP_VERSION = "1.12.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-Bundle-Triage.hta";
 var SELF_REPO   = "bpmorris22/vSphere-Support-Bundle-Triage-Tool";
@@ -2690,6 +2690,47 @@ function nvdCpe(){
   if(BTYPE==="vcsa") return "cpe:2.3:a:vmware:vcenter_server:"+line;
   return "";
 }
+/* TWO queries, because a CPE query alone has a STRUCTURAL blind spot, not a tuning one.
+   NVD defers analysis on a large share of CVEs (vulnStatus "Deferred"), and a deferred record has NO
+   CPE entries at all - so no cpeName/virtualMatchString query can ever return it, pinned or unpinned.
+   The reference host is genuinely vulnerable to a Pwn2Own guest-to-host escape whose record is exactly
+   that: vendor CNA data naming the affected line and its fix build, and zero CPE. Only the local
+   cve.json happened to catch it.
+   The vendor's CNA data is filed regardless of NVD's analysis backlog, so ask for it by SOURCE:
+     A) CPE by version   - NVD's curated view; also catches CVEs where VMware is NOT the CNA
+                           (a component CVE filed by someone else that still affects ESXi)
+     B) CNA source+keyword - every VMware-filed CVE mentioning the product, deferred or not
+   Neither is a superset of the other, so merge. Two requests per bundle, inside the 5-per-30s limit. */
+function nvdSourceUrl(){
+  var kw = (BTYPE==="vcsa") ? "vCenter" : "ESXi";
+  return NVD_API+"?sourceIdentifier=security%40vmware.com&keywordSearch="+encodeURIComponent(kw)+"&resultsPerPage=2000";
+}
+/* Does this CVE apply to THIS host's line? The vendor's own words win; NVD's CPE list is the fallback.
+   defaultStatus:"unaffected" means the vendor enumerated what IS affected, so a product block with no
+   row for our line is a statement that our line is NOT affected - not an unknown. */
+function nvdApplies(v, line){
+  var pr=nvdProdRe(), aff=v.affected||[], i, j, k, hasBlock=false, hasLine=false, defUnaff=false;
+  for(i=0;i<aff.length;i++){ var ad=aff[i].affectedData||[];
+    for(j=0;j<ad.length;j++){ if(!pr.test(String(ad[j].product||""))) continue;
+      hasBlock=true;
+      if(String(ad[j].defaultStatus||"")==="unaffected") defUnaff=true;
+      var vs=ad[j].versions||[];
+      for(k=0;k<vs.length;k++){ var vl=String(vs[k].version||"").match(/^(\d+\.\d+)/);
+        if(vl && vl[1]===line && String(vs[k].status||"")==="affected") hasLine=true; } } }
+  if(hasLine) return true;
+  if(hasBlock && defUnaff) return false;                 // vendor says our line is not affected
+  return nvdCpeMentions(v, line);                        // no vendor block: fall back to NVD's CPE list
+}
+function nvdCpeMentions(v, line){
+  var cfg=v.configurations||[], i, j, k;
+  for(i=0;i<cfg.length;i++){ var nd=cfg[i].nodes||[];
+    for(j=0;j<nd.length;j++){ var cm=nd[j].cpeMatch||[];
+      for(k=0;k<cm.length;k++){ if(!cm[k].vulnerable) continue;
+        var c=String(cm[k].criteria||"");
+        if(!nvdProdRe().test(BTYPE==="vcsa"?"vCenter Server":"ESXi")) return false;
+        if(c.indexOf(":"+line+":")>=0) return true; } } }
+  return false;
+}
 function nvdProdRe(){ return (BTYPE==="vcsa") ? /^vcenter server$/i : /^esxi$/i; }
 function nvdSev(v){ try{
   var m=v.metrics||{};
@@ -2732,13 +2773,24 @@ function nvdFixFor(v, line, up){
 }
 function nvdCveObj(id,title,verdict,basis,src,kev,sev,url){
   var o=cve(id,"",title,verdict,basis); o.src=src; o.kev=!!kev; o.sev=sev||""; o.url=url||""; return o; }
+/* Called ONCE PER QUERY, so it must accumulate rather than reset, and must process each CVE only once -
+   the two queries overlap heavily, and re-merging a row would corroborate it twice and inflate the
+   counts the provenance line reports. NVD.seen is the guard; settle() sets the final total. */
 function nvdMerge(j){
   var host=buildNumOf(), line=nodeLine(), up=nodeUpdate();
   var rows=j.vulnerabilities||[], i, byId={};
   for(i=0;i<CVES.length;i++){ byId[lc(CVES[i].id)]=CVES[i]; if(!CVES[i].src) CVES[i].src="cve.json"; }
-  NVD.n=rows.length; NVD.added=0; NVD.corroborated=0; NVD.conflicted=0;
+  if(!NVD.seen) NVD.seen={};
+  NVD.added=NVD.added||0; NVD.corroborated=NVD.corroborated||0; NVD.conflicted=NVD.conflicted||0;
   for(i=0;i<rows.length;i++){
     var v=rows[i].cve; if(!v||!v.id) continue;
+    /* The source query returns every VMware CVE mentioning the product, including ones that only affect
+       another release line or another product entirely (Workstation/Fusion records mention ESXi). Ask the
+       vendor whether it applies to THIS line before showing it - otherwise the panel fills with rows that
+       are not this host's problem, and a real finding drowns. */
+    if(NVD.seen[lc(v.id)]) continue;                    // already merged from the other query
+    if(!nvdApplies(v, line)) continue;
+    NVD.seen[lc(v.id)]=1;
     var fx=nvdFixFor(v, line, up), kev=!!v.cisaExploitAdd, sev=nvdSev(v), url=nvdAdvisoryUrl(v), local=byId[lc(v.id)];
     var verdict, basis;
     if(fx.build){
@@ -2788,29 +2840,43 @@ function nvdStart(){
   if(!NVD_ON){ NVD={state:"off", err:"", n:0, added:0, corroborated:0, conflicted:0}; renderCves(); return; }
   var cpe=nvdCpe();
   if(!cpe){ NVD={state:"err", err:"the product version was not identified in this bundle, so NVD cannot be asked which CVEs apply to it", n:0}; renderCves(); return; }
-  var url=NVD_API+"?virtualMatchString="+encodeURIComponent(cpe)+"&resultsPerPage=200";
-  NVD={state:"busy", err:"", url:url, n:0, added:0, corroborated:0, conflicted:0}; renderCves();
-  appendLog("NVD: GET "+url);
-  var done=false;
+  var urlA=NVD_API+"?virtualMatchString="+encodeURIComponent(cpe)+"&resultsPerPage=200", urlB=nvdSourceUrl();
+  NVD={state:"busy", err:"", url:urlA, n:0, added:0, corroborated:0, conflicted:0, seen:{}}; renderCves();
+  var done=false, pending=2, got=0, failMsg="";
   function fail(msg){ if(done) return; done=true; NVD.state="err"; NVD.err=msg; appendLog("NVD: "+msg); renderCves(); }
-  try{
-    var x=new ActiveXObject("MSXML2.XMLHTTP.6.0");
-    x.open("GET",url,true);
-    try{ x.setRequestHeader("User-Agent",SELF_HTA+"/"+APP_VERSION); }catch(eh){}
-    x.onreadystatechange=function(){ if(x.readyState!==4 || done) return;
-      try{
-        if(x.status!==200){ fail("NVD returned HTTP "+x.status
-          +(x.status===403?" - rate-limited. Unauthenticated callers get 5 requests / 30 seconds; wait a moment and re-run.":"")
-          +(x.status===0?" - no response (offline, blocked by proxy/firewall, or DNS failed).":"")); return; }
-        var j=JSON.parse(x.responseText+"");
-        done=true; nvdMerge(j); NVD.state="ok"; NVD.when=isoNow();
-        appendLog("NVD: "+NVD.n+" CVE(s) for "+cpe+" - "+NVD.added+" added, "+NVD.corroborated+" corroborated, "+NVD.conflicted+" CONFLICT(s)");
-        renderCves();
-      }catch(e2){ fail("the NVD reply could not be parsed: "+(e2.message||e2)); }
-    };
-    x.send();
-    window.setTimeout(function(){ if(!done && NVD.state==="busy") fail("NVD did not answer within "+(NVD_TIMEOUT/1000)+"s (offline, or the API is down)"); }, NVD_TIMEOUT);
-  }catch(e3){ fail("the request could not be sent: "+(e3.message||e3)+" (no network, or blocked)"); }
+  /* Both queries feed the same merge. If ONE fails we still use the other and say the coverage is
+     partial - better than throwing away good vendor data because a second request timed out. */
+  function settle(){
+    if(done) return;
+    if(--pending>0) return;
+    done=true;
+    if(!got){ fail(failMsg||"NVD returned nothing"); return; }
+    NVD.state="ok"; NVD.when=isoNow(); NVD.n=CVES.length;   // what the panel actually shows, deduped across both queries
+    if(failMsg) NVD.err="partial: "+failMsg;
+    appendLog("NVD: "+NVD.n+" applicable CVE(s) - "+NVD.added+" added, "+NVD.corroborated+" corroborated, "+NVD.conflicted+" CONFLICT(s)"+(failMsg?(" ["+failMsg+"]"):""));
+    renderCves();
+  }
+  function ask(url, label){
+    appendLog("NVD: GET "+url);
+    try{
+      var x=new ActiveXObject("MSXML2.XMLHTTP.6.0");
+      x.open("GET",url,true);
+      try{ x.setRequestHeader("User-Agent",SELF_HTA+"/"+APP_VERSION); }catch(eh){}
+      x.onreadystatechange=function(){ if(x.readyState!==4 || done) return;
+        try{
+          if(x.status!==200){ failMsg=label+" query returned HTTP "+x.status
+            +(x.status===403?" (rate-limited: 5 requests / 30s without an API key - wait and re-check)":"")
+            +(x.status===0?" (no response: offline, blocked by proxy/firewall, or DNS failed)":""); settle(); return; }
+          var j=JSON.parse(x.responseText+"");
+          nvdMerge(j); got++; settle();
+        }catch(e2){ failMsg=label+" reply could not be parsed: "+(e2.message||e2); settle(); }
+      };
+      x.send();
+    }catch(e3){ failMsg="the "+label+" request could not be sent: "+(e3.message||e3)+" (no network, or blocked)"; settle(); }
+  }
+  ask(urlA, "version");         // NVD's curated CPE view
+  ask(urlB, "vendor-CNA");      // every VMware-filed CVE, including those NVD has not analysed (no CPE)
+  window.setTimeout(function(){ if(!done && NVD.state==="busy") fail("NVD did not answer within "+(NVD_TIMEOUT/1000)+"s (offline, or the API is down)"); }, NVD_TIMEOUT);
 }
 function buildCves(){
   CVES=[]; var b=buildNumOf(), i;
@@ -2906,6 +2972,17 @@ function buildPersistence(){
     else { var vasN=(vas.match(/<e id="/g)||[]).length; var vasOn=/<SystemDefaults>[\s\S]*?<enabled>true<\/enabled>/i.test(vas);
       PERSIST.push(vasN? pfind("Persistence","VM autostart (vmAutoStart.xml)","review",vasN+" autostart entr"+(vasN===1?"y":"ies")+(vasOn?" (autostart ENABLED)":" (autostart master switch off)")+" - verify each VM is expected","etc/vmware/hostd/vmAutoStart.xml")
                        : pfind("Persistence","VM autostart (vmAutoStart.xml)","clean","no autostart entries"+(vasOn?" (master switch on, list empty)":""))); }
+    /* ESXi scheduled execution. vm-support collects NO cron evidence whatsoever: no
+       /var/spool/cron/crontabs/root, no crontab -l capture, no cron log - confirmed absent across both
+       reference bundles. Cron persistence on ESXi is a real and documented ransomware technique, so the
+       silence is the finding: say the source is missing rather than omit the check, which would read as
+       "no scheduled tasks". What IS captured is /etc/rc.local.d (checked above), and a crontab written
+       from the shell is caught by the Actions scorer (score 5, "cron persistence written") - but only if
+       shell.log survived. */
+    var cronCap = firstPresentFile(["var/spool/cron/crontabs/root","commands/crontab_-l.txt","var/log/cron"]);
+    PERSIST.push(cronCap
+      ? pfind("Persistence","cron / scheduled tasks","review","cron evidence present at "+cronCap.rel+" - unusual for a vm-support bundle; open and read it",cronCap.rel)
+      : pfind("Persistence","cron / scheduled tasks","na","vm-support collects NO cron evidence on ESXi (no /var/spool/cron/crontabs, no crontab capture, no cron log), so a cron-based persistence entry is UNKNOWABLE from this bundle - it is not absent. Check the host directly, and see rc.local.d above plus any shell 'crontab' command in Actions"));
     logIntegrity([["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]]);
   } else if(BTYPE==="vcsa"){
     var pre = MODE==="tree" ? fileExists(ROOT+"\\etc\\ld.so.preload") : (TOCMAP["etc/ld.so.preload"]!=null);
@@ -2913,10 +2990,39 @@ function buildPersistence(){
     var rs=readMember("etc/rsyslog.conf");
     if(rs!==""){ var fwd=/@@?[\w.\-]+(:\d+)?|omfwd|ActionForward|Target\s*=/i.test(rs); PERSIST.push(pfind("Tampering","Remote syslog forwarding",fwd?"clean":"review",fwd?"rsyslog forwards off-host":"no off-host forwarding configured (logs local only)","etc/rsyslog.conf")); }
     else PERSIST.push(pfind("Tampering","Remote syslog forwarding","na","rsyslog.conf not captured"));
+    /* SCHEDULED EXECUTION on the appliance. This used to match only "*.service" at the top of
+       /etc/systemd/system, which missed the two shapes that matter most:
+         *.timer            - systemd's scheduled-task mechanism. A malicious timer IS the cron job.
+         *.service.d/*.conf - drop-in OVERRIDES of a vendor unit. An attacker does not need to add a
+                              unit at all: an ExecStartPre= dropped into vmware-vmon.service.d runs
+                              their code every time a legitimate VMware service starts, and the unit
+                              file itself still looks stock. The reference vCenter captures six of
+                              these .d directories, so this is the shape that is actually collected. */
     var units=listUnder("etc/systemd/system/", /\.service$/);
-    PERSIST.push(units.length? pfind("Persistence","admin systemd units (/etc/systemd/system)","review",units.length+" unit(s): "+trunc(units.join(", "),150)) : pfind("Persistence","admin systemd units (/etc/systemd/system)","na","none captured (targeted bundle)"));
-    var crons=listUnder("etc/cron.d/", null); var ct=readMember("etc/crontab");
-    PERSIST.push((crons.length||ct!=="")? pfind("Persistence","cron (etc/cron.d, etc/crontab)","review",(crons.length?(crons.length+" cron.d file(s): "+trunc(crons.join(", "),120)):"crontab present")) : pfind("Persistence","cron (etc/cron.d, etc/crontab)","na","not captured in this bundle"));
+    var timers=listUnder("etc/systemd/system/", /\.timer$/);
+    var drops=listUnder("etc/systemd/system/", /\.conf$/);      // includes <unit>.service.d/<name>.conf
+    var sd=[]; if(units.length) sd.push(units.length+" unit(s): "+trunc(units.join(", "),90));
+    if(timers.length) sd.push(timers.length+" TIMER(s) (scheduled execution): "+trunc(timers.join(", "),90));
+    if(drops.length) sd.push(drops.length+" drop-in override(s): "+trunc(drops.join(", "),90));
+    PERSIST.push(sd.length
+      ? pfind("Persistence","admin systemd units / timers / overrides (/etc/systemd/system)","review",
+          sd.join("; ")+" - anything here was added or overridden outside the vendor image; a .timer is a scheduled task and a drop-in can inject ExecStartPre into a stock service","etc/systemd/system")
+      : pfind("Persistence","admin systemd units / timers / overrides (/etc/systemd/system)","na","none captured (targeted bundle)"));
+    /* CRON. The appliance's crontabs are NOT collected by vc-support, and var/log/cron (what actually
+       RAN) is collected but empty on the reference bundle. Say exactly which of those it is - "no cron
+       jobs" and "cron was never collected" must not read the same. */
+    var crons=listUnder("etc/cron.d/", null), ct=readMember("etc/crontab"), spool=listUnder("var/spool/cron/", null);
+    var cronLog=resolveLog(["var/log/cron"]), cronLines=cronLog?logLines(cronLog):[];
+    var cronRan=0, cronSus=[], ci;
+    for(ci=0;ci<cronLines.length;ci++){ var cl=cronLines[ci]; if(!/CROND?\[|CMD\s*\(/i.test(cl)) continue; cronRan++;
+      if(SUS_PROC.test(cl) && cronSus.length<8) cronSus.push(trunc(trimStr(cl),140)); }
+    if(cronSus.length) PERSIST.push(pfind("Persistence","cron jobs that RAN (var/log/cron)","suspect",cronSus.length+" execution(s) match attacker-tool patterns: "+trunc(cronSus.join(" | "),200),"var/log/cron"));
+    else if(cronRan) PERSIST.push(pfind("Persistence","cron jobs that RAN (var/log/cron)","clean",nf(cronRan)+" cron execution(s) logged, none matching attacker-tool patterns - the crontabs themselves are NOT captured, so review the log for anything unfamiliar","var/log/cron"));
+    else if(cronLog) PERSIST.push(pfind("Persistence","cron jobs that RAN (var/log/cron)","review","var/log/cron is present but EMPTY - either nothing ran, or the log was cleared. The crontabs themselves are not captured, so this log is the only cron evidence in the bundle","var/log/cron"));
+    else PERSIST.push(pfind("Persistence","cron jobs that RAN (var/log/cron)","na","var/log/cron not captured"));
+    PERSIST.push((crons.length||ct!==""||spool.length)
+      ? pfind("Persistence","cron jobs DEFINED (etc/cron.d, etc/crontab, var/spool/cron)","review",(crons.length?(crons.length+" cron.d file(s): "+trunc(crons.join(", "),90)+"; "):"")+(ct!==""?"etc/crontab present; ":"")+(spool.length?(spool.length+" user crontab(s)"):""))
+      : pfind("Persistence","cron jobs DEFINED (etc/cron.d, etc/crontab, var/spool/cron)","na","vc-support does not collect the crontabs - their CONTENT is unknowable from this bundle. Check var/log/cron above for what actually ran, and read the crontabs on the appliance itself"));
     PERSIST.push(pfind("Persistence","SSH authorized_keys / accounts","na","authorized_keys / passwd not captured in vc-support bundle"));
     logIntegrity(["var/log/vmware/sso/websso.log","var/log/auth.log","var/log/vmware/vmdird/vmdird.log"]);
   }
@@ -3443,6 +3549,21 @@ function vsanDsUuidFromCluster(u){
   return lc(hex.substring(0,16)+"-"+hex.substring(16));
 }
 function vsanGuidPath(dsUuid, vmGuid){ return (dsUuid&&vmGuid) ? ("/vmfs/volumes/vsan:"+lc(dsUuid)+"/"+lc(vmGuid)) : ""; }
+/* The on-host folder holding the .vmx and its .vmdks - the path you actually cd to on the host, and the
+   thing you need before you can copy, mount or recover a VM.
+   DERIVED FROM WHERE THE .vmx WAS CAPTURED, never constructed from the VM's name. A renamed VM keeps its
+   ORIGINAL folder name, so building "[datastore] <displayName>/<displayName>.vmx" produces a path that
+   does not exist on the host - and it fails silently, because it looks plausible. If there is no captured
+   config path there is no evidence, and the cell says so rather than guessing.
+   For a ransom-renamed VM cfg is "<folder>/(vmx missing)", so the FOLDER still resolves - which is the
+   case where you need the path most. */
+function vmFolderPath(v){
+  var c=String((v&&v.cfg)||""); if(!c) return "";
+  c=c.replace(/\\/g,"/");
+  var i=c.lastIndexOf("/"); if(i<1) return "";
+  var d=c.substring(0,i); if(!d) return "";
+  return (d.charAt(0)==="/") ? d : ("/"+d);          // bundle-relative "vmfs/volumes/..." -> on-host "/vmfs/volumes/..."
+}
 /* derive the GUID path straight from a captured vmfs path. Accepts both 'vsan:' (archive/TOC rel and
    real ESXi paths) and 'vsan_' (bsdtar rewrites ':' -> '_' when extracting to NTFS, so a tree-mode
    rel carries the underscore) - output always uses the real colon form. */
@@ -3864,11 +3985,12 @@ function renderVms(){
     +'<th style="text-align:center" title="Configured RAM (memSize in the .vmx).">vRAM</th>'
     +'<th title="Virtual disks declared in the .vmx (scsi/sata/nvme/ide fileName). Hover a cell for the .vmdk names and, when the disk descriptor was captured, each disk&#39;s size plus start/end sector (the disk pointers) and its vSAN object / VMFS -flat backing.">vDisks</th>'
     +'<th title="Datastore backing the .vmx: vSAN for a vsan:// object path, otherwise the VMFS / NFS datastore label.">Storage</th>'
+    +'<th title="The on-host folder holding this VM&#39;s .vmx and .vmdk files - what you cd to on the host to copy, mount or recover it. Taken from where the .vmx was actually captured in the bundle, NOT built from the VM name: a renamed VM keeps its original folder, so a name-built path would look right and not exist. Still resolves when the .vmx was ransom-renamed (that is when you need it most). Click the cell to copy it.">VM Path</th>'
     +'<th title="For vSAN-backed VMs: the on-host folder path /vmfs/volumes/vsan:&lt;datastore-uuid&gt;/&lt;vm-namespace-uuid&gt; - the recovery handle that survives a ransomware rename of the .vmx. Taken from the captured vmfs path. Blank for VMs not on vSAN.">GUID Path</th>'
     +'<th title="running = listed in the host&#39;s running-VM process list (localcli vm-process-list); registered = present but powered off; possibly encrypted = .vmx missing or ransom-renamed - hover the red tag for the evidence + how the name was recovered.">Status</th>'
     +'</tr></thead><tbody>';
-  if(!VMS.length) h+='<tr><td colspan="'+(showIp?9:8)+'" class="muted">No .vmx files found in this bundle.</td></tr>';
-  else if(!rows.length) h+='<tr><td colspan="'+(showIp?9:8)+'" class="muted">No VMs match the current filter'+(VM_OS?' (Guest OS: '+esc(VM_OS)+')':'')+'.</td></tr>';
+  if(!VMS.length) h+='<tr><td colspan="'+(showIp?10:9)+'" class="muted">No .vmx files found in this bundle.</td></tr>';
+  else if(!rows.length) h+='<tr><td colspan="'+(showIp?10:9)+'" class="muted">No VMs match the current filter'+(VM_OS?' (Guest OS: '+esc(VM_OS)+')':'')+'.</td></tr>';
   for(i=0;i<rows.length;i++){ var v=rows[i]; var gip=fleetGuestIp(v.name);
     h+='<tr data-cfg="'+esc(v.cfg)+'" data-nm="'+esc(v.name)+'" style="cursor:pointer" title="'+(v.enc?('POSSIBLY ENCRYPTED - '+esc(v.enc)+'. '):'')+'Click to open the activity timeline (power / snapshot / migration / guest-op) for '+esc(v.name)+(v.cfg?(' - config: '+esc(v.cfg)):'')+'">'
       +'<td><b>'+esc(v.name)+'</b></td><td class="muted" title="'+esc(v.os||"guest OS not recorded in the .vmx")+'">'+esc(v.os||"-")+'</td>'
@@ -3876,12 +3998,27 @@ function renderVms(){
       +'<td class="mono" style="text-align:center" title="'+v.vcpu+' vCPU">'+v.vcpu+'</td><td class="mono" style="text-align:center" title="'+esc(v.memMB?(nf(v.memMB)+" MB configured"):"memSize not in .vmx")+'">'+esc(fmtMB(v.memMB))+'</td>'
       +'<td class="mono" title="'+esc((v.disks.length?v.disks.join("  |  "):"no virtual disks declared in the .vmx")+(v.diskDetail&&v.diskDetail.length?("\nDisk extents (start-end sector = disk pointers):\n"+(function(dd){ var a=[]; for(var x=0;x<dd.length;x++) a.push(dd[x].file+" ["+dd[x].gb.toFixed(1)+" GB: "+dd[x].sum+"]"); return a.join("\n"); })(v.diskDetail)):"\n(disk descriptor not captured in this bundle - size/extents unavailable)"))+'">'+v.ndisk+(v.ndisk?' <span class="muted">('+esc(trunc(v.disks.join(", "),40))+')</span>':'')+'</td>'
       +'<td class="mono" title="'+esc(v.vsan?("vSAN-backed - the vSAN object UUID in the disk descriptor is the recovery handle"):(v.ds?("datastore: "+v.ds):"datastore unknown"))+'">'+(v.vsan?'<span class="tag" style="background:#10233a;color:#79c0ff;border:1px solid #1f6feb">vSAN</span>':esc(v.ds||"-"))+'</td>'
+      +(function(vp){ return '<td class="mono" style="font-size:11px" title="'+esc(vp?("VM folder on the host (from the captured .vmx location): "+vp+"\nThe .vmx and .vmdk files live here. Click to copy."):"no .vmx path was captured for this VM, so its folder is unknown - it has NOT been guessed from the VM name (a renamed VM keeps its original folder)")+'">'
+        +(vp?('<span class="lnk" data-copy="'+esc(vp)+'">'+esc(vp)+'</span>'):'<span class="muted">-</span>')+'</td>'; })(vmFolderPath(v))
       +'<td class="mono" style="font-size:11px" title="'+esc(v.guidPath?("vSAN VM folder (from the captured vmfs path): "+v.guidPath):(v.vsan?"vSAN-backed but the folder UUID was not captured":"not on vSAN - no vSAN GUID path"))+'">'+(v.guidPath?esc(v.guidPath):'<span class="muted">-</span>')+'</td>'
       +'<td>'+(v.enc?('<span class="tag" style="background:#3a1010;color:#ff8b8b;border:1px solid #b02020" title="'+esc(v.enc)+'">possibly encrypted</span> <span class="muted" style="font-size:11px" title="'+esc(v.enc)+'">'+esc(trunc(v.enc,46))+'</span>'):(v.running?'<span class="pgood" title="Listed in the host running-VM process list at capture time.">running</span>':'<span class="muted" title="Registered on the host but not in the running-VM process list (powered off).">registered</span>'))+'</td></tr>'; }
   h+='</tbody>'; $("vmsTbl").innerHTML=h;
   var trs=$("vmsTbl").getElementsByTagName("tr");
   for(var t=0;t<trs.length;t++){ if(trs[t].getAttribute("data-cfg")){ trs[t].onclick=function(){ openVm(this.getAttribute("data-cfg"), this.getAttribute("data-nm")); }; } }
+  wireCopyCells($("vmsTbl"));
   setupColResizeFor($("vmsTbl"),"vms"); freezeThs($("vmsScroll"));
+}
+/* Copy-to-clipboard cells. The ROW already has an onclick (open the VM timeline), so the copy click must
+   not bubble into it - otherwise reaching for the path throws you into a different view. */
+function wireCopyCells(tbl){
+  if(!tbl) return; var sp=tbl.getElementsByTagName("span");
+  for(var i=0;i<sp.length;i++){ if(!sp[i].getAttribute("data-copy")) continue;
+    sp[i].onclick=function(e){ e=e||window.event;
+      if(e.stopPropagation) e.stopPropagation(); e.cancelBubble=true;
+      var v=this.getAttribute("data-copy");
+      try{ window.clipboardData.setData("Text", v); setStatus("Copied: "+v,"ok"); }
+      catch(err){ setStatus("Copy failed ("+(err.message||err)+") - the path is in the cell, select it by hand.","err"); }
+      return false; }; }
 }
 /* vCenter VMs board: log-derived inventory (no .vmx files exist in a vc-support bundle).
    Columns differ from the ESXi board - MoRef / host / evidence instead of vCPU/vRAM. */
@@ -4108,11 +4245,11 @@ function vmsExport(){
       out.push([cq(v.name),cq(v.mo.join("; ")),cq(v.moBase),cq(v.host),cq(v.vcpu||""),cq(v.memMB||""),cq(v.ndisk),cq(v.disks.join("; ")),cq(v.guidPath),cq(v.guidSrc),cq(v.running?"powered on":v.status),cq(v.enc),cq(srcs.join("; "))].join(",")); }
   } else {
     var showIpX=false; for(i=0;i<VMS.length;i++) if(fleetGuestIp(VMS[i].name)){ showIpX=true; break; }   // Guest IP column is hidden unless a fleet vCenter supplied one - don't export a column the view doesn't show
-    out.push("Name,GuestOS,"+(showIpX?"GuestIP,":"")+"vCPU,vRAM_MB,DiskCount,Disks,DiskExtents,Storage,GUIDPath,Running,PossiblyEncrypted,ConfigPath");
+    out.push("Name,GuestOS,"+(showIpX?"GuestIP,":"")+"vCPU,vRAM_MB,DiskCount,Disks,DiskExtents,Storage,VMPath,GUIDPath,Running,PossiblyEncrypted,ConfigPath");
     for(i=0;i<sel.length;i++){ v=sel[i]; var xt=[];
       if(v.diskDetail){ for(var d=0;d<v.diskDetail.length;d++){ var dd=v.diskDetail[d]; xt.push(dd.file+" ["+dd.gb.toFixed(1)+" GB: "+dd.sum+"]"); } }
       var rw=[cq(v.name),cq(v.os)]; if(showIpX) rw.push(cq(fleetGuestIp(v.name)));
-      rw.push(cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(xt.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(v.guidPath||""),cq(v.running?"running":"registered"),cq(v.enc||""),cq(v.cfg));
+      rw.push(cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(xt.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(vmFolderPath(v)),cq(v.guidPath||""),cq(v.running?"running":"registered"),cq(v.enc||""),cq(v.cfg));
       out.push(rw.join(",")); }
   }
   var p=LASTOUTDIR+"\\vms_"+nowStamp()+".csv";
@@ -4283,14 +4420,15 @@ function buildReportHtml(){
     for(i=0;i<VMS.length;i++){ if(VMS[i].running) vrun++; if(VMS[i].enc) venc++; vcpu+=VMS[i].vcpu; vmem+=VMS[i].memMB; }
     h.push(rSection("r-vms","Hosted VMs ("+nf(VMS.length)+", "+vrun+" running, "+nf(vcpu)+" vCPU, "+fmtMB(vmem)+" vRAM"+(venc?(", "+venc+" possibly encrypted"):"")+")",
       BTYPE==="vcsa"?"reconstructed from vpxd + DRS dumps + the vSAN-health baseline (a vc-support bundle has no .vmx)":"parsed from each registered .vmx; missing / ransom-renamed .vmx are still listed"));
-    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>Status</th></tr>');
+    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>VM Path (folder with the .vmx / .vmdk)</th><th>Status</th></tr>');
     for(i=0;i<VMS.length;i++){ var vm=VMS[i];
       var dcell=vm.ndisk+(vm.disks&&vm.disks.length?(' - '+rEsc(vm.disks.join(", "))):'');
       if(vm.diskDetail&&vm.diskDetail.length){ for(var dd=0;dd<vm.diskDetail.length;dd++) dcell+='<br><span class="muted" style="font-size:10px">'+rEsc(vm.diskDetail[dd].sum)+'</span>'; }
       h.push('<tr'+(vm.enc?' class="rf"':'')+'><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td class="mono">'+vm.vcpu+'</td>'
         +'<td class="mono nw">'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono">'+dcell+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td>'
+        +(function(vp){ return '<td class="mono" style="font-size:10px">'+(vp?rEsc(vp):'<span class="muted">not captured</span>')+'</td>'; })(vmFolderPath(vm))
         +'<td'+(vm.enc?' class="hit"':(vm.running?'':' class="muted"'))+'>'+(vm.enc?("POSSIBLY ENCRYPTED - "+rEsc(vm.enc)):(vm.running?"running":(vm.status||"registered")))+'</td></tr>'); }
-    h.push('</table>'); }
+    h.push('</table><p class="muted">VM Path is the on-host folder holding that VM\'s .vmx and .vmdk files, taken from where the .vmx was captured - not built from the VM name (a renamed VM keeps its original folder). "not captured" means the bundle carries no config path for it; the path has NOT been guessed.</p>'); }
 
   /* ---- VM activity events ---- */
   if(VMEV.length){ var vcap=rCapped(VMEV.length);
@@ -4560,7 +4698,7 @@ function buildSpecHtml(){
         h.push('<table>'); for(var k=0;k<sp.kv.length;k++) h.push('<tr><td class="k">'+rEsc(sp.kv[k][0])+'</td><td class="mono">'+rEsc(sp.kv[k][1])+'</td></tr>'); h.push('</table>'); } } }
   if(VMS.length){ var vr=0,vc=0,vm=0; for(i=0;i<VMS.length;i++){ if(VMS[i].running) vr++; vc+=VMS[i].vcpu; vm+=VMS[i].memMB; }
     h.push('<h2>Hosted VMs ('+VMS.length+', '+vr+' running, '+nf(vc)+' vCPU, '+rEsc(fmtMB(vm))+' vRAM)</h2>');
-    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>Status</th></tr>');
+    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>VM Path (folder with the .vmx / .vmdk)</th><th>Status</th></tr>');
     for(i=0;i<VMS.length;i++){ var v=VMS[i]; h.push('<tr><td><b>'+rEsc(v.name)+'</b></td><td>'+rEsc(v.os)+'</td><td>'+v.vcpu+'</td><td>'+rEsc(fmtMB(v.memMB))+'</td><td class="mono">'+v.ndisk+(v.disks.length?(' - '+rEsc(v.disks.join(", "))):'')+(v.diskDetail&&v.diskDetail.length?('<br><span class="muted" style="font-size:10px">'+rEsc(v.diskDetail[0].sum)+(v.diskDetail.length>1?(" (+"+(v.diskDetail.length-1)+" more)"):"")+'</span>'):'')+'</td><td>'+(v.vsan?"vSAN":rEsc(v.ds))+'</td><td'+(v.enc?' class="hit"':(v.running?'':' class="muted"'))+'>'+(v.enc?("POSSIBLY ENCRYPTED - "+rEsc(v.enc)):(v.running?"running":(v.status||"registered")))+'</td></tr>'); }
     h.push('</table>'); }
   h.push('<p class="muted" style="margin-top:20px;border-top:1px solid #ccd2da;padding-top:8px">Generated by vSphere Support Bundle Triage v'+APP_VERSION+'.</p></body></html>');
