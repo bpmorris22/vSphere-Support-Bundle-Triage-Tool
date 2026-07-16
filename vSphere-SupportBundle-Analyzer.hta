@@ -455,7 +455,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.13.0";
+var APP_VERSION = "1.13.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -2625,6 +2625,7 @@ function cveStale(){ var d=cveAgeDays(); var lim=(CVEDATA&&CVEDATA.staleAfterDay
 /* short state for the panel header */
 function nvdSummary(){
   if(NVD.state==="busy") return "checking NVD…";
+  if(NVD.state==="slow") return "NVD slow - still waiting, offline data shown";
   if(NVD.state==="ok") return nf(NVD.n)+" CVE(s) from NVD vendor data"+(NVD.added?(", "+NVD.added+" not in cve.json"):"")+(NVD.conflicted?(", "+NVD.conflicted+" CONFLICT"):"")+(NVD.corroborated?(", "+NVD.corroborated+" corroborated"):"");
   if(NVD.state==="err") return "LIVE CHECK FAILED - offline data only";
   if(NVD.state==="off") return "live check OFF - offline data only";
@@ -2643,7 +2644,8 @@ function cveProvenance(){
     if(CVEDATA) s+="cve.json "+((cveAgeDays()<0)?"was NEVER stamped with a review date":("last reviewed "+CVEDATA.reviewed))+". ";
     return s+"Verdicts are ADVISORY."+idx;
   }
-  var why = (NVD.state==="err") ? ("The live NVD check FAILED ("+NVD.err+"), so nothing was verified online. ")
+  var why = (NVD.state==="slow") ? ("The live NVD check had not answered when this was produced ("+NVD.err+"), so nothing was verified online. ")
+          : (NVD.state==="err") ? ("The live NVD check FAILED ("+NVD.err+"), so nothing was verified online. ")
           : (NVD.state==="off") ? ("The live NVD check is switched OFF, so nothing was verified online. ")
           : (NVD.state==="busy") ? ("The live NVD check had not finished when this was produced, so nothing was verified online. ") : "";
   if(!CVEDATA) return why+"CVE exposure NOT ASSESSED: "+CVEDATA_ERR+". Nothing was checked - verify this host's build by hand."+idx;
@@ -2674,7 +2676,14 @@ function cveProvenance(){
    may be air-gapped, and a triage tool must never depend on the internet to render a verdict. */
 var NVD_API="https://services.nvd.nist.gov/rest/json/cves/2.0";
 var NVD_ON=true;                 // automatic; user-toggleable, persisted next to the HTA
-var NVD_TIMEOUT=20000;
+/* NVD is genuinely slow and its latency swings wildly: the same two queries measured 1.3s + 8.3s one day
+   and 15s + 35s the next, on a working link. The first version of this used a 20s budget tuned to the
+   fast measurement and then called a HEALTHY connection "offline?" - reporting our own impatience as the
+   user's network fault. This is now only the point at which we SAY it is slow; the request is never
+   aborted, so a late answer still lands and upgrades the panel. */
+var NVD_TIMEOUT=45000;
+var NVD_REQ=[];   // async XMLHTTP objects MUST stay referenced. As locals they can be collected before a
+                  // 35-second callback fires, and the reply is silently lost - the classic MSXML async bug.
 var NVD={state:"idle", err:"", url:"", when:"", n:0, added:0, corroborated:0, conflicted:0};
 function prefsFile(){ var d=htaFolder(); return d?(d+"\\"+SELF_HTA+".prefs.txt"):""; }
 function savePrefs(){ var p=prefsFile(); if(!p) return; try{ writeUtf8(p,"nvd="+(NVD_ON?"1":"0")); }catch(e){} }
@@ -2842,41 +2851,51 @@ function nvdStart(){
   if(!cpe){ NVD={state:"err", err:"the product version was not identified in this bundle, so NVD cannot be asked which CVEs apply to it", n:0}; renderCves(); return; }
   var urlA=NVD_API+"?virtualMatchString="+encodeURIComponent(cpe)+"&resultsPerPage=200", urlB=nvdSourceUrl();
   NVD={state:"busy", err:"", url:urlA, n:0, added:0, corroborated:0, conflicted:0, seen:{}}; renderCves();
-  var done=false, pending=2, got=0, failMsg="";
-  function fail(msg){ if(done) return; done=true; NVD.state="err"; NVD.err=msg; appendLog("NVD: "+msg); renderCves(); }
-  /* Both queries feed the same merge. If ONE fails we still use the other and say the coverage is
-     partial - better than throwing away good vendor data because a second request timed out. */
-  function settle(){
-    if(done) return;
-    if(--pending>0) return;
-    done=true;
-    if(!got){ fail(failMsg||"NVD returned nothing"); return; }
-    NVD.state="ok"; NVD.when=isoNow(); NVD.n=CVES.length;   // what the panel actually shows, deduped across both queries
-    if(failMsg) NVD.err="partial: "+failMsg;
+  var settled=false, pending=2, got=0, failMsg="", timer=0;
+  NVD_REQ=[];   // drop the previous run's objects; hold this run's until it settles
+  function paint(state, msg){ NVD.state=state; NVD.err=msg||""; if(msg) appendLog("NVD: "+msg); renderCves(); }
+  /* Both queries feed the same merge. If ONE fails we still use the other and say coverage is partial -
+     better than discarding good vendor data because the second request had a bad day. */
+  function finish(){
+    if(settled) return; settled=true;
+    if(timer){ try{ window.clearTimeout(timer); }catch(e){} }
+    if(!got){ paint("err", failMsg||"NVD returned nothing"); return; }
+    NVD.state="ok"; NVD.when=isoNow(); NVD.n=CVES.length;   // what the panel shows, deduped across both queries
+    NVD.err = failMsg ? ("partial: "+failMsg) : "";
     appendLog("NVD: "+NVD.n+" applicable CVE(s) - "+NVD.added+" added, "+NVD.corroborated+" corroborated, "+NVD.conflicted+" CONFLICT(s)"+(failMsg?(" ["+failMsg+"]"):""));
     renderCves();
   }
+  function oneDone(){ if(--pending<=0) finish(); }
   function ask(url, label){
     appendLog("NVD: GET "+url);
     try{
       var x=new ActiveXObject("MSXML2.XMLHTTP.6.0");
+      NVD_REQ.push(x);                                   // keep it alive across the round trip
       x.open("GET",url,true);
       try{ x.setRequestHeader("User-Agent",SELF_HTA+"/"+APP_VERSION); }catch(eh){}
-      x.onreadystatechange=function(){ if(x.readyState!==4 || done) return;
+      /* No "already settled" guard on purpose: if the slow notice has fired, a late reply is still good
+         data and should upgrade the panel rather than be thrown away. */
+      x.onreadystatechange=function(){ if(x.readyState!==4) return;
         try{
           if(x.status!==200){ failMsg=label+" query returned HTTP "+x.status
-            +(x.status===403?" (rate-limited: 5 requests / 30s without an API key - wait and re-check)":"")
-            +(x.status===0?" (no response: offline, blocked by proxy/firewall, or DNS failed)":""); settle(); return; }
+            +(x.status===403?" - rate-limited. NVD allows 5 requests / 30s without an API key; wait a moment and re-check.":"")
+            +(x.status===0?" - no reply (offline, blocked by a proxy/firewall, DNS failure, or the connection timed out).":""); oneDone(); return; }
           var j=JSON.parse(x.responseText+"");
-          nvdMerge(j); got++; settle();
-        }catch(e2){ failMsg=label+" reply could not be parsed: "+(e2.message||e2); settle(); }
+          nvdMerge(j); got++; oneDone();
+        }catch(e2){ failMsg=label+" reply could not be parsed: "+(e2.message||e2); oneDone(); }
       };
       x.send();
-    }catch(e3){ failMsg="the "+label+" request could not be sent: "+(e3.message||e3)+" (no network, or blocked)"; settle(); }
+    }catch(e3){ failMsg="the "+label+" request could not be sent: "+(e3.message||e3)+" (no network, or blocked)"; oneDone(); }
   }
   ask(urlA, "version");         // NVD's curated CPE view
   ask(urlB, "vendor-CNA");      // every VMware-filed CVE, including those NVD has not analysed (no CPE)
-  window.setTimeout(function(){ if(!done && NVD.state==="busy") fail("NVD did not answer within "+(NVD_TIMEOUT/1000)+"s (offline, or the API is down)"); }, NVD_TIMEOUT);
+  /* SLOW, not failed. We do not know the link is down - we know WE ran out of patience, and saying
+     "offline?" about a healthy connection is a lie the analyst then has to debug. The request keeps
+     running; if it lands, finish() paints the real result over this. */
+  timer=window.setTimeout(function(){
+    if(settled) return;
+    paint("slow","NVD has not answered within "+(NVD_TIMEOUT/1000)+"s. Its API is often slow (30s+ is normal at busy times) - the request is STILL RUNNING and this panel will update by itself if it lands. Until then the rows below are cve.json only.");
+  }, NVD_TIMEOUT);
 }
 function buildCves(){
   CVES=[]; var b=buildNumOf(), i;
@@ -5320,12 +5339,15 @@ function renderCves(){
     +'<span style="float:right;font-weight:400;text-transform:none">'
     +'<label title="Ask NVD which CVEs affect this product+version, and take the fix builds from the vendor\'s own CNA data. Automatic when a bundle is analysed. Untick on an air-gapped or evidence-handling box: the tool then uses cve.json only, and says so. One request per bundle.">'
     +'<input type="checkbox" id="nvdOn"'+(NVD_ON?" checked":"")+'> live NVD check</label>'
-    +(NVD.state==="ok"||NVD.state==="err"?' &middot; <span class="lnk" id="nvdRetry" title="Query NVD again">re-check</span>':'')
+    +(NVD.state==="ok"||NVD.state==="err"||NVD.state==="slow"?' &middot; <span class="lnk" id="nvdRetry" title="Query NVD again">re-check</span>':'')
     +' &middot; <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'" title="Open the VMware (Broadcom) security advisory index. Per-advisory deep links are not constructible, but where NVD supplies one the CVE row links it directly.">advisories</span></span></h4>';
   /* State line. An offline/failed check must never look like a clean result, so it says what it could
      not do and what the verdicts below therefore rest on. */
   if(NVD.state==="busy") h+='<div class="ind"><span class="dot"></span><span class="nm">Checking NVD…</span><span class="st">…</span><span class="dt">asking which CVEs affect '+esc((NODE.product||typeLabel())+" "+nodeLine())+'; the rows below are from cve.json until it answers</span></div>';
-  else if(NVD.state==="err") h+='<div class="ind"><span class="dot warn"></span><span class="nm">Live NVD check FAILED</span><span class="st warn">offline?</span><span class="dt">'+esc(NVD.err)+' - the rows below come from cve.json only ('+(stale?"which is STALE":"reviewed "+(CVEDATA.reviewed||"never"))+'), so they may be incomplete or out of date. <b>Check manually:</b> <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'">VMware security advisories</span></span></div>';
+  /* SLOW is not FAILED. The tool knowing only that IT ran out of patience must not be reported as the
+     analyst's network being down - that sends them debugging a connection that is fine. */
+  else if(NVD.state==="slow") h+='<div class="ind"><span class="dot warn"></span><span class="nm">NVD is slow - still waiting</span><span class="st warn">waiting</span><span class="dt">'+esc(NVD.err)+' As far as this tool knows there is nothing wrong with your connection.</span></div>';
+  else if(NVD.state==="err") h+='<div class="ind"><span class="dot warn"></span><span class="nm">Live NVD check FAILED</span><span class="st warn">failed</span><span class="dt">'+esc(NVD.err)+' - the rows below come from cve.json only ('+(stale?"which is STALE":"reviewed "+(CVEDATA.reviewed||"never"))+'), so they may be incomplete or out of date. <b>Check manually:</b> <span class="lnk" data-url="'+esc(CVE_INDEX_URL)+'">VMware security advisories</span></span></div>';
   else if(NVD.state==="off") h+='<div class="ind"><span class="dot na"></span><span class="nm">Live NVD check OFF</span><span class="st na">offline mode</span><span class="dt">rows are from cve.json only ('+(stale?"STALE - ":"reviewed "+(CVEDATA.reviewed||"never")+" - ")+'it lists only the CVEs someone added, so absence here is not evidence of absence). Tick "live NVD check" to ask the vendor data, or verify manually.</span></div>';
   else if(NVD.state==="ok" && NVD.conflicted) h+='<div class="ind"><span class="dot hit"></span><span class="nm">cve.json DISAGREES with the vendor</span><span class="st hit">'+NVD.conflicted+'</span><span class="dt">the vendor\'s fix build differs from the one in cve.json on '+NVD.conflicted+' CVE(s) - the vendor is authoritative and has been used; correct cve.json (see the rows marked CONFLICTS)</span></div>';
   for(var i=0;i<CVES.length;i++){ var c=CVES[i]; var v=c.verdict; var dc=cveDotCls(v), sc=cveCls(v);
