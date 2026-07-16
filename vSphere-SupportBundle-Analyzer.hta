@@ -455,7 +455,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.13.1";
+var APP_VERSION = "1.14.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -5468,8 +5468,14 @@ function indTip(it){
   if(it.status==="na") t+=(t?"  ":"")+"n/a here: the log this indicator reads is missing or unreadable, so this is UNKNOWABLE rather than clear.";
   return t;
 }
-function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"")); }
-function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="na"?"na":"clear")); }
+/* "review" is a real secAdd() status - "Unrecognized VIB vendor" and "VIBs added after the base image"
+   both use it - and it used to fall through this ternary to "clear", i.e. GREEN, the same colour as PASS.
+   The two controls most likely to expose a rogue VIB were painted as passing. Identical to the CVE
+   VERIFY-rendered-green bug, in a different function, found by actually looking at a screenshot.
+   review = ORANGE, the same "a human must decide this" colour VERIFY uses. Any status without an
+   explicit branch here is a bug: check-secstatus.js fails the build if one appears. */
+function secDotCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="review"?"vfy":(s==="na"?"na":""))); }
+function secStCls(s){ return s==="fail"?"hit":(s==="warn"?"warn":(s==="review"?"vfy":(s==="na"?"na":"clear"))); }
 function renderSecurity(){
   renderIndicators();   // the intrusion / ransomware panel sits above Security posture - render it even if
                         // posture itself has nothing to grade (it is a separate card)

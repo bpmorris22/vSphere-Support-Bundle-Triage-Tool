@@ -8,22 +8,22 @@ No install, no runtime, no dependencies beyond what Windows ships. It reads the 
 
 ## Screenshots
 
-_Illustrative UI renders with synthetic placeholder data (lab hostnames, TEST-NET IPs)._
+Real screen captures of the tool, rendered from its own UI with **synthetic demo data** (placeholder host, TEST-NET-3 addresses). Shown at the app's 130% zoom (the A+ control).
 
-**Overview** - node summary, key-file coverage, CVE panel, clickable stat bubbles
-![Overview](screenshots/overview.svg)
+**Overview** - node configuration, key-file coverage, maintenance events and the live CVE panel (vendor data via NVD)
+![Overview](screenshots/overview.png)
 
-**VMs** - per-VM inventory with guest IP and click-to-preview `.vmx`
-![VMs](screenshots/vms.svg)
+**Security** - intrusion / ransomware indicators above the graded posture matrix
+![Security](screenshots/security.png)
 
-**Timeline** - colour-coded Score/tags and Kind, with the multiselect score filter
-![Timeline](screenshots/timeline.svg)
+**VMs** - inventory with VM Path (the folder holding the .vmx / .vmdk) and encrypted-VM detection
+![VMs](screenshots/vms.png)
 
-**Fleet roster** - hosts grouped by vSAN cluster, worst-first
-![Fleet roster](screenshots/fleet-roster.svg)
+**Timeline** - logons and actions merged, time-ordered and scored
+![Timeline](screenshots/timeline.png)
 
-**Correlation** - shared IPs, coordinated indicators, and the vCenter&rarr;ESXi task chain
-![Correlation](screenshots/correlation.svg)
+**Network** - listeners, external connections, suspicious processes and the web/API client summary
+![Network](screenshots/network.png)
 
 ## Features
 
