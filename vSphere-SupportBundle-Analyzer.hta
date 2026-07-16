@@ -455,7 +455,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.14.0";
+var APP_VERSION = "1.14.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -4358,21 +4358,26 @@ function buildReportHtml(){
   var nfCve=0; for(i=0;i<CVES.length;i++) if(CVES[i].verdict==="exposed") nfCve++;
   var nfSec=0; for(i=0;i<SECPOST.length;i++) if(SECPOST[i].status==="fail") nfSec++;
   var nfNet=(NETINFO&&NETINFO.captured)?(NETINFO.sus.length+NETINFO.ext.length):0;
+  /* TAB ORDER, left to right: Overview | Key Files | Specification | Security | Network | VMs | Logons |
+     Actions | Timeline | Persistence | IOC hits. The document reads in the order the analyst clicked.
+     CVE follows the OVERVIEW tab and Indicators the SECURITY tab, because that is where those panels
+     live - grouping them by heading instead would put the reader somewhere the app never had them.
+     VM activity and Login sessions trail their parent tab; provenance is not a tab and stays last. */
   var toc=[["r-node","Node configuration",0]];
   if(MAINT.length) toc.push(["r-maint","Maintenance events",0]);
+  if(CVES.length) toc.push(["r-cve","CVE exposure",nfCve]);
   toc.push(["r-keyfiles","Key files",nfMiss]);
   if(SPEC.length) toc.push(["r-spec","Specification",0]);
+  toc.push(["r-ind","Indicators",indHits()]);
+  if(SECPOST.length) toc.push(["r-sec","Security posture",nfSec]);
+  if(NETINFO && NETINFO.captured) toc.push(["r-net","Network",nfNet]);
   if(VMS.length) toc.push(["r-vms","Hosted VMs",nfEnc]);
   if(VMEV.length) toc.push(["r-vmev","VM activity",0]);
-  if(NETINFO && NETINFO.captured) toc.push(["r-net","Network",nfNet]);
-  toc.push(["r-ind","Indicators",indHits()]);
-  if(CVES.length) toc.push(["r-cve","CVE exposure",nfCve]);
-  if(SECPOST.length) toc.push(["r-sec","Security posture",nfSec]);
-  toc.push(["r-persist","Persistence & tampering",persistHits()]);
   toc.push(["r-logon","Logons",flagged(LOGON).length]);
   if(SESSIONS.length) toc.push(["r-sess","Login sessions",0]);
   toc.push(["r-act","Actions",flagged(ACTIONS).length]);
   if(TIMELINE.length) toc.push(["r-time","Timeline",0]);
+  toc.push(["r-persist","Persistence & tampering",persistHits()]);
   toc.push(["r-ioc","IOC hits",IOCHITS.length]);
   toc.push(["r-prov","Evidence & provenance",0]);
   var nh='<div class="nav" id="nav"><div class="navh">Contents</div>';
@@ -4407,6 +4412,29 @@ function buildReportHtml(){
     h.push('</table>');
   }
 
+  /* ---- CVEs ---- */
+  if(CVES.length){ h.push(rSection("r-cve","CVE exposure","advisory - verify each VMSA by hand"));
+    /* The report used to tell the reader to "verify against the linked VMSA" while linking a URL that
+       404s. State where the numbers came from, how old they are, and that nothing was auto-checked. */
+    h.push('<p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
+    h.push('<table><tr><th>CVE</th><th>Exploited</th><th>Severity</th><th>Advisory</th><th>Summary</th><th>Status</th><th>Basis</th><th>Source</th></tr>');
+    for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=cveCls(cv.verdict);
+      var advU=cv.url||vmsaUrl(cv.vmsa), advL=cv.vmsa||(cv.url?"advisory":"-");
+      h.push('<tr'+(cv.kev?' class="rf"':(cv.verdict==="exposed"?' class="rf"':(cv.verdict==="review"?' class="rw"':'')))+'>'
+        +'<td class="mono nw"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
+        +'<td class="nw'+(cv.kev?' hit':' muted')+'">'+(cv.kev?"KEV - in the wild":"-")+'</td>'
+        +'<td class="nw'+((cv.sev==="CRITICAL"||cv.sev==="HIGH")?' hit':' muted')+'">'+rEsc(cv.sev||"-")+'</td>'
+        +'<td class="mono nw">'+(advL!=="-"?('<a href="'+rEsc(advU)+'" target="_blank">'+rEsc(advL)+'</a>'):'-')+'</td>'
+        +'<td>'+rEsc(cv.title)+'</td>'
+        +'<td class="'+vc+' nw" title="'+rEsc(cveVerdictTip(cv.verdict))+'">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td>'
+        +'<td class="muted nw" style="font-size:10px">'+rEsc(cv.src||"cve.json")+'</td></tr>'); }
+    h.push('</table>');
+    h.push('<p class="muted"><b>Verdicts:</b> <span class="hit">EXPOSED</span> = below the vendor\'s fixed build AND known-exploited. '
+      +'<span class="warn">REVIEW</span> = below the vendor\'s fixed build for this release line. '
+      +'<span class="vfy">VERIFY</span> = <b>MANUAL CHECK NEEDED</b>: the tool could not decide, because the vendor published no build number for this line (or the host build could not be read) - there was nothing to compare, so this is an UNKNOWN, not a pass. '
+      +'<span class="clear">PATCHED</span> = at or above the fixed build. <span class="na">n/a</span> = does not apply to this host.</p>');
+    h.push('<p class="muted">Source column: <b>NVD (vendor CNA)</b> = the fix build came from Broadcom\'s own advisory data, fetched live. <b>cve.json</b> = local hand-maintained data, because the vendor filed no machine-readable fix for that CVE. KEV = in CISA\'s Known Exploited Vulnerabilities catalog.</p>'); }
+
   /* ---- key files: the coverage verdict AND the board it came from ---- */
   var present=0, keyN=0, keyP=0, miss=[];
   for(i=0;i<INVENTORY.length;i++){ var iv=INVENTORY[i]; if(iv.present) present++; if(iv.key){ keyN++; if(iv.present) keyP++; else miss.push(iv.name); } }
@@ -4434,31 +4462,31 @@ function buildReportHtml(){
       else { if(!sp.kv.length){ h.push('<p class="muted">not captured</p>'); continue; }
         h.push('<table>'); for(k=0;k<sp.kv.length;k++) h.push('<tr><td class="k">'+rEsc(sp.kv[k][0])+'</td><td class="mono">'+rEsc(sp.kv[k][1])+'</td></tr>'); h.push('</table>'); } } }
 
-  /* ---- hosted VMs (full columns - the report is not the tab's Simplified view) ---- */
-  if(VMS.length){ var vrun=0,vcpu=0,vmem=0,venc=0;
-    for(i=0;i<VMS.length;i++){ if(VMS[i].running) vrun++; if(VMS[i].enc) venc++; vcpu+=VMS[i].vcpu; vmem+=VMS[i].memMB; }
-    h.push(rSection("r-vms","Hosted VMs ("+nf(VMS.length)+", "+vrun+" running, "+nf(vcpu)+" vCPU, "+fmtMB(vmem)+" vRAM"+(venc?(", "+venc+" possibly encrypted"):"")+")",
-      BTYPE==="vcsa"?"reconstructed from vpxd + DRS dumps + the vSAN-health baseline (a vc-support bundle has no .vmx)":"parsed from each registered .vmx; missing / ransom-renamed .vmx are still listed"));
-    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>VM Path (folder with the .vmx / .vmdk)</th><th>Status</th></tr>');
-    for(i=0;i<VMS.length;i++){ var vm=VMS[i];
-      var dcell=vm.ndisk+(vm.disks&&vm.disks.length?(' - '+rEsc(vm.disks.join(", "))):'');
-      if(vm.diskDetail&&vm.diskDetail.length){ for(var dd=0;dd<vm.diskDetail.length;dd++) dcell+='<br><span class="muted" style="font-size:10px">'+rEsc(vm.diskDetail[dd].sum)+'</span>'; }
-      h.push('<tr'+(vm.enc?' class="rf"':'')+'><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td class="mono">'+vm.vcpu+'</td>'
-        +'<td class="mono nw">'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono">'+dcell+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td>'
-        +(function(vp){ return '<td class="mono" style="font-size:10px">'+(vp?rEsc(vp):'<span class="muted">not captured</span>')+'</td>'; })(vmFolderPath(vm))
-        +'<td'+(vm.enc?' class="hit"':(vm.running?'':' class="muted"'))+'>'+(vm.enc?("POSSIBLY ENCRYPTED - "+rEsc(vm.enc)):(vm.running?"running":(vm.status||"registered")))+'</td></tr>'); }
-    h.push('</table><p class="muted">VM Path is the on-host folder holding that VM\'s .vmx and .vmdk files, taken from where the .vmx was captured - not built from the VM name (a renamed VM keeps its original folder). "not captured" means the bundle carries no config path for it; the path has NOT been guessed.</p>'); }
+  /* ---- indicators ---- */
+  h.push(rSection("r-ind","Ransomware / intrusion indicators"+(INDIC.length?(" ("+indHits()+" of "+INDIC.length+" triggered)"):"")));
+  if(INDIC.length){ h.push('<table><tr><th>Indicator</th><th>Status</th><th>Evidence</th></tr>');
+    for(i=0;i<INDIC.length;i++){ var ind=INDIC[i]; var cls=ind.status==="hit"?"hit":(ind.status==="na"?"na":"clear"); var lbl=ind.status==="hit"?"TRIGGERED":(ind.status==="na"?"n/a":"clear");
+      h.push('<tr'+(ind.status==="hit"?' class="rf"':'')+'><td>'+rEsc(ind.name)+'</td><td class="'+cls+'">'+lbl+'</td><td class="muted">'+rEsc(ind.detail)+'</td></tr>'); }
+    h.push('</table><p class="muted">n/a means the source was not captured in this bundle. It is never an assurance that the thing is clean.</p>'); }
+  else h.push('<p class="muted">No indicator set for this bundle type.</p>');
 
-  /* ---- VM activity events ---- */
-  if(VMEV.length){ var vcap=rCapped(VMEV.length);
-    h.push(rSection("r-vmev","VM activity ("+nf(VMEV.length)+" event(s))", VMEV_SRC?("parsed from "+rEsc(VMEV_SRC)):""));
-    h.push(rCapNote(VMEV.length,"VM events"));
-    h.push('<table><tr><th>When (UTC)</th><th>VM</th><th>Kind</th><th>Event</th><th>Method</th><th>Actor</th><th>Via</th><th>Log</th></tr>');
-    for(i=0;i<vcap;i++){ var ve=VMEV[i];
-      h.push('<tr><td class="mono nw">'+rEsc(ve.when)+'</td><td class="mono">'+rEsc(ve.vm)+'</td><td class="mono">'+rEsc(ve.kind)+'</td>'
-        +'<td>'+rEsc(ve.what)+'</td><td class="mono muted">'+rEsc(ve.method)+'</td><td class="mono">'+rEsc(ve.actor||"-")+'</td>'
-        +'<td class="mono muted">'+rEsc(trunc(ve.via||"-",40))+'</td><td class="mono muted">'+rEsc(ve.src)+'</td></tr>'); }
-    h.push('</table>'); }
+  /* ---- security posture ---- */
+  if(SECPOST.length){ var ssc=secScoreOf();
+    h.push(rSection("r-sec","Security posture ("+ssc.p+" of "+ssc.t+" checkable controls at best practice)"));
+    h.push('<p class="muted">Graded against config captures and parsed log evidence. Not-captured sources are n/a, never assumed compliant; verdicts are advisory.</p>');
+    h.push('<table><tr><th>Group</th><th>Control</th><th>Status</th><th>Detail</th></tr>');
+    for(i=0;i<SECPOST.length;i++){ var sc2=SECPOST[i]; var scls=sc2.status==="fail"?"hit":(sc2.status==="warn"?"warn":(sc2.status==="na"?"na":"clear"));
+      h.push('<tr'+(sc2.status==="fail"?' class="rf"':(sc2.status==="warn"?' class="rw"':''))+'><td>'+rEsc(sc2.grp)+'</td><td>'+rEsc(sc2.name)+'</td>'
+        +'<td class="'+scls+'">'+rEsc(sc2.status==="na"?"n/a":sc2.status.toUpperCase())+'</td><td>'+rEsc(sc2.detail)+'</td></tr>'); }
+    h.push('</table>');
+    if(VIBS_NOTABLE.length){ h.push('<h3>Third-party &amp; non-standard VIBs ('+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages)</h3>');
+      h.push('<p class="muted">VMwareCertified VMware VIBs are omitted. Confirm any unsigned / unrecognized-vendor / recently-added entry.</p>');
+      h.push('<table><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr>');
+      for(i=0;i<VIBS_NOTABLE.length;i++){ var vb=VIBS_NOTABLE[i]; var vbc=vb.trust===0?"hit":((vb.trust===1||!vb.known)?"warn":"");
+        h.push('<tr'+(vb.trust===0?' class="rf"':'')+'><td class="mono">'+rEsc(vb.name)+'</td><td class="mono">'+rEsc(vb.ver)+'</td>'
+          +'<td class="mono'+(vbc?" "+vbc:"")+'">'+rEsc(vb.vendor)+(vb.known||vb.vmware?"":" (unknown)")+'</td>'
+          +'<td class="'+vbc+'">'+rEsc(vb.acc)+'</td><td class="mono">'+rEsc(vb.date)+'</td></tr>'); }
+      h.push('</table>'); } }
 
   /* ---- network ---- */
   h.push(rSection("r-net","Network"));
@@ -4516,64 +4544,31 @@ function buildReportHtml(){
     h.push('</table>');
   }
 
-  /* ---- indicators ---- */
-  h.push(rSection("r-ind","Ransomware / intrusion indicators"+(INDIC.length?(" ("+indHits()+" of "+INDIC.length+" triggered)"):"")));
-  if(INDIC.length){ h.push('<table><tr><th>Indicator</th><th>Status</th><th>Evidence</th></tr>');
-    for(i=0;i<INDIC.length;i++){ var ind=INDIC[i]; var cls=ind.status==="hit"?"hit":(ind.status==="na"?"na":"clear"); var lbl=ind.status==="hit"?"TRIGGERED":(ind.status==="na"?"n/a":"clear");
-      h.push('<tr'+(ind.status==="hit"?' class="rf"':'')+'><td>'+rEsc(ind.name)+'</td><td class="'+cls+'">'+lbl+'</td><td class="muted">'+rEsc(ind.detail)+'</td></tr>'); }
-    h.push('</table><p class="muted">n/a means the source was not captured in this bundle. It is never an assurance that the thing is clean.</p>'); }
-  else h.push('<p class="muted">No indicator set for this bundle type.</p>');
+  /* ---- hosted VMs (full columns - the report is not the tab's Simplified view) ---- */
+  if(VMS.length){ var vrun=0,vcpu=0,vmem=0,venc=0;
+    for(i=0;i<VMS.length;i++){ if(VMS[i].running) vrun++; if(VMS[i].enc) venc++; vcpu+=VMS[i].vcpu; vmem+=VMS[i].memMB; }
+    h.push(rSection("r-vms","Hosted VMs ("+nf(VMS.length)+", "+vrun+" running, "+nf(vcpu)+" vCPU, "+fmtMB(vmem)+" vRAM"+(venc?(", "+venc+" possibly encrypted"):"")+")",
+      BTYPE==="vcsa"?"reconstructed from vpxd + DRS dumps + the vSAN-health baseline (a vc-support bundle has no .vmx)":"parsed from each registered .vmx; missing / ransom-renamed .vmx are still listed"));
+    h.push('<table><tr><th>VM</th><th>Guest OS</th><th>vCPU</th><th>vRAM</th><th>vDisks (vmdk)</th><th>Storage</th><th>VM Path (folder with the .vmx / .vmdk)</th><th>Status</th></tr>');
+    for(i=0;i<VMS.length;i++){ var vm=VMS[i];
+      var dcell=vm.ndisk+(vm.disks&&vm.disks.length?(' - '+rEsc(vm.disks.join(", "))):'');
+      if(vm.diskDetail&&vm.diskDetail.length){ for(var dd=0;dd<vm.diskDetail.length;dd++) dcell+='<br><span class="muted" style="font-size:10px">'+rEsc(vm.diskDetail[dd].sum)+'</span>'; }
+      h.push('<tr'+(vm.enc?' class="rf"':'')+'><td><b>'+rEsc(vm.name)+'</b></td><td>'+rEsc(vm.os)+'</td><td class="mono">'+vm.vcpu+'</td>'
+        +'<td class="mono nw">'+rEsc(fmtMB(vm.memMB))+'</td><td class="mono">'+dcell+'</td><td>'+(vm.vsan?"vSAN":rEsc(vm.ds))+'</td>'
+        +(function(vp){ return '<td class="mono" style="font-size:10px">'+(vp?rEsc(vp):'<span class="muted">not captured</span>')+'</td>'; })(vmFolderPath(vm))
+        +'<td'+(vm.enc?' class="hit"':(vm.running?'':' class="muted"'))+'>'+(vm.enc?("POSSIBLY ENCRYPTED - "+rEsc(vm.enc)):(vm.running?"running":(vm.status||"registered")))+'</td></tr>'); }
+    h.push('</table><p class="muted">VM Path is the on-host folder holding that VM\'s .vmx and .vmdk files, taken from where the .vmx was captured - not built from the VM name (a renamed VM keeps its original folder). "not captured" means the bundle carries no config path for it; the path has NOT been guessed.</p>'); }
 
-  /* ---- CVEs ---- */
-  if(CVES.length){ h.push(rSection("r-cve","CVE exposure","advisory - verify each VMSA by hand"));
-    /* The report used to tell the reader to "verify against the linked VMSA" while linking a URL that
-       404s. State where the numbers came from, how old they are, and that nothing was auto-checked. */
-    h.push('<p class="muted'+(cveStale()?' warn':'')+'">'+rEsc(cveProvenance())+'</p>');
-    h.push('<table><tr><th>CVE</th><th>Exploited</th><th>Severity</th><th>Advisory</th><th>Summary</th><th>Status</th><th>Basis</th><th>Source</th></tr>');
-    for(i=0;i<CVES.length;i++){ var cv=CVES[i]; var vc=cveCls(cv.verdict);
-      var advU=cv.url||vmsaUrl(cv.vmsa), advL=cv.vmsa||(cv.url?"advisory":"-");
-      h.push('<tr'+(cv.kev?' class="rf"':(cv.verdict==="exposed"?' class="rf"':(cv.verdict==="review"?' class="rw"':'')))+'>'
-        +'<td class="mono nw"><a href="'+rEsc(cveUrl(cv.id))+'" target="_blank">'+rEsc(cv.id)+'</a></td>'
-        +'<td class="nw'+(cv.kev?' hit':' muted')+'">'+(cv.kev?"KEV - in the wild":"-")+'</td>'
-        +'<td class="nw'+((cv.sev==="CRITICAL"||cv.sev==="HIGH")?' hit':' muted')+'">'+rEsc(cv.sev||"-")+'</td>'
-        +'<td class="mono nw">'+(advL!=="-"?('<a href="'+rEsc(advU)+'" target="_blank">'+rEsc(advL)+'</a>'):'-')+'</td>'
-        +'<td>'+rEsc(cv.title)+'</td>'
-        +'<td class="'+vc+' nw" title="'+rEsc(cveVerdictTip(cv.verdict))+'">'+rEsc(cv.verdict.toUpperCase())+'</td><td class="muted">'+rEsc(cv.basis)+'</td>'
-        +'<td class="muted nw" style="font-size:10px">'+rEsc(cv.src||"cve.json")+'</td></tr>'); }
-    h.push('</table>');
-    h.push('<p class="muted"><b>Verdicts:</b> <span class="hit">EXPOSED</span> = below the vendor\'s fixed build AND known-exploited. '
-      +'<span class="warn">REVIEW</span> = below the vendor\'s fixed build for this release line. '
-      +'<span class="vfy">VERIFY</span> = <b>MANUAL CHECK NEEDED</b>: the tool could not decide, because the vendor published no build number for this line (or the host build could not be read) - there was nothing to compare, so this is an UNKNOWN, not a pass. '
-      +'<span class="clear">PATCHED</span> = at or above the fixed build. <span class="na">n/a</span> = does not apply to this host.</p>');
-    h.push('<p class="muted">Source column: <b>NVD (vendor CNA)</b> = the fix build came from Broadcom\'s own advisory data, fetched live. <b>cve.json</b> = local hand-maintained data, because the vendor filed no machine-readable fix for that CVE. KEV = in CISA\'s Known Exploited Vulnerabilities catalog.</p>'); }
-
-  /* ---- security posture ---- */
-  if(SECPOST.length){ var ssc=secScoreOf();
-    h.push(rSection("r-sec","Security posture ("+ssc.p+" of "+ssc.t+" checkable controls at best practice)"));
-    h.push('<p class="muted">Graded against config captures and parsed log evidence. Not-captured sources are n/a, never assumed compliant; verdicts are advisory.</p>');
-    h.push('<table><tr><th>Group</th><th>Control</th><th>Status</th><th>Detail</th></tr>');
-    for(i=0;i<SECPOST.length;i++){ var sc2=SECPOST[i]; var scls=sc2.status==="fail"?"hit":(sc2.status==="warn"?"warn":(sc2.status==="na"?"na":"clear"));
-      h.push('<tr'+(sc2.status==="fail"?' class="rf"':(sc2.status==="warn"?' class="rw"':''))+'><td>'+rEsc(sc2.grp)+'</td><td>'+rEsc(sc2.name)+'</td>'
-        +'<td class="'+scls+'">'+rEsc(sc2.status==="na"?"n/a":sc2.status.toUpperCase())+'</td><td>'+rEsc(sc2.detail)+'</td></tr>'); }
-    h.push('</table>');
-    if(VIBS_NOTABLE.length){ h.push('<h3>Third-party &amp; non-standard VIBs ('+VIBS_NOTABLE.length+' of '+VIBS.length+' installed packages)</h3>');
-      h.push('<p class="muted">VMwareCertified VMware VIBs are omitted. Confirm any unsigned / unrecognized-vendor / recently-added entry.</p>');
-      h.push('<table><tr><th>VIB</th><th>Version</th><th>Vendor</th><th>Acceptance</th><th>Install date</th></tr>');
-      for(i=0;i<VIBS_NOTABLE.length;i++){ var vb=VIBS_NOTABLE[i]; var vbc=vb.trust===0?"hit":((vb.trust===1||!vb.known)?"warn":"");
-        h.push('<tr'+(vb.trust===0?' class="rf"':'')+'><td class="mono">'+rEsc(vb.name)+'</td><td class="mono">'+rEsc(vb.ver)+'</td>'
-          +'<td class="mono'+(vbc?" "+vbc:"")+'">'+rEsc(vb.vendor)+(vb.known||vb.vmware?"":" (unknown)")+'</td>'
-          +'<td class="'+vbc+'">'+rEsc(vb.acc)+'</td><td class="mono">'+rEsc(vb.date)+'</td></tr>'); }
-      h.push('</table>'); } }
-
-  /* ---- persistence ---- */
-  h.push(rSection("r-persist","Persistence & tampering ("+persistHits()+" flagged / "+PERSIST.length+" checks)"));   // rSection escapes the title - pass a literal &
-  if(PERSIST.length){ h.push('<table><tr><th>Category</th><th>Finding</th><th>Verdict</th><th>Detail</th><th>File</th></tr>');
-    for(i=0;i<PERSIST.length;i++){ var pp=PERSIST[i]; var pc=persistCls(pp.verdict);
-      h.push('<tr'+(pp.verdict==="suspect"?' class="rf"':(pp.verdict==="review"?' class="rw"':''))+'><td class="muted">'+rEsc(pp.cat)+'</td><td>'+rEsc(pp.name)+'</td>'
-        +'<td class="'+pc+'">'+rEsc(persistLbl(pp.verdict))+'</td><td class="muted">'+rEsc(pp.detail)+'</td>'
-        +'<td class="mono muted">'+rEsc(pp.rel||"-")+'</td></tr>'); }
-    h.push('</table><p class="muted">n/a means the source was not captured, not that the check passed.</p>'); }
-  else h.push('<p class="muted">No persistence checks for this bundle type.</p>');
+  /* ---- VM activity events ---- */
+  if(VMEV.length){ var vcap=rCapped(VMEV.length);
+    h.push(rSection("r-vmev","VM activity ("+nf(VMEV.length)+" event(s))", VMEV_SRC?("parsed from "+rEsc(VMEV_SRC)):""));
+    h.push(rCapNote(VMEV.length,"VM events"));
+    h.push('<table><tr><th>When (UTC)</th><th>VM</th><th>Kind</th><th>Event</th><th>Method</th><th>Actor</th><th>Via</th><th>Log</th></tr>');
+    for(i=0;i<vcap;i++){ var ve=VMEV[i];
+      h.push('<tr><td class="mono nw">'+rEsc(ve.when)+'</td><td class="mono">'+rEsc(ve.vm)+'</td><td class="mono">'+rEsc(ve.kind)+'</td>'
+        +'<td>'+rEsc(ve.what)+'</td><td class="mono muted">'+rEsc(ve.method)+'</td><td class="mono">'+rEsc(ve.actor||"-")+'</td>'
+        +'<td class="mono muted">'+rEsc(trunc(ve.via||"-",40))+'</td><td class="mono muted">'+rEsc(ve.src)+'</td></tr>'); }
+    h.push('</table>'); }
 
   /* ---- logons (all rows, window-filtered exactly as the tab is) ---- */
   var ext=logonExternal();
@@ -4643,6 +4638,16 @@ function buildReportHtml(){
       h.push('<tr'+rRowCls(tr)+'>'+rScoreCell(tr)+'<td class="mono nw">'+rEsc(tr.when)+'</td><td class="mono">'+rEsc(tr.kind)+'</td>'
         +'<td class="mono">'+rEsc(trunc(tr.detail,220))+'</td><td class="mono muted">'+rEsc(tr.src)+'</td></tr>'); }
     h.push('</table>'); }
+
+  /* ---- persistence ---- */
+  h.push(rSection("r-persist","Persistence & tampering ("+persistHits()+" flagged / "+PERSIST.length+" checks)"));   // rSection escapes the title - pass a literal &
+  if(PERSIST.length){ h.push('<table><tr><th>Category</th><th>Finding</th><th>Verdict</th><th>Detail</th><th>File</th></tr>');
+    for(i=0;i<PERSIST.length;i++){ var pp=PERSIST[i]; var pc=persistCls(pp.verdict);
+      h.push('<tr'+(pp.verdict==="suspect"?' class="rf"':(pp.verdict==="review"?' class="rw"':''))+'><td class="muted">'+rEsc(pp.cat)+'</td><td>'+rEsc(pp.name)+'</td>'
+        +'<td class="'+pc+'">'+rEsc(persistLbl(pp.verdict))+'</td><td class="muted">'+rEsc(pp.detail)+'</td>'
+        +'<td class="mono muted">'+rEsc(pp.rel||"-")+'</td></tr>'); }
+    h.push('</table><p class="muted">n/a means the source was not captured, not that the check passed.</p>'); }
+  else h.push('<p class="muted">No persistence checks for this bundle type.</p>');
 
   /* ---- IOC ---- */
   var icap=rCapped(IOCHITS.length);
