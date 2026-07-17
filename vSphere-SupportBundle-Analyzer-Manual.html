@@ -56,6 +56,7 @@
   <h4>Field Manual</h4>
   <a href="#intro">1. Overview</a>
   <a href="#how">2. How it works</a>
+  <a href="#integrity">&nbsp;&nbsp;Evidence integrity</a>
   <a href="#start">3. Getting started</a>
   <a href="#tabs">4. The tabs</a>
   <a href="#overview-tab">&nbsp;&nbsp;Overview</a>
@@ -86,7 +87,7 @@
 <header class="top">
   <h1>vSphere Support Bundle Analyzer</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles - one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.2.2</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.15.1</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -100,17 +101,31 @@
 <ul>
   <li><b>Extraction engine:</b> Windows' built-in <code>C:\Windows\System32\tar.exe</code> (bsdtar). No 7-Zip needed for <code>.tgz</code>/<code>.tar</code>.</li>
   <li><b>Table-of-contents first:</b> the bundle index is read once (<code>bsdtar -tvf</code>, cached to <code>toc.tsv</code>) so the Key Files board and node summary paint <em>without</em> unpacking gigabytes. Individual files are extracted on demand.</li>
-  <li><b>Compressed logs:</b> <code>.gz</code> inner logs decompress automatically; <code>.zst</code> (vCenter) needs <code>zstd.exe</code> - the tool probes <code>tools\</code> and PATH and, if missing, offers to fetch the official build from the facebook/zstd GitHub release.</li>
+  <li><b>Compressed logs:</b> <code>.gz</code> inner logs decompress automatically; <code>.zst</code> (vCenter) needs <code>zstd.exe</code> - the tool probes <code>tools\</code> and PATH and, if missing, offers to fetch the official build from the facebook/zstd GitHub release (blocked when the <b>online</b> checkbox is unticked - drop <code>zstd.exe</code> into <code>tools\</code> instead).</li>
+  <li><b>Outer wrappers:</b> pointing at the outer download <code>.tgz</code> is fine - if the index carries no bundle-root markers but exactly one nested <code>.tar</code>/<code>.tgz</code>, the tool extracts it, magic-checks it, and indexes it in its place (re-runs skip the outer re-index). Multiple nested archives are refused and listed rather than guessed at.</li>
+  <li><b>Hostile-input guard:</b> a bundle from a compromised host is attacker-influenceable input, so member names are validated at index time - path traversal, absolute/drive paths, control characters, and names that collide on one Windows file are rejected <em>and reported</em>. Rejections are themselves a tamper signal.</li>
   <li><b>Deep vSAN paths:</b> vSAN datastore paths contain <code>:</code> (illegal on NTFS); the tool handles bsdtar's <code>:</code>&rarr;<code>_</code> rewrite and reads deep files via stdout to stay under the 260-char path limit.</li>
   <li><b>Output:</b> everything lands under <code>_Processed\&lt;host&gt;\vSphere\</code> next to the app - TOC cache, extracted files, <code>runinfo.json</code>, <code>inventory.json</code>, CSVs and reports.</li>
 </ul>
 <div class="note"><b>Requirements:</b> Windows 10/11 (ships bsdtar), run the <code>.hta</code> from a <b>local</b> path (network paths trigger Windows zone restrictions on the UTF-8 reader). Analysis runs read-only against a copy of the bundle.</div>
+<h3 id="integrity">Evidence integrity &amp; provenance (v1.15)</h3>
+<div class="card">
+<ul>
+  <li><b>Caches are bound to their source.</b> Every output folder records the source bundle's identity (path, size, last-write) in <code>source.json</code>; analysing a <em>different</em> capture into the same folder wipes the extraction/decompression caches instead of silently reusing another bundle's files. Two hosts sharing a short name in different domains can no longer feed each other stale evidence - and the log says so when it happens. Prefer the <b>full FQDN</b> as the target hostname to keep per-host outputs unambiguous.</li>
+  <li><b>Capped reads keep both ends.</b> Oversized logs are read head + tail (the unread middle is disclosed inline and in the analysis summary) - the newest activity, usually the incident window, is never silently dropped.</li>
+  <li><b>Run provenance.</b> <code>runinfo.json</code> records the tool's own SHA-256, bsdtar version, the source signature, which vpxd files were read, every truncation, and every parser failure - a report can be tied to the exact tool build and the exact coverage it had.</li>
+  <li><b>Timestamps are UTC.</b> Log timestamps carrying explicit <code>+hh:mm</code>/<code>-hh:mm</code> offsets are normalised before merging, so appliance-local events line up correctly against Z-stamped vpxd events.</li>
+  <li><b>Exports are spreadsheet-safe.</b> CSV fields that Excel would execute as formulas (leading <code>=</code> <code>+</code> <code>-</code> <code>@</code>) are exported inert; JSON remains the forensic-fidelity format.</li>
+  <li><b>No evidence left in %TEMP%.</b> Temporary <code>.vmx</code>/<code>.vmdk</code> extraction folders are removed when analysis finishes; a failed cleanup is reported with the path.</li>
+  <li><b>Network is opt-out in one place.</b> The <b>online</b> checkbox (persisted) gates <em>all</em> egress: the GitHub update check, the live NVD lookup, the zstd download and this Manual's fetch. Analysis itself never needs the network - untick it on an evidence-handling workstation.</li>
+</ul>
+</div>
 
 <h2 id="start">3. Getting started</h2>
 <ol>
   <li>Put the <code>.hta</code> in a working folder (e.g. <code>Documents\Claude\Artifacts\vSphere-SupportBundle-Analyzer\</code>) and double-click it.</li>
   <li><b>Bundle field:</b> point at the nested archive that holds the tree (ESXi <code>&lt;host&gt;.tar</code> / vCenter <code>&lt;host&gt;.tgz</code>), the outer <code>.tgz</code>, or an already-extracted folder. <b>Browse…</b> or <b>Pick folder…</b> help.</li>
-  <li><b>Target hostname</b> is required - it names the output folder. It is guessed from the bundle name; correct it if needed.</li>
+  <li><b>Target hostname</b> is required - it names the output folder. It is guessed from the bundle name; correct it if needed, and prefer the <b>full FQDN</b> (e.g. <code>esxi01.corp.example</code>, not <code>esxi01</code>) so hosts with the same short name in different domains keep separate outputs. If the FQDN parsed from the bundle later disagrees with what you typed, the log says so.</li>
   <li>Click <b>Analyze bundle</b>. The button turns blue when the field points at a single bundle; <b>Triage fleet folder…</b> turns blue when it points at a folder holding two or more bundles.</li>
 </ol>
 <p>Log analysis (Logons / Actions / Timeline / Persistence / IOC) runs automatically after Analyze. Use <b>Show log</b> to see extraction and per-log line counts.</p>
@@ -161,7 +176,7 @@
 <h3 id="actions-tab">Actions</h3>
 <p>Privileged operations. <b>ESXi:</b> <code>shell.log</code> command history (attacker-typed commands), the <b>vobd audit-event stream</b> (<code>esx.audit.*</code>: SSH/shell enable, account events, lockdown, non-routine firewall disables - boot-replay and patching churn filtered out; rotations always read since the live file often doesn't exist), and <b>esxupdate software changes</b> (image-profile/VIB add-remove batches, with recurring agent re-stages collapsed into one row). <b>vCenter:</b> meaningful <code>vpxd</code> tasks (VM lifecycle, permission/role changes, sessions) <b>attributed to a user</b> (nearest-preceding human login - labelled <em>user approx</em>), appliance <code>sudo</code> commands, and <b>SSO identity events</b> (<code>sso-events/audit_events.log</code>: user/group creation, membership adds, password resets - with acting user and client IP, retention far beyond websso).</p>
 <p><b>Filtering:</b> beside the text/score filters, two dropdowns narrow the table by <b>actor</b> and by <b>kind</b> - each auto-populated with the distinct values present in this bundle (e.g. actor <code>root</code> + kind <i>shell command</i> isolates one operator's typed commands). The toolbar's <b>clear</b> resets them.</p>
-<p><b>Rotated logs:</b> the <i>incl. rotated logs</i> checkbox (next to Analyze) also reads <code>hostd.0.gz</code>, <code>auth.1.gz</code>, … - weeks of extra logon/action history instead of just the live file, at the cost of decompressing each rotation. vobd rotations are always read; vpxd keeps its largest-rotation behaviour.</p>
+<p><b>Rotated logs:</b> the <i>incl. rotated logs</i> checkbox (next to Analyze) also reads <code>hostd.0.gz</code>, <code>auth.1.gz</code>, … - weeks of extra logon/action history instead of just the live file, at the cost of decompressing each rotation. vobd rotations are always read. <b>vCenter:</b> the vpxd task log is read as a <b>rotation family in chronological order</b> - the newest 4 files by default, 12 with this checkbox - and anything skipped is disclosed in the analysis summary ("N older rotation(s) not read"), so coverage is never silently partial.</p>
 
 <h3 id="timeline-tab">Timeline</h3>
 <p>Merged logons + actions, time-ordered. The <b>Score / tags</b> column is colour-coded, and the <b>Kind</b> column colours <span class="tag t-red">shell command</span> red, sudo orange, vpxd/task blue. A multiselect <b>Score</b> filter (<span class="tag t-red">&ge;5</span> <span class="tag t-amb">3-4</span> <span class="tag t-grn">1-2</span> <span class="muted">0</span>) narrows to the bands you tick, and a <b>kind</b> dropdown (auto-populated from the bundle) shows a single event kind - e.g. only logons, or only shell commands. Case-window filters this tab.</p>
@@ -176,6 +191,7 @@
 
 <h3 id="ioc-tab">IOC hits</h3>
 <p>An <code>IOC.txt</code> (one term per line - IPs, users, hashes, filenames) placed next to the app is swept across the key logs on analysis; hits are listed here with file, line, and excerpt. Use the orange <b>Create IOC list</b> button (left of <b>Analyze bundle</b>) to build or edit it in a structured editor: <code>IOC.csv</code> holds <b>Value / Type / Note / Case</b> and is the editable source; on <b>Save</b> it is flattened to <code>IOC.txt</code> - the file this tool (and every wrapper in the family) auto-loads at launch. Hash/IPv4 values are auto-typed, and any existing plain <code>IOC.txt</code> is imported on first edit so nothing is lost.</p>
+<p><b>Matching is type-aware (v1.15).</b> The Type column drives boundary-anchored matching: an <b>ip</b> of <code>203.0.113.7</code> no longer hits <code>203.0.113.70</code> or <code>1203.0.113.7</code>, <b>hash</b> values bound on non-hex neighbours, and a <b>domain</b> matches its subdomains but not superstrings (<code>evil.example</code> does not hit <code>notevil.example</code>). Bare <code>IOC.txt</code> terms are type-inferred by shape; <b>filename / path / keyword</b> stay substring matches - that is what those types mean.</p>
 
 <h2 id="indicators">5. Ransomware / intrusion indicators (Overview)</h2>
 <p>ESXi kill-chain checklist derived from the parsed data - each is <b>TRIGGERED</b>, <b>clear</b>, or <b>n/a</b> with evidence:</p>
@@ -196,7 +212,7 @@
 
 <div class="caveat"><b>Why <code>cve.json</code> still exists (the hybrid).</b> NVD's coverage is uneven: older advisories carry no structured version data at all, some CVEs carry a build for one release line and none for the other, and vCenter often carries update <i>labels</i> ("8.0 U3e") with no build to compare. Those rows are answered from <code>cve.json</code> and labelled <code>[cve.json]</code>. It also holds the two config cross-checks NVD cannot do (SLP running state, AD join). Where both have a build and they <b>disagree</b>, the vendor wins and the row shouts, naming both numbers - that means <code>cve.json</code> is wrong and needs correcting.</div>
 
-<div class="caveat"><b>Air-gapped, offline, or blocked?</b> Untick <b>live NVD check</b> (it persists). The tool then uses <code>cve.json</code> only <b>and says so</b>: "live check OFF - rows are from cve.json only, absence here is not evidence of absence". A failed check (offline, rate-limited, timeout) degrades the same way and names the reason. A failed or disabled check is never rendered as a clean result. If <code>cve.json</code> is missing, empty or invalid the panel says <b>NOT ASSESSED</b> - it never renders an empty CVE section, which would read as "no exposure". NVD allows 5 requests / 30s unauthenticated; this tool makes one per bundle.</div>
+<div class="caveat"><b>Air-gapped, offline, or blocked?</b> Untick <b>live NVD check</b> (it persists). The tool then uses <code>cve.json</code> only <b>and says so</b>: "live check OFF - rows are from cve.json only, absence here is not evidence of absence". A failed check (offline, rate-limited, timeout) degrades the same way and names the reason. A failed or disabled check is never rendered as a clean result. If <code>cve.json</code> is missing, empty or invalid the panel says <b>NOT ASSESSED</b> - it never renders an empty CVE section, which would read as "no exposure". NVD allows 5 requests / 30s unauthenticated; this tool makes one per bundle. For a full no-egress posture, untick the global <b>online</b> checkbox next to Analyze instead - it gates the NVD check <em>and</em> every other outbound connection (update check, zstd, Manual fetch) in one place, and persists.</div>
 
 <div class="caveat"><b>vCenter CVEs are conservative advisories.</b> vCenter exposes only a build number, and 7.0/8.0 build ranges overlap, so the verdict is: <b>patched</b> only if the build is at/above the highest known fix, <b>review</b> if below the lowest, else <b>verify</b>. Confirm against the VMSA and your exact release.</div>
 
@@ -251,10 +267,11 @@
 <tr><td>Fleet roster</td><td>Roster CSV &middot; <b>Fleet report HTML</b> (roster + clusters + correlation + chain)</td></tr>
 <tr><td>Correlation</td><td>Cross-host timeline CSV</td></tr>
 </table>
+<p class="muted">All CSV exports are spreadsheet-safe: fields a spreadsheet would execute as formulas are written inert. <code>runinfo.json</code> / <code>inventory.json</code> / <code>logons.json</code> / <code>actions.json</code> remain the untouched forensic-fidelity outputs.</p>
 
 <h2 id="caveats">12. Caveats &amp; limitations</h2>
 <div class="caveat"><b>Guest IPs</b> are not in ESXi bundles (they are guest-side). The VMs tab shows a Guest IP column only when a <b>vCenter in the same fleet</b> reported them and the VM names match. In single-bundle mode the column is hidden.</div>
-<div class="caveat"><b>vCenter task&rarr;user attribution</b> is <b>approximate</b> - tasks are attributed to the nearest-preceding human SAML login, not an exact session-to-user binding. Treat "user approx" as a lead, corroborate with the Logons tab.</div>
+<div class="caveat"><b>vCenter task&rarr;user attribution</b> is tiered (v1.15). A task line carrying a <code>session[&lt;guid&gt;]</code> is bound to its authenticated user via the SessionManager pairing - <b>exact</b>, shown as <i>session-matched</i>. Without a session ID the fallback is the nearest-preceding human SAML login, <b>capped at 12&nbsp;hours</b> and shown as <i>user approx</i>; beyond the cap the actor reports <b>unknown</b> rather than a guess. Treat <i>user approx</i> as a lead, corroborate with the Logons tab.</div>
 <div class="caveat"><b>The vCenter&rarr;ESXi chain</b> needs a vCenter and ESXi bundle from the <b>same cluster</b> in the fleet; different environments correctly show no shared opIDs.</div>
 <div class="warn"><b>CVE verdicts are advisory</b> (see §6). <b>Support bundles are targeted</b>, not disk images - some persistence artefacts (cron, systemd-admin, authorized_keys, passwd) are simply not captured and are shown as "not captured".</div>
 
@@ -271,7 +288,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Analyzer - Field Manual for v1.2.2. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer">github.com/bpmorris22/vSphere-SupportBundle-Analyzer</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Analyzer - Field Manual for v1.15.1. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer">github.com/bpmorris22/vSphere-SupportBundle-Analyzer</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>
