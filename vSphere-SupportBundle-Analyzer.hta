@@ -194,7 +194,8 @@
       <span class="sep"></span>
       <button class="btn" id="fleetBtn" title="Fleet mode: discover every ESXi/vCenter bundle under a folder (recursively) and triage them all into one roster. Point the Bundle field at a parent folder, or use Pick folder.">Triage fleet folder&hellip;</button>
       <label style="font-size:12px;margin-left:6px" title="Reuse a host's saved analysis from _Processed when the source bundle and tool version are unchanged - much faster on re-runs. Uncheck to force a full fresh re-analysis of every host."><input type="checkbox" id="fleetReuse" checked> reuse cached</label>
-      <label style="font-size:12px;margin-left:6px" title="Also read the ROTATED logs (hostd.0.gz, auth.1.gz, ...) - weeks of extra logon/action history instead of just the live file. Slower (decompresses each rotation). The vobd audit log is always read in full (rotations are small and it is the host's audit trail). vpxd keeps its largest-rotation behaviour."><input type="checkbox" id="deepRot"> incl. rotated logs</label>
+      <label style="font-size:12px;margin-left:6px" title="Also read the ROTATED logs (hostd.0.gz, auth.1.gz, ...) - weeks of extra logon/action history instead of just the live file. Slower (decompresses each rotation). The vobd audit log is always read in full (rotations are small and it is the host's audit trail). vpxd reads its newest 4 rotations by default; this raises it to 12."><input type="checkbox" id="deepRot"> incl. rotated logs</label>
+      <label style="font-size:12px;margin-left:6px" title="Master network switch. When unticked the tool makes NO outbound connections: the GitHub update check, the live NVD CVE lookup, the zstd.exe download and the Field Manual fetch are all disabled. Analysis itself never needs the network. Persisted across sessions - untick it on an evidence-handling workstation."><input type="checkbox" id="netOn" checked> online (update check / NVD / zstd)</label>
       <span class="sep"></span>
       <button class="btn" id="logToggle">Show log</button>
       <span class="muted" id="status" style="margin-left:8px"></span>
@@ -455,7 +456,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.14.1";
+var APP_VERSION = "1.15.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -492,6 +493,23 @@ var SCOREF={c5:true,c3:true,c1:true,c0:true};   // multiselect score-bucket filt
 function scoreBucket(s){ return s>=5?"c5":(s>=3?"c3":(s>=1?"c1":"c0")); }
 function scorePass(s){ return !!SCOREF[scoreBucket(s)]; }
 var LOGCAP=48*1024*1024;   // per-log read cap (bytes) - guards against 100MB+ logs
+/* run-generation counter (v1.15.0). Every analyze()/fleet run increments it; every async callback
+   (tar polling, NVD replies, deferred runAnalysis timers) captures the value at start and bails if
+   it no longer matches - so a late tar index or a slow NVD reply from run A can never mutate run B's
+   state. Cheaper and just as airtight as an immutable context object in a codebase this global. */
+var RUNID=0;
+var NET_ON=true;           // master egress switch (update check / NVD / zstd / manual fetch) - persisted
+var VPXD_LINES=null;       // per-run cache of the merged chronological vpxd line set (vcsa)
+var VPXD_SRCNOTE="";       // which vpxd files fed VPXD_LINES (for provenance/log)
+/* per-run cache of parsed log line-arrays (v1.15.1). The ESXi passes read the same files repeatedly -
+   hostd.log three times (logons / sessions / VM events), every vobd rotation twice (maintenance +
+   audit) - and each re-read of a CAPPED log pushed a duplicate LOG_TRUNC entry. Consumers never
+   mutate the arrays (verified), so one read serves all passes. Budgeted, cleared per run/host. */
+var LOGCACHE={}, LOGCACHE_BYTES=0, LOGCACHE_MAX=160*1024*1024;
+function logCacheClear(){ LOGCACHE={}; LOGCACHE_BYTES=0; }
+var TOC_BAD=0, TOC_BADSAMPLE=[], TOC_CLASH=0, TOC_CLASHSAMPLE=[];   // malicious-member rejections (per index)
+var SELF_SHA=null;         // lazy SHA-256 of this .hta (certutil), for run provenance
+var WRAPD=0;               // outer-wrapper unwrap depth this run (max 1 unwrap: outer -> nested bundle)
 
 /* ---------- tiny helpers (family) ---------- */
 function $(id){ return document.getElementById(id); }
@@ -572,6 +590,26 @@ function pollDone(ctx){
   if(ctx.onTick) ctx.onTick(ctx.elapsed);
   window.setTimeout(function(){ pollDone(ctx); }, 1000);
 }
+/* terminate the batch a runBatAsync launched AND its children (tar.exe). A timeout that merely stops
+   polling leaves a full-archive tar pass running while BUSY drops to false - the abandoned process
+   then races the next run for the same output files. WMI match is on the unique per-run .bat path. */
+function killBatTree(ctx){
+  var killed=0;
+  try{
+    var svc=GetObject("winmgmts:{impersonationLevel=impersonate}!\\\\.\\root\\cimv2");
+    var like=String(ctx.bat).replace(/\\/g,"\\\\").replace(/'/g,"_").replace(/%/g,"_");
+    var procs=svc.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE CommandLine LIKE '%"+like+"%'");
+    var e=new Enumerator(procs);
+    for(; !e.atEnd(); e.moveNext()){ var p=e.item(), pid=p.ProcessId;
+      try{ var kids=new Enumerator(svc.ExecQuery("SELECT * FROM Win32_Process WHERE ParentProcessId="+pid));
+        for(; !kids.atEnd(); kids.moveNext()){ try{ kids.item().Terminate(); killed++; }catch(ek){} } }catch(e2){}
+      try{ p.Terminate(); killed++; }catch(et){} }
+  }catch(e){}
+  try{ var fso=new ActiveXObject("Scripting.FileSystemObject");
+    try{ fso.DeleteFile(ctx.bat); }catch(c1){} try{ fso.DeleteFile(ctx.done); }catch(c2){} try{ fso.DeleteFile(ctx.log); }catch(c3){}
+  }catch(e4){}
+  return killed;
+}
 
 /* ---------- fs helpers (family) ---------- */
 function fileExists(p){ try{ return new ActiveXObject("Scripting.FileSystemObject").FileExists(p); }catch(e){ return false; } }
@@ -587,6 +625,40 @@ function htaFolder(){
     if(m) return parentDir(m[1]); }catch(e){}
   try{ var p=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\"); return parentDir(p); }catch(e2){}
   return "";
+}
+function fileMtime(p){ try{ return String(new ActiveXObject("Scripting.FileSystemObject").GetFile(p).DateLastModified); }catch(e){ return ""; } }
+function deleteTree(p){ try{ var fso=new ActiveXObject("Scripting.FileSystemObject"); if(fso.FolderExists(p)) fso.DeleteFolder(p,true); return true; }catch(e){ return false; } }
+
+/* ---------- source-cache binding (v1.15.0) ----------
+   _extracted / _view / _nodecfg / toc.tsv are keyed by OUTPUT FOLDER (i.e. by hostname). Before this,
+   any file already on disk was reused purely because it existed - so a second, different capture from
+   the same hostname (or a same-short-name host in another domain) silently consumed the FIRST capture's
+   files. source.json binds the cache to the source identity (canonical path + size + last-write); a
+   mismatch wipes the derived caches before anything can read them. Fingerprint is identity-grade, not
+   content-grade (no full SHA-256 of a multi-GB archive per run) - size+mtime changes on any re-capture. */
+function sourceSigOf(src, mode){
+  var sz=-1, mt="";
+  try{ if(mode!=="tree" && fileExists(src)){ sz=fileSize(src); mt=fileMtime(src); }
+       else if(mode==="tree"){ var rd=src+"\\README"; if(fileExists(rd)){ sz=fileSize(rd); mt=fileMtime(rd); } } }catch(e){}
+  return { src:lc(String(src||"")), size:sz, mtime:mt, mode:String(mode||"") };
+}
+function sourceManifestPath(outdir){ return String(outdir).replace(/[\\\/]+$/,"")+"\\source.json"; }
+function bindSourceCache(outdir, src, mode){
+  try{
+    var sig=sourceSigOf(src, mode), p=sourceManifestPath(outdir), old=null;
+    try{ if(fileExists(p)) old=JSON.parse(readUtf8(p)); }catch(e0){}
+    if(old && old.src===sig.src && old.size===sig.size && old.mtime===sig.mtime && old.mode===sig.mode) return true;   // same source - caches valid
+    if(old){
+      appendLog("SOURCE CHANGED for this output folder - cached extractions belong to a different capture and are being discarded:\n  cached: "+old.src+" | "+old.size+" | "+old.mtime+"\n  current: "+sig.src+" | "+sig.size+" | "+sig.mtime);
+      var od=String(outdir).replace(/[\\\/]+$/,"");
+      deleteTree(od+"\\_extracted"); deleteTree(od+"\\_view"); deleteTree(od+"\\_nodecfg"); deleteTree(od+"\\_inner");
+      try{ var fso=new ActiveXObject("Scripting.FileSystemObject");
+        if(fso.FileExists(od+"\\toc.tsv")) fso.DeleteFile(od+"\\toc.tsv");
+        if(fso.FileExists(od+"\\inner.json")) fso.DeleteFile(od+"\\inner.json"); }catch(e1){}
+    }
+    writeUtf8(p, JSON.stringify(sig,null,1));
+    return !old;
+  }catch(e){ appendLog("source-cache binding failed ("+e.message+") - caches NOT validated this run."); return false; }
 }
 
 /* ---------- tar.exe (extraction engine) ---------- */
@@ -621,6 +693,7 @@ function checkZstd(){
 function ensureZstd(){
   if(ZSTD) return true;
   if(resolveZstd()){ checkZstd(); return true; }
+  if(!NET_ON){ setStatus("A .zst log needs zstd.exe, which is not installed - and offline mode blocks the download. Place zstd.exe in tools\\ next to the app, or tick the 'online' checkbox.","err"); return false; }
   var url="https://github.com/facebook/zstd/releases/latest";
   if(!confirm("This file is zstd-compressed (.zst) and needs zstd.exe, which is not installed.\n\nDownload the official Windows build from the facebook/zstd GitHub release and cache it in tools\\ next to this app?\n\nSource: "+url)) return false;
   var td=toolsDir(); if(!td){ setStatus("Can't locate the app folder to cache zstd.exe.","err"); return false; }
@@ -687,21 +760,59 @@ function requireHost(){
 var RUNINFO_LAST=null;
 function nowStamp(){ var d=new Date(); function p(x){return (x<10?"0":"")+x;}
   return d.getFullYear()+""+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()); }
+/* SHA-256 of this .hta via certutil - computed once, recorded in every runinfo entry so a report can
+   be tied to the exact tool build that produced it. */
+function selfSha256(){
+  if(SELF_SHA!==null) return SELF_SHA;
+  SELF_SHA="";
+  try{ var p=selfPath(); if(p && fileExists(p)){
+    var r=runBat(['certutil -hashfile "'+batEsc(p)+'" SHA256 > "__LOG__" 2>&1'], false);
+    var m=(r.log+"").replace(/[\s\r\n]/g,"").match(/SHA256.*?([0-9a-fA-F]{64})/);
+    if(m) SELF_SHA=lc(m[1]); } }catch(e){}
+  return SELF_SHA;
+}
 function writeRunInfo(outdir, input){
   try{
     var p=String(outdir).replace(/[\\\/]+$/,"")+"\\runinfo.json"; var arr=[];
     try{ if(fileExists(p)){ var old=JSON.parse(readUtf8(p)); if(old && old.length!=null) arr=old; } }catch(e0){}
-    var d=new Date(); function p2(x){ return (x<10?"0":"")+x; }
-    var iso=d.getFullYear()+"-"+p2(d.getMonth()+1)+"-"+p2(d.getDate())+"T"+p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds());
-    var present=0; for(var i=0;i<INVENTORY.length;i++) if(INVENTORY[i].present) present++;
-    var ent={ app:APP_NAME, appVersion:APP_VERSION, host:sanitHost($("hostName").value),
+    var iso=isoNowUtc();
+    /* keyFilesPresent used to count the WHOLE inventory, not the key=true entries - misnamed evidence
+       in a report. Both figures are now recorded under honest names. */
+    var present=0, kp=0, kt=0;
+    for(var i=0;i<INVENTORY.length;i++){ var it=INVENTORY[i];
+      if(it.present) present++;
+      if(it.key){ kt++; if(it.present) kp++; } }
+    var srcArch=(MODE==="toc")?ARCHIVE:"";
+    var ent={ app:APP_NAME, appVersion:APP_VERSION, appSha256:selfSha256(),
+              host:sanitHost($("hostName").value), parsedFqdn:(NODE&&NODE.host)||"",
               bundleType:(BTYPE==="esxi"?"ESXi":(BTYPE==="vcsa"?"vCenter (VCSA)":"unknown")),
-              input:String(input||""), mode:MODE, finishedUtc:iso,
-              keyFilesPresent:present, keyFilesTotal:INVENTORY.length, node:NODE };
+              input:String(input||""), archive:srcArch,
+              source:sourceSigOf((MODE==="tree")?ROOT:(srcArch||input), MODE),
+              mode:MODE, finishedUtc:iso,
+              extractor:TAR, bsdtarVersion:TAR_VER, zstd:ZSTD||"",
+              filesPresent:present, filesTotal:INVENTORY.length,
+              keyFilesPresent:kp, keyFilesTotal:kt,
+              tocMembers:TOC.length, tocRejected:TOC_BAD, tocCollisions:TOC_CLASH,
+              node:NODE };
     arr.push(ent);
     writeUtf8(p, JSON.stringify(arr,null,2)); RUNINFO_LAST={path:p, iso:iso};
     writeUtf8(String(outdir).replace(/[\\\/]+$/,"")+"\\inventory.json", JSON.stringify(INVENTORY,null,2));
   }catch(e){ appendLog("runinfo write failed: "+e.message); }
+}
+/* amend the just-written runinfo entry with what only exists AFTER analysis: truncation disclosures,
+   parser failures, vpxd coverage. Provenance that omits its own gaps is not provenance. */
+function amendRunInfo(){
+  try{
+    if(!RUNINFO_LAST || !RUNINFO_LAST.path || !fileExists(RUNINFO_LAST.path)) return;
+    var arr=JSON.parse(readUtf8(RUNINFO_LAST.path)); if(!arr || !arr.length) return;
+    var ent=null; for(var i=arr.length-1;i>=0;i--){ if(arr[i].finishedUtc===RUNINFO_LAST.iso){ ent=arr[i]; break; } }
+    if(!ent) return;
+    ent.analysisFinishedUtc=isoNowUtc();
+    ent.logsTruncated=LOG_TRUNC.slice(0);
+    ent.parserFailures=ANALYSIS_ERRS.slice(0);
+    ent.vpxdSet=VPXD_SRCNOTE||"";
+    writeUtf8(RUNINFO_LAST.path, JSON.stringify(arr,null,2));
+  }catch(e){ appendLog("runinfo amend failed: "+e.message); }
 }
 
 /* ============================================================
@@ -825,6 +936,8 @@ function findInnerArchive(dir){
    ============================================================ */
 function analyze(){
   if(BUSY){ setStatus("A run is already in progress.","err"); return; }
+  RUNID++;                                     // invalidate every callback still in flight from the previous run
+  try{ nvdAbort(); }catch(eNA){}
   try{ DEEPROT = !!$("deepRot").checked; }catch(eDR){ DEEPROT=false; }
   var inp=trimStr($("inPath").value);
   if(!inp){ setStatus("Point at a bundle archive (.tgz/.tar) or an already-extracted folder.","err"); return; }
@@ -832,22 +945,33 @@ function analyze(){
   var outdir=trimStr($("outDir").value); if(!outdir){ syncOutDir(); outdir=trimStr($("outDir").value); }
   LASTOUTDIR=outdir; EXDIR=outdir+"\\_extracted"; NODEDIR=outdir+"\\_nodecfg"; ensureDir(outdir);
   ANALYZED=false; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[];
+  VPXD_LINES=null; VPXD_SRCNOTE=""; WRAPD=0; logCacheClear();
   $("anStats").innerHTML=""; $("ovIndic").innerHTML=""; $("ovCve").innerHTML=""; $("anStatus").innerHTML="Logons / Actions / Timeline / Persistence / IOC not parsed yet.";
 
   // folder input?
   if(folderExists(inp)){
     var root=findTreeRoot(inp);
     if(root){ MODE="tree"; ROOT=root; ARCHIVE=""; PREFIX=baseName(root);
+      bindSourceCache(outdir, root, "tree");
       setStatus("Reading extracted tree…","muted"); window.setTimeout(function(){ runTree(inp); }, 40); return; }
     var innerA=findInnerArchive(inp);
     if(innerA){ MODE="toc"; ARCHIVE=innerA;
       appendLog("Using nested archive found in folder: "+innerA);
+      bindSourceCache(outdir, innerA, "toc");
       setStatus("Reading bundle index…","muted"); window.setTimeout(function(){ readToc(innerA, inp); }, 40); return; }
     setStatus("That folder is neither an extracted bundle (no README) nor does it contain a bundle archive.","err"); return;
   }
   if(!fileExists(inp)){ setStatus("Not found: "+inp,"err"); return; }
   if(!isArchive(inp)){ setStatus("Unrecognized input - expected a .tgz / .tar / .zip archive or an extracted folder.","err"); return; }
   if(!TAR){ setStatus("tar.exe not found (needs Windows 10 1803+).","err"); return; }
+  /* previously-unwrapped outer wrapper? Skip the (slow) outer re-index and go straight to the nested
+     bundle - inner.json binds the extracted inner archive to the outer's identity. */
+  var wi=loadInnerManifest(inp);
+  if(wi){ MODE="toc"; ARCHIVE=wi;
+    appendLog("Outer wrapper recognised from a previous run - using its nested bundle directly: "+wi);
+    bindSourceCache(outdir, inp, "toc"); WRAPD=1;   // cache identity stays the OUTER archive (what the user pointed at)
+    setStatus("Reading bundle index…","muted"); window.setTimeout(function(){ readToc(wi, inp); }, 40); return; }
+  bindSourceCache(outdir, inp, "toc");
   var fmt=sniffContainer(inp);
   if(fmt==="iso9660"){ var lbl=isoVolumeLabel(inp);
     appendLog("Magic-byte sniff: ISO 9660 CD-ROM image"+(lbl?(" (volume label '"+lbl+"')"):"")+" - NOT a vm-support/vc-support bundle.");
@@ -874,6 +998,7 @@ function tryTocCache(archive){
 }
 function readToc(archive, input){
   BUSY=true; $("procBtn").disabled=true;
+  var rid=RUNID;   // stale-run guard: results landing after another Analyze started are discarded
   var cached=tryTocCache(archive);
   if(cached){ appendLog("Using cached index (toc.tsv) for "+baseName(archive)); parseTocTsv(cached); BUSY=false; $("procBtn").disabled=false; finishToc(input); return; }
   var fso=new ActiveXObject("Scripting.FileSystemObject"), tmp=fso.GetSpecialFolder(2)+"", raw=tmp+"\\vsbtoc_"+uid()+".txt";
@@ -881,14 +1006,22 @@ function readToc(archive, input){
   setStatus("Indexing bundle… a console window shows progress.","muted");
   var lines=[ '"'+batEsc(TAR)+'" -tvf "'+batEsc(archive)+'" > "'+batEsc(raw)+'" 2>"__LOG__"', 'echo TAR_EXIT:%errorlevel% >> "__LOG__"' ];
   var ctx=runBatAsync(lines, true);
-  ctx.onTick=function(s){ setStatus("Indexing bundle… "+s+"s","muted"); };
-  ctx.onTimeout=function(){ BUSY=false; $("procBtn").disabled=false; setStatus("Indexing still running after 40 min - stopped watching.","err"); };
-  ctx.onDone=function(log){ BUSY=false; $("procBtn").disabled=false;
+  ctx.onTick=function(s){ if(rid===RUNID) setStatus("Indexing bundle… "+s+"s","muted"); };
+  ctx.onTimeout=function(){
+    var k=killBatTree(ctx);
+    try{ fso.DeleteFile(raw); }catch(eR){}
+    if(rid!==RUNID) return;
+    BUSY=false; $("procBtn").disabled=false;
+    setStatus("Indexing gave up after 40 min - the tar process was terminated ("+k+" process(es)). The archive may be damaged or on very slow storage.","err"); };
+  ctx.onDone=function(log){
+    if(rid!==RUNID){ appendLog("Stale index result from a previous run discarded."); try{ fso.DeleteFile(raw); }catch(eS){} return; }
+    BUSY=false; $("procBtn").disabled=false;
     appendLog("--- index ---\n"+trunc(log,1500));
     try{ if(!fso.FileExists(raw)){ setStatus("Indexing produced no output - see log.","err"); return; }
       var txt=readUtf8(raw); try{ fso.DeleteFile(raw); }catch(e0){}
       parseTocRaw(txt);
       if(!TOC.length){
+        if(wrapCheck(archive, input)) return;   // flat outer wrapper (a lone nested .tgz) parses to an "empty" TOC
         var why="";
         if(/Unrecognized archive format/i.test(log)) why=" bsdtar could not recognize the format (not a gzip/tar/zip). Check it is the real support bundle, not an ISO / installer / recovery image.";
         else if(/Truncated input file|unexpected end of file|premature/i.test(log)) why=" bsdtar hit a truncated/short file - the bundle looks like an incomplete or still-copying download; re-copy it.";
@@ -904,8 +1037,35 @@ function readToc(archive, input){
    GNU tar (fallback, ISO dates):     "<mode> <own/grp> <size> <YYYY-MM-DD> <HH:MM> <path>" */
 var TOC_RE_BSD=/^\S+\s+\d+\s+\S+\s+\S+\s+(\d+)\s+\w{3}\s+\d+\s+(?:\d{1,2}:\d{2}|\d{4})\s+(.+)$/;
 var TOC_RE_GNU=/^\S+\s+\S+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+(.+)$/;
+/* ---- archive-member safety validation (v1.15.0) ----
+   The bundle comes from a potentially COMPROMISED host but is processed by a full-trust HTA, so member
+   names are attacker-influenceable input. bsdtar's own defaults already refuse ".." elements and strip
+   leading slashes on extraction - this layer rejects such members from the INDEX so no code path (path
+   joins, -T extraction lists, winRel mapping) ever handles them, and it catches what bsdtar does not:
+   Windows-canonicalisation collisions, where two archive names map onto ONE on-disk file via winRel. */
+function tocRelBad(rel){
+  if(/[\x00-\x1f]/.test(rel)) return "control character in name";
+  if(/^([A-Za-z]:|[\\\/])/.test(rel)) return "absolute / drive-qualified path";
+  if(/(^|\/)\.\.(\/|$)/.test(rel)) return "parent-directory (..) traversal";
+  if(rel.indexOf("\\")>=0) return "backslash in member name";
+  return "";
+}
+function tocGuardReset(){ TOC_BAD=0; TOC_BADSAMPLE=[]; TOC_CLASH=0; TOC_CLASHSAMPLE=[]; }
+function tocGuardAdd(rel, size, canon){
+  var bad=tocRelBad(rel);
+  if(bad){ TOC_BAD++; if(TOC_BADSAMPLE.length<8) TOC_BADSAMPLE.push(rel+"  ["+bad+"]"); return; }
+  var key=lc(winRel(rel)), prior=canon[key];
+  if(prior==null){ canon[key]=rel; TOC.push({rel:rel, size:size}); TOCMAP[rel]=size; }
+  else if(prior===rel){ TOCMAP[rel]=size; }   // same member listed twice (tar append) - keep one row, newest size
+  else { TOC_CLASH++; if(TOC_CLASHSAMPLE.length<8) TOC_CLASHSAMPLE.push(rel+"  (collides on disk with "+prior+")"); }
+}
+function tocGuardReport(){
+  if(TOC_BAD) appendLog("SECURITY: "+TOC_BAD+" archive member(s) REJECTED for unsafe names:\n  "+TOC_BADSAMPLE.join("\n  "));
+  if(TOC_CLASH) appendLog("SECURITY: "+TOC_CLASH+" archive member(s) SKIPPED - their names collide with another member after Windows canonicalisation (kept the first of each pair):\n  "+TOC_CLASHSAMPLE.join("\n  "));
+  if(TOC_BAD||TOC_CLASH) setStatus("Index loaded with "+(TOC_BAD+TOC_CLASH)+" unsafe/colliding member name(s) rejected - see log. Treat this bundle as tampered until explained.","err");
+}
 function parseTocRaw(txt){
-  TOC=[]; TOCMAP={}; PREFIX="";
+  TOC=[]; TOCMAP={}; PREFIX=""; tocGuardReset(); var canon={};
   var lines=String(txt).split("\n");
   for(var i=0;i<lines.length;i++){ var ln=lines[i]; if(ln.charAt(ln.length-1)==="\r") ln=ln.substring(0,ln.length-1);
     if(!ln) continue; var m=ln.match(TOC_RE_BSD); if(!m) m=ln.match(TOC_RE_GNU); if(!m) continue;
@@ -916,17 +1076,19 @@ function parseTocRaw(txt){
     var rel=path;
     if(PREFIX && path.indexOf(PREFIX+"/")===0) rel=path.substring(PREFIX.length+1);
     else if(path===PREFIX) continue;   // the root entry itself
-    TOC.push({rel:rel, size:size}); TOCMAP[rel]=size;
+    tocGuardAdd(rel, size, canon);
   }
+  tocGuardReport();
 }
 function parseTocTsv(tsv){
-  TOC=[]; TOCMAP={}; PREFIX="";
+  TOC=[]; TOCMAP={}; PREFIX=""; tocGuardReset(); var canon={};
   var lines=String(tsv).split("\n");
   for(var i=0;i<lines.length;i++){ var ln=trimStr(lines[i]); if(!ln||ln.charAt(0)==="#") continue;
     var tab=ln.indexOf("\t"); if(tab<0) continue; var rel=ln.substring(0,tab); var size=parseInt(ln.substring(tab+1),10)||0;
     if(!PREFIX && rel.indexOf("__PREFIX__=")===0){ PREFIX=rel.substring(11); continue; }
-    TOC.push({rel:rel, size:size}); TOCMAP[rel]=size;
+    tocGuardAdd(rel, size, canon);
   }
+  tocGuardReport();
 }
 function cacheToc(archive){
   try{ var out=["# "+archive+" | "+fileSize(archive), "__PREFIX__="+PREFIX+"\t0"];
@@ -934,15 +1096,67 @@ function cacheToc(archive){
     writeUtf8(tocCachePath(), out.join("\r\n"));
   }catch(e){ appendLog("TOC cache write failed: "+e.message); }
 }
+/* ---- outer-wrapper unwrap (v1.15.0) ----
+   A DIRECT outer .tgz (the download wrapper holding esx-<host>.tar / vc-<host>.tgz) used to be indexed
+   one level deep and analysed as-is: no bundle-root markers, so nearly every artifact reported absent.
+   Now: if the index carries no bundle markers but does carry exactly one nested bundle archive, that
+   member is extracted, magic-checked, recorded in inner.json (so re-runs skip the outer re-index), and
+   indexed in its place. One unwrap level only; ambiguity is rejected, never guessed at. */
+function innerManifestPath(){ return LASTOUTDIR+"\\inner.json"; }
+function saveInnerManifest(outer, inner){
+  try{ writeUtf8(innerManifestPath(), JSON.stringify({outer:lc(outer), size:fileSize(outer), mtime:fileMtime(outer), inner:inner},null,1)); }catch(e){}
+}
+function loadInnerManifest(outer){
+  try{ var p=innerManifestPath(); if(!fileExists(p)) return "";
+    var o=JSON.parse(readUtf8(p)); if(!o||!o.inner) return "";
+    if(o.outer!==lc(outer) || o.size!==fileSize(outer) || o.mtime!==fileMtime(outer)) return "";   // outer changed - re-unwrap
+    return fileExists(o.inner)?o.inner:"";
+  }catch(e){ return ""; }
+}
+function tocHasBundleMarkers(){
+  if(TOCMAP["etc/vmware/esx.conf"]!=null || TOCMAP["README"]!=null) return true;
+  return hasPrefixToc("var/log/vmware/vpxd/");
+}
+function wrapCheck(outer, input){
+  if(MODE!=="toc" || tocHasBundleMarkers()) return false;
+  // candidate nested archives: TOC members, plus PREFIX itself (a flat wrapper's lone member becomes PREFIX)
+  var cands=[], i;
+  if(PREFIX && /\.(tgz|tar|tar\.gz)$/i.test(PREFIX)) cands.push(PREFIX);
+  for(i=0;i<TOC.length;i++){ if(/\.(tgz|tar|tar\.gz)$/i.test(TOC[i].rel)) cands.push(PREFIX?(PREFIX+"/"+TOC[i].rel):TOC[i].rel); }
+  if(!cands.length) return false;
+  // prefer the members named like real bundles; only auto-pick when that leaves exactly one
+  var pref=[]; for(i=0;i<cands.length;i++){ if(/^(esx-|vc-)/i.test(baseName(cands[i]))) pref.push(cands[i]); }
+  var pick = (pref.length===1) ? pref[0] : (cands.length===1 ? cands[0] : "");
+  if(!pick){
+    setStatus("This archive is an outer wrapper holding "+cands.length+" nested archives - ambiguous, refusing to guess. Extract it manually and point the tool at the correct nested bundle. Candidates are in the log.","err");
+    appendLog("Wrapper candidates:\n  "+cands.join("\n  ")); return true; }
+  if(WRAPD>=1){ setStatus("Nested wrapper beyond one level ("+pick+") - refusing to recurse further. Extract manually.","err"); return true; }
+  WRAPD++;
+  appendLog("Outer wrapper detected - no bundle-root markers in the index; extracting nested bundle:\n  "+pick);
+  setStatus("Outer wrapper: extracting nested bundle "+baseName(pick)+"… (console shows progress)","muted");
+  var dst=LASTOUTDIR+"\\_inner"; ensureDir(dst);
+  runBat(['"'+batEsc(TAR)+'" -xf "'+batEsc(outer)+'" -C "'+batEsc(dst)+'" "'+batEsc(pick)+'" > "__LOG__" 2>&1'], true);
+  var innerPath=dst+"\\"+winRel(pick);
+  if(!fileExists(innerPath)){ setStatus("Could not extract the nested bundle "+pick+" from the wrapper - see log.","err"); return true; }
+  var fmt=sniffContainer(innerPath);
+  if(fmt==="iso9660"||fmt==="empty"){ setStatus("The nested archive "+baseName(pick)+" is "+(fmt==="iso9660"?"an ISO disc image":"empty/truncated")+", not a support bundle.","err"); return true; }
+  saveInnerManifest(outer, innerPath);
+  ARCHIVE=innerPath;
+  appendLog("Nested bundle extracted ("+fmtSize(fileSize(innerPath))+", magic: "+(fmt||"unknown-but-plausible")+") - indexing it now.");
+  readToc(innerPath, input);
+  return true;
+}
 function finishToc(input){
+  if(wrapCheck(ARCHIVE, input)) return;   // outer wrapper: unwrap to the nested bundle and re-index
   detectType();
   buildInventory();
   extractKeyFilesToc();
   parseNode();
+  hostMismatchNote();
   writeRunInfo(LASTOUTDIR, input);
   showResults();
   setStatus("Indexed "+nf(TOC.length)+" entries - "+typeLabel()+" bundle. Parsing logs…","ok");
-  window.setTimeout(runAnalysis, 60);
+  var rid=RUNID; window.setTimeout(function(){ if(rid===RUNID) runAnalysis(); }, 60);
 }
 
 /* ---- tree mode: probe only the catalog paths (no full-tree walk) ---- */
@@ -952,10 +1166,22 @@ function runTree(input){
   detectTypeTree();
   buildInventory();     // buildInventory branches on MODE for presence/size
   parseNode();
+  hostMismatchNote();
   writeRunInfo(LASTOUTDIR, input);
   showResults();
   setStatus(typeLabel()+" bundle (extracted tree). Parsing logs…","ok");
-  window.setTimeout(runAnalysis, 60);
+  var rid=RUNID; window.setTimeout(function(){ if(rid===RUNID) runAnalysis(); }, 60);
+}
+/* typed short name vs the authoritative FQDN parsed from bundle CONTENT. Output stays under the typed
+   name (moving caches mid-run would be worse), but the divergence is called out - two same-short-name
+   hosts from different domains landing in one output folder is how cross-host cache mixups start (the
+   source binding in source.json now catches the actual contamination; this catches the confusion). */
+function hostMismatchNote(){
+  try{
+    var typed=sanitHost($("hostName").value), real=sanitHost(NODE.host||"");
+    if(!typed || !real || lc(typed)===lc(real)) return;
+    appendLog("NOTE: typed hostname '"+typed+"' differs from the FQDN parsed from the bundle: '"+real+"'. Outputs stay under _Processed\\"+typed+"\\ this run - prefer the full FQDN as the target hostname to keep per-host outputs unambiguous.");
+  }catch(e){}
 }
 
 /* ---------- detection ---------- */
@@ -1086,7 +1312,7 @@ function analysisRels(){
     add(resolveLog(["var/log/vmware/vmdird/vmdird.log"]));                                // IOC sweep + integrity
     add(resolveLog(["var/log/vmware/messages","var/log/messages"]));                      // IOC sweep
     add(resolveLog(["var/log/audit/sso-events/audit_events.log"]));                       // parseSsoAudit
-    add(resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"));                        // parseActions/sessions/host chain
+    addAll(vpxdSelectedRels());                                                           // parseActions/sessions/host chain (full rotation set, v1.15.0)
     var rots=auditRotations(); if(rots.length){ if(DEEPROT) addAll(rots); else add(rots[rots.length-1]); }   // parseAuditd
     add(envoyFrontLog());                                                                 // parseEnvoy (web access)
     addAll(["etc/hosts","etc/rsyslog.conf","etc/crontab","etc/ntp.conf","etc/resolv.conf",
@@ -1204,11 +1430,11 @@ function idracIp(){
    `_Task` is accepted but never required. */
 var VMEV=[], VMEV_SRC="", VMEV_KINDS=["create","delete","modify","start","stop","reboot","snapshot","migrate","other"];
 var VM_NAME_RE=/\[vim\.VirtualMachine:(vm-\d+),([^\]]{1,80})\]/g;   // hoisted: never rebuild a regex inside a 200k-line loop
-/* Was this log CAPPED by the read limit? logLines() reads only the FIRST LOGCAP bytes (48 MB, or 8 MB
+/* Was this log CAPPED by the read limit? logLines() reads head+tail halves of LOGCAP (48 MB, or 8 MB
    when FILE_IO falls back to "fso" on a network/redirected path) and records the fact in LOG_TRUNC.
-   That matters enormously here: the cap keeps the OLDEST bytes, so a capped vpxd log silently drops the
-   NEWEST activity - on the reference bundle an 8 MB read would lose 92% of VM events and everything
-   after 13:33. "No events" and "events past the cap" are different claims, so the panel must say which. */
+   Since v1.15.0 the cap keeps BOTH ends (a head-only read kept the OLDEST bytes and silently dropped
+   the newest activity - usually the incident window), but the MIDDLE of a capped log is still unread.
+   "No events" and "events in the unread gap" are different claims, so the panel must say which. */
 function logWasCapped(rel){ var b=lc(baseName(rel||"")); if(!b) return "";
   for(var i=0;i<LOG_TRUNC.length;i++) if(lc(LOG_TRUNC[i]).indexOf(b)===0) return LOG_TRUNC[i];
   return ""; }
@@ -1253,9 +1479,9 @@ function esxiObjIdMap(){
 function parseVmEvents(){
   VMEV=[]; VMEV_SRC=""; var i, m;
   if(BTYPE==="vcsa"){
-    var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel) return;
-    VMEV_SRC=rel;
-    var lines=logLinesRot(rel,false), names={};
+    var lines=vpxdLines(); if(!lines.length) return;
+    VMEV_SRC=VPXD_SRCNOTE||"vpxd";
+    var names={};
     /* Name fallback ONLY if parseVms did not already share a map. parseVcsaVms scans THIS SAME log with
        THIS SAME regex and additionally cracks the vSAN-health baseline, so VM_MOREF_NAME is a superset -
        running the scan again is pure duplicated work. When it IS needed, prefilter with indexOf and use
@@ -1269,14 +1495,16 @@ function parseVmEvents(){
         VM_NAME_RE.lastIndex=0;
         while((m=VM_NAME_RE.exec(ln))) if(!names[m[1]]) names[m[1]]=trimStr(m[2]); }
     }
+    var sMap=sessUserMap();   // same attribution rules as Actions: session ID first, capped time-proximity second
     for(i=0;i<lines.length;i++){ var l2=lines[i];
       if(l2.indexOf("[VpxLRO] -- BEGIN")<0) continue;
       m=l2.match(/^(\S+Z).*opID=(\S+?)\].*\[VpxLRO\] -- BEGIN \S+ -- (vm-\d+) -- (\S+)/);
       if(!m) continue;
       var c=vmEvClassify(m[4]); if(!c) continue;                       // read-only calls (queryChangedDiskAreas, acquireTicket) are not events
-      var who=nearestBefore(VPXD_HUMANS,toEpoch(m[1]));   // same attribution rule as Actions: nearest preceding HUMAN SAML login (approximate)
+      var sid=lineSessId(l2);
+      var who=(sid && sMap[sid]) ? sMap[sid] : nearestBefore(VPXD_HUMANS,toEpoch(m[1]));
       var vnm=VM_MOREF_NAME[m[3]]||names[m[3]]||m[3];   // parseVms runs first and resolves far more names than this pass can
-      VMEV.push(mkVmEv(toEpoch(m[1]),m[1],vnm,c.kind,c.what,m[4],who,m[2],baseName(rel)));
+      VMEV.push(mkVmEv(toEpoch(m[1]),m[1],vnm,c.kind,c.what,m[4],who,m[2],VMEV_SRC));
     }
   } else if(BTYPE==="esxi"){
     var hrel=resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]); if(!hrel) return;
@@ -1353,11 +1581,12 @@ function parseMaint(){
       else if(/Patch vCSA failed|patching failed/i.test(p)) MAINT.push(mkMaint(toEpoch(pts),pts,"update","Appliance patch FAILED",trunc(p,150),baseName(pr)));
     }
     /* vpxd records its own last start in every log header - the closest thing a vc-support bundle
-       has to a reboot marker (the service restarts on boot and on a patch). */
-    var vrel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
-    if(vrel){ var vl=logLines(vrel), seen={};
-      for(i=0;i<vl.length && i<400;i++){ m=vl[i].match(/time the service was last started (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/);
-        if(m && !seen[m[1]]){ seen[m[1]]=1; MAINT.push(mkMaint(toEpoch(m[1]),m[1],"service","vpxd service started","the vCenter service restarted - on a reboot, a patch, or a manual restart",baseName(vrel))); } } }
+       has to a reboot marker (the service restarts on boot and on a patch). The whole selected
+       rotation set is scanned (each file carries its own header), not just the first file's head. */
+    var vl=vpxdLines(), seen={};
+    for(i=0;i<vl.length;i++){ if(vl[i].indexOf("time the service was last started")<0) continue;
+      m=vl[i].match(/time the service was last started (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/);
+      if(m && !seen[m[1]]){ seen[m[1]]=1; MAINT.push(mkMaint(toEpoch(m[1]),m[1],"service","vpxd service started","the vCenter service restarted - on a reboot, a patch, or a manual restart",VPXD_SRCNOTE||"vpxd")); } }
   }
   /* the derived boot time is itself an event, and on vCenter it is often the ONLY boot evidence */
   if(NODE.bootedEpoch){
@@ -1531,17 +1760,29 @@ function readCappedText(path, cap){ try{
 }
 /* return lines of a catalog log; decompress .gz/.zst on demand; cap huge logs */
 var LOG_TRUNC=[];
-function logLines(rel, capOverride){
+function logLines(rel, capOverride, noCache){
   if(!rel){ return []; }
+  var ck=rel+"|"+(capOverride||0);
+  if(!noCache){ var hit=LOGCACHE[ck]; if(hit){ appendLog("  log "+rel+" -> "+nf(hit.length)+" lines (cached this run)"); return hit; } }
   var src=ensureExtracted(rel);
   if(!src){ appendLog("  log "+rel+" -> NOT extracted/found"); return []; }
   if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v){ appendLog("  log "+rel+" -> decompress failed"); return []; } src=v; }
   var sz=fileSize(src), txt;
   var cap = capOverride || ((FILE_IO==="fso") ? 8388608 : LOGCAP);   // ANSI-fallback (network/redirected) reads are slow - cap harder to avoid the "stop script" dialog
-  if(sz>cap){ txt=readCappedText(src, Math.floor(cap)); LOG_TRUNC.push(baseName(rel)+" ("+fmtSize(sz)+", read first "+fmtSize(cap)+")"); }
+  if(sz>cap){
+    /* head+tail, not head-only: these are append-only logs, so a head-only read keeps the OLDEST
+       bytes and silently drops the newest activity - usually the incident window. Both ends are kept;
+       the gap is disclosed inline and in the truncation summary. */
+    var half=Math.floor(cap/2);
+    txt=readCappedText(src, half)
+      +"\n#### TRUNCATED: "+fmtSize(sz-cap)+" in the middle of this log was not read (head+tail of a "+fmtSize(sz)+" file) ####\n"
+      +readTailText(src, half);
+    LOG_TRUNC.push(baseName(rel)+" ("+fmtSize(sz)+", read first+last "+fmtSize(half)+")");
+  }
   else { try{ txt=readUtf8(src); }catch(e){ appendLog("  log "+rel+" -> read error: "+e.message); return []; } }
   var a=String(txt).split("\n"); for(var i=0;i<a.length;i++){ if(a[i].charAt(a[i].length-1)==="\r") a[i]=a[i].substring(0,a[i].length-1); }
   appendLog("  log "+rel+" -> "+nf(a.length)+" lines");
+  if(!noCache && sz>=0 && (LOGCACHE_BYTES+sz)<=LOGCACHE_MAX){ LOGCACHE[ck]=a; LOGCACHE_BYTES+=sz; }   // over budget: just read again next time
   return a;
 }
 /* ---------- rotation-aware log reading ----------
@@ -1581,14 +1822,68 @@ function readTailText(path, cap){
     var t=""; try{ t=f.ReadAll(); }catch(e3){ t=""; } f.Close(); return t;
   }catch(e){ return ""; }
 }
+/* ---------- vpxd log set (v1.15.0) ----------
+   vpxd is THE vCenter audit trail, and it was read as "the single largest vpxd-N.log": vpxd.log and
+   every .gz/.zst rotation were ignored, and picking by SIZE is not picking by RECENCY. Now the whole
+   rotation family is enumerated, ordered chronologically (vpxd-N sequence numbers increment over time;
+   the un-numbered live vpxd.log is newest), and the newest files are read within a byte budget -
+   everything skipped is disclosed. One merged, chronological line set is cached per run because four
+   separate passes (actions / VM events / maintenance / fleet correlation) each re-read it before. */
+var VPXD_KEEP=4, VPXD_KEEP_DEEP=12, VPXD_OLDCAP=16*1024*1024;
+function vpxdAllRels(){
+  var pre="var/log/vmware/vpxd/", re=/^vpxd(?:-(\d+))?\.log(\.gz|\.zst)?$/i, list=[], i, m;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ var rel=TOC[i].rel; if(rel.indexOf(pre)!==0) continue;
+      if(rel.indexOf("/",pre.length)>=0) continue;                       // direct children only
+      m=baseName(rel).match(re); if(!m) continue;
+      list.push({rel:rel, n:(m[1]?parseInt(m[1],10):1e9)}); } }
+  else { var names=listUnder(pre, re);
+    for(i=0;i<names.length;i++){ m=names[i].match(re); if(!m) continue;
+      list.push({rel:pre+names[i], n:(m[1]?parseInt(m[1],10):1e9)}); } }
+  list.sort(function(a,b){ return a.n-b.n; });                           // ascending sequence = chronological
+  var out=[]; for(i=0;i<list.length;i++) out.push(list[i].rel);
+  return out;
+}
+function vpxdSelectedRels(){
+  var all=vpxdAllRels(), keep=DEEPROT?VPXD_KEEP_DEEP:VPXD_KEEP;
+  return all.length>keep ? all.slice(all.length-keep) : all;             // newest K, chronological order kept
+}
+function vpxdNewestRel(){ var s=vpxdSelectedRels(); return s.length?s[s.length-1]:""; }
+function vpxdLines(){
+  if(VPXD_LINES) return VPXD_LINES;
+  var all=vpxdAllRels(), sel=vpxdSelectedRels(), out=[], names=[], i, j;
+  for(i=0;i<sel.length;i++){
+    /* noCache: these lines are retained MERGED in VPXD_LINES - caching the per-file arrays too would
+       hold every vpxd line in memory twice */
+    var a=logLines(sel[i], (i===sel.length-1)?0:VPXD_OLDCAP, true);      // newest file gets the full LOGCAP
+    for(j=0;j<a.length;j++) out.push(a[j]);
+    names.push(baseName(sel[i]));
+  }
+  VPXD_SRCNOTE = names.length>1 ? (names[0]+" … "+names[names.length-1]+" ("+names.length+" files)") : (names[0]||"");
+  if(all.length>sel.length){
+    var note="vpxd: "+(all.length-sel.length)+" older rotation(s) not read (newest "+sel.length+" of "+all.length+(DEEPROT?"":"; tick 'incl. rotated logs' for more")+")";
+    LOG_TRUNC.push(note); appendLog("  "+note);
+  }
+  if(names.length) appendLog("  vpxd set: "+names.join(", ")+" -> "+nf(out.length)+" lines (chronological)");
+  VPXD_LINES=out;
+  return out;
+}
 /* read a (possibly .gz) config member as text (e.g. hostd/dvportgroups.xml.gz) */
 function readMemberGz(rel){
   var src=ensureExtracted(rel); if(!src) return "";
   if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v) return ""; src=v; }
   try{ return readUtf8(src); }catch(e){ return ""; }
 }
-function toEpoch(iso){ var m=String(iso).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/); if(!m) return 0;
-  return Math.floor(Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6])/1000); }
+/* offset-aware (v1.15.0): "2025-06-25T19:00:00+10:00" is 09:00Z, not 19:00Z. vpxd stamps are Z, but
+   the appliance auth.log / auditd lines can carry a local +hh:mm offset - treating those as UTC skewed
+   them against every Z-stamped event in the merged timeline. No offset still means UTC (vpxd behaviour). */
+function toEpoch(iso){ var m=String(iso).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/); if(!m) return 0;
+  var ep=Math.floor(Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6])/1000);
+  var o=m[7];
+  if(o && o!=="Z"){ var om=o.match(/([+-])(\d{2}):?(\d{2})/);
+    if(om){ var s=(+om[2])*3600+(+om[3])*60; ep += (om[1]==="-" ? s : -s); } }
+  return ep; }
+function isoNowUtc(){ var d=new Date(); function p(x){return (x<10?"0":"")+x;}
+  return d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate())+"T"+p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds())+"Z"; }
 function isoShort(iso){ var m=String(iso).match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/); return m?(m[1]+" "+m[2]):String(iso); }
 function epDay(ep){ if(!ep) return 0; var d=new Date(ep*1000); function p(x){return x<10?("0"+x):x;} return Number(d.getUTCFullYear()+""+p(d.getUTCMonth()+1)+p(d.getUTCDate())); }
 function dayNum(s){ var m=String(s).match(/(\d{4})-(\d{1,2})-(\d{1,2})/); if(!m) return 0; function p(x){x=String(x);return x.length<2?("0"+x):x;} return Number(m[1]+p(m[2])+p(m[3])); }
@@ -1596,7 +1891,45 @@ function inWin(ep){ if(!(DFROM||DTO)) return true; var d=epDay(ep); if(DFROM&&d<
 
 /* IOC list (shared toolkit IOC.txt, family) */
 function parseTerms(t){ var p=String(t).split(/[\r\n,;]+/), o=[]; for(var i=0;i<p.length;i++){ var s=trimStr(p[i]).toLowerCase(); if(s&&s.charAt(0)!=="#") o.push(s); } return o; }
-function loadToolkitIoc(){ try{ var base=htaFolder(); if(!base) return; var p=base+"\\IOC.txt"; if(!fileExists(p)) return; IOCS=parseTerms(readUtf8(p)); if(IOCS.length) appendLog("Loaded "+IOCS.length+" IOC term(s) from "+p); }catch(e){} }
+/* ---- typed, boundary-aware IOC matching (v1.15.0) ----
+   Everything used to be a case-insensitive substring, so IOC 10.1.2.3 hit 10.1.2.34 and 110.1.2.3.
+   IOC.csv already carries a Type column that the sweep then threw away; it is now honoured, ips /
+   hashes / domains get boundary-anchored regexes, and untyped (IOC.txt) terms are type-inferred by
+   shape. filename / path / keyword remain substring - that is what those types mean. IOC.txt (the
+   family wire format) is unchanged; only the MATCHING got stricter. */
+var IOC_M=[];   // aligned matchers: {v, t, re|null} - null re means substring
+function iocRegexEsc(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); }
+function iocInferType(v){
+  if(iocIsIpv4(v)) return "ip";
+  if(/^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$/i.test(v)) return "hash";
+  if(/[a-z]/i.test(v) && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) return "domain";
+  return "keyword";
+}
+function iocCompile(v,t){
+  var e=iocRegexEsc(v);
+  try{
+    if(t==="ip")     return new RegExp("(^|[^0-9.])"+e+"([^0-9.]|$)");
+    if(t==="hash")   return new RegExp("(^|[^0-9a-f])"+e+"([^0-9a-f]|$)");
+    if(t==="domain") return new RegExp("(^|[^a-z0-9-])"+e+"([^a-z0-9.-]|$)");   // left allows subdomain dot; right stops evil.com hitting evil.com.au
+  }catch(eR){}
+  return null;
+}
+function iocBuildMatchers(rows){   // rows: [{v,t}]
+  IOC_M=[]; IOCS=[]; var seen={};
+  for(var i=0;i<rows.length;i++){ var v=lc(trimStr(rows[i].v)); if(!v||seen[v]) continue; seen[v]=1;
+    var t=(rows[i].t && rows[i].t!=="keyword") ? rows[i].t : iocInferType(v);
+    IOCS.push(v); IOC_M.push({v:v, t:t, re:iocCompile(v,t)}); }
+}
+function iocMatchLine(low){ for(var i=0;i<IOC_M.length;i++){ var m=IOC_M[i]; if(m.re ? m.re.test(low) : (low.indexOf(m.v)>=0)) return m; } return null; }
+function loadToolkitIoc(){
+  try{
+    var base=htaFolder(); if(!base) return;
+    var rows=[], src="";
+    if(fileExists(base+"\\IOC.csv")){ var arr=iocLoadCsv(); for(var i=0;i<arr.length;i++) rows.push({v:arr[i].v, t:arr[i].t}); src="IOC.csv (typed)"; }
+    else if(fileExists(base+"\\IOC.txt")){ var terms=parseTerms(readUtf8(base+"\\IOC.txt")); for(var j=0;j<terms.length;j++) rows.push({v:terms[j], t:"keyword"}); src="IOC.txt"; }
+    if(rows.length){ iocBuildMatchers(rows); appendLog("Loaded "+IOCS.length+" IOC term(s) from "+src+" - boundary-aware matching for ip/hash/domain terms."); }
+  }catch(e){}
+}
 
 /* ---------- IOC list editor: IOC.csv (editable source) -> IOC.txt (wire format the sweep reads) ----------
    Ported from the DFIR Windows Artifact Finder so the whole family shares one IOC list. IOC.csv holds
@@ -1720,13 +2053,21 @@ function iocOpenNotepad(){
   try{ new ActiveXObject("WScript.Shell").Run('notepad.exe "'+p+'"',1,false); }
   catch(e){ setStatus("Could not open Notepad: "+e.message,"err"); }
 }
-function iocHit(blob){ for(var i=0;i<IOCS.length;i++){ if(blob.indexOf(IOCS[i])>=0) return IOCS[i]; } return ""; }
+function iocHit(blob){ var m=iocMatchLine(lc(blob)); return m?m.v:""; }
 
 /* scoring helpers */
-function ipIsLocal(ip){ ip=String(ip||""); if(ip===""||ip==="*"||ip==="::"||ip==="0.0.0.0"||ip==="127.0.0.1") return true;
-  if(/^127\./.test(ip)||/^10\./.test(ip)||/^192\.168\./.test(ip)||/^169\.254\./.test(ip)) return true;
-  if(/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
-  var l=ip.toLowerCase(); if(l==="::1"||l.indexOf("fe80")===0) return true; if(l.charAt(0)==="f"&&(l.charAt(1)==="c"||l.charAt(1)==="d")) return true;
+/* v1.15.0: IPv4-mapped IPv6 (::ffff:a.b.c.d) is unwrapped before classification, and CGNAT
+   100.64.0.0/10 counts as non-external - it is not internet-routable, and calling it "public" makes
+   the external-logon indicator cry wolf on carrier-grade NAT and some SD-WAN estates. */
+function ipIsLocal(ip){ ip=String(ip||""); if(ip===""||ip==="*") return true;
+  var l=ip.toLowerCase().replace(/^\[|\]$/g,"");
+  var mm=l.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); if(mm) l=mm[1];
+  if(l==="::"||l==="::1"||l==="0.0.0.0") return true;
+  if(/^127\./.test(l)||/^10\./.test(l)||/^192\.168\./.test(l)||/^169\.254\./.test(l)) return true;
+  if(/^172\.(1[6-9]|2\d|3[01])\./.test(l)) return true;
+  if(/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(l)) return true;   // CGNAT 100.64.0.0/10
+  if(l.indexOf("fe80")===0) return true;
+  if(l.charAt(0)==="f"&&(l.charAt(1)==="c"||l.charAt(1)==="d")) return true;   // fc00::/7 ULA
   return false; }
 /* loopback-only address (127.0.0.0/8 or IPv6 ::1, incl. the ::ffff:127.x IPv4-mapped form) - not reachable off-host */
 function isLoopback(ip){ ip=String(ip||""); return /^127\./.test(ip)||ip==="::1"||/^::ffff:127\./i.test(ip); }
@@ -2043,7 +2384,7 @@ function parseActions(){
       ep=toEpoch(m[1]); ACTIONS.push(mkAct(ep,m[1],m[3],m[4],"shell.log","shell command")); }
     parseVobd(); parseEsxupdate();
   } else if(BTYPE==="vcsa"){
-    var vp=logLines(resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"));
+    var vp=vpxdLines();
     // pass 1: vpxd SAML logins -> human-login timeline (for task attribution) + Logons (deduped, humans only)
     var humans=[], lastPush={};
     for(i=0;i<vp.length;i++){ if(vp[i].indexOf("Login token:")<0) continue;   // cheap prefilter before the heavy regex
@@ -2052,15 +2393,21 @@ function parseActions(){
       var usr=trimStr(lm[2])+"@"+trimStr(lm[3]), lep=toEpoch(lm[1]); humans.push({ep:lep,user:usr});
       if(!lastPush[lc(usr)] || (lep-lastPush[lc(usr)])>60){ var lg=mkLogon(lep,lm[1],"OK",usr,"","vpxd/SAML","vpxd.log"); scoreLogon(lg); LOGON.push(lg); lastPush[lc(usr)]=lep; } }
     humans.sort(function(a,b){ return a.ep-b.ep; });
-    VPXD_HUMANS=humans;   // shared: parseVmEvents attributes VM events with the same nearest-preceding-login rule
-    // pass 2: meaningful tasks, attributed to the nearest-preceding human login (approximate)
+    VPXD_HUMANS=humans;   // shared: parseVmEvents attributes VM events with the same rules
+    // pass 2 (was pass 3): SessionManager login/logout LROs FIRST - the pairing yields the
+    // session-GUID -> user map that task attribution correlates on (exact beats time-proximity)
+    sessFromVpxd(vp);
+    var sMap=sessUserMap();
+    // pass 3: meaningful tasks - attributed by session ID where the line carries one, else by
+    // nearest-preceding human login within ATTR_MAXGAP, else reported unknown
     for(i=0;i<vp.length;i++){ if(vp[i].indexOf("[VpxLRO] -- BEGIN")<0) continue;   // cheap prefilter before the heavy regex
       m=vp[i].match(/^(\S+Z).*opID=(\S+)\].*\[VpxLRO\] -- BEGIN (?:lro-\d+|task-\d+)(?:\s+--\s+session\[[^\]]*\]\S*)?\s+--\s+(?:\S+\s+--\s+)?(vim\.\S+)\s+--/);
       if(!m) continue; var method=m[3]; if(!ACT_METHOD.test(method)) continue;
-      ep=toEpoch(m[1]); var who=nearestBefore(humans,ep);
-      ACTIONS.push(mkAct(ep,m[1],who||"vpxd",method,"vpxd.log", who?"vpxd task (user approx)":"vpxd task")); }
-    // pass 3: SessionManager login/logout LROs -> paired Login Sessions view (IP joined later from envoy)
-    sessFromVpxd(vp);
+      ep=toEpoch(m[1]);
+      var sid=lineSessId(vp[i]), who="", how="";
+      if(sid && sMap[sid]){ who=sMap[sid]; how="vpxd task (session-matched)"; }
+      else { who=nearestBefore(humans,ep); how=who?"vpxd task (user approx)":"vpxd task"; }
+      ACTIONS.push(mkAct(ep,m[1],who||"vpxd",method,"vpxd.log",how)); }
     // appliance sudo commands
     var val=logLinesRot(resolveLog(["var/log/auth.log"]));
     for(i=0;i<val.length;i++){ m=val[i].match(/^(\S+[\+Z][\d:]*).*\bsudo:\s+(\S+)\s*:\s+.*COMMAND=(.+)$/); if(!m) continue;
@@ -2320,7 +2667,20 @@ function parseRhttp(){
    destroy is matched only on VirtualMachine/ManagedEntity/Folder. Read-only calls (queryChangedDiskAreas,
    acquireTicket, retrieveContent...) are simply absent from the list. */
 var ACT_METHOD=/(_Task\b|SessionManager\.(login|logout|loginBy)|setEntityPermissions|resetEntityPermissions|removeEntityPermissions|AddAuthorizationRole|UpdateAuthorizationRole|RemoveAuthorizationRole|CreateUser|DeleteUser|UpdateUser|AddGroup|ServiceSystem\.(start|restart|updatePolicy)|FirewallSystem\.(disableRuleset|updateDefaultPolicy)|deleteDirectory|deleteFile|deleteDatastoreFile|deleteVirtualDisk|(VirtualMachine|ManagedEntity|Folder)\.destroy\b|VirtualMachine\.(unregister(VM)?|powerOn|powerOff|reset|suspend|shutdownGuest|rebootGuest|standbyGuest|reconfigure|relocate|migrate|clone|createSnapshot(Ex)?|removeSnapshot|removeAllSnapshots|revertToSnapshot|consolidateVMDisks|markAsTemplate|markAsVirtualMachine|createVM|createChildVM|registerVM)\b|ManagedEntity\.rename\b)/i;
-function nearestBefore(arr,ep){ var best=""; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep) best=arr[i].user; else break; } return best; }
+/* nearest preceding human login, CAPPED: an unbounded rule attributed a task to whoever logged in
+   hours earlier. Beyond ATTR_MAXGAP the actor is reported unknown instead of guessed. Session-ID
+   correlation (sessUserMap) is tried FIRST by the callers; this is only the disclosed fallback. */
+var ATTR_MAXGAP=12*3600;
+function nearestBefore(arr,ep){ var best="",bep=0; for(var i=0;i<arr.length;i++){ if(arr[i].ep<=ep){ best=arr[i].user; bep=arr[i].ep; } else break; }
+  if(best && (ep-bep)>ATTR_MAXGAP) return "";
+  return best; }
+/* vpxd session GUID -> authenticated user, built from the SessionManager pairing (sessFromVpxd).
+   A task line carrying session[<guid>] can then be attributed EXACTLY, not by time proximity. */
+function sessUserMap(){
+  var map={}; for(var i=0;i<SESSIONS.length;i++){ var s=SESSIONS[i]; if(s.sess && s.user && !s.sol && s.src==="vpxd.log") map[s.sess]=s.user; }
+  return map;
+}
+function lineSessId(ln){ var m=String(ln).match(/session\[([0-9a-f][0-9a-f-]{7,})/i); return m?m[1]:""; }
 function mkAct(ep,ts,actor,cmd,src,kind){ return {kind:"action",epoch:ep,when:isoShort(ts),actor:actor,cmd:cmd,src:src,akind:kind,score:0,tags:[],reasons:[],blob:lc(actor+" "+cmd+" "+src)}; }
 function scoreAction(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob);
   if(h){ r.score+=3; r.tags.push("IOC"); r.reasons.push("IOC/keyword: "+h); }
@@ -2359,8 +2719,8 @@ function sweepIocs(){
     ? [["var/log/auth.log"],["var/log/vmware/sso/websso.log"],["var/log/vmware/sso/tokenservice.log"],["var/log/vmware/vmdird/vmdird.log"],["var/log/vmware/messages","var/log/messages"]]
     : [["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"],["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]];
   for(var j=0;j<logs.length;j++){ var rel=resolveLog(logs[j]); if(!rel) continue; var lines=logLines(rel);
-    for(var L=0;L<lines.length;L++){ var low=lc(lines[L]); for(var k=0;k<IOCS.length;k++){ if(low.indexOf(IOCS[k])>=0){
-      IOCHITS.push({file:baseName(rel),line:(L+1),ioc:IOCS[k],excerpt:trimStr(trunc(lines[L],300)),blob:low}); if(IOCHITS.length>8000) return; break; } } }
+    for(var L=0;L<lines.length;L++){ var low=lc(lines[L]); var mt=iocMatchLine(low);
+      if(mt){ IOCHITS.push({file:baseName(rel),line:(L+1),ioc:mt.v,ioctype:mt.t,excerpt:trimStr(trunc(lines[L],300)),blob:low}); if(IOCHITS.length>8000) return; } }
   }
 }
 var ANALYSIS_ERRS=[];
@@ -2369,7 +2729,7 @@ function safeStep(name, fn){ try{ fn(); }catch(e){ ANALYSIS_ERRS.push(name); app
 function runAnalysis(){
   if(!BTYPE){ setStatus("Detect a bundle first.","err"); return; }
   if(BUSY){ setStatus("Busy - wait for the current run.","err"); return; }
-  BUSY=true; $("anBtn").disabled=true; LOG_TRUNC=[]; ANALYSIS_ERRS=[];
+  BUSY=true; $("anBtn").disabled=true; LOG_TRUNC=[]; ANALYSIS_ERRS=[]; logCacheClear(); VPXD_LINES=null;
   appendLog("=== log analysis: "+typeLabel()+" bundle, mode="+MODE+" ===");
   $("anStatus").innerHTML="Parsing logs (decompressing on demand)…"; setStatus("Parsing logs…","muted");
   window.setTimeout(function(){
@@ -2381,13 +2741,14 @@ function runAnalysis(){
       safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity);
       safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); ANALYZED=true;
       safeStep("nvd", nvdStart);   // async: paints from cve.json now, repaints when NVD answers (or explains why it could not)
-      writeAnalysisOutputs();
+      writeAnalysisOutputs(); amendRunInfo();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
       var warn=ANALYSIS_ERRS.length?("  ("+ANALYSIS_ERRS.length+" stage(s) failed: "+ANALYSIS_ERRS.join(", ")+" - see Show log)"):"";
       $("anStatus").innerHTML=msg+warn+(LOG_TRUNC.length?("  (capped: "+LOG_TRUNC.join("; ")+")"):"");
       setStatus((ANALYSIS_ERRS.length?"Log analysis finished with "+ANALYSIS_ERRS.length+" partial failure(s) - ":"Log analysis complete - ")+msg, ANALYSIS_ERRS.length?"err":"ok"); renderAnStats();
       BUSY=false; $("anBtn").disabled=false;
       if(TAB==="overview") renderOverview(); else if(TAB!=="inv") render();   // Overview depends on analysis output (stats / maintenance / CVE) - it must repaint too
+      logCacheClear(); VPXD_LINES=null;   // every consumer has run - release the cached line sets (can be 100+ MB)
     }catch(e2){ BUSY=false; $("anBtn").disabled=false; setStatus("Analysis phase failed: "+e2.message,"err"); } }, 30);
   }, 30);
 }
@@ -2593,8 +2954,9 @@ function cve(id,vmsa,title,verdict,basis){ return {id:id,vmsa:vmsa,title:title,v
 var CVEDATA=null, CVEDATA_ERR="", CVE_INDEX_URL="https://www.broadcom.com/support/vmware-security-advisories";
 /* first line of the rotated vpxd log, for the version header - cheap: one small read, no full parse */
 function firstLineOfVpxd(){
-  var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel) return "";
+  var rel=vpxdNewestRel(); if(!rel) return "";
   var src=ensureExtracted(rel); if(!src) return "";
+  if(/\.(gz|zst)$/i.test(src)){ var v=viewablePath(src); if(!v) return ""; src=v; }
   try{ return readCappedText(src, 400); }catch(e){ return ""; }
 }
 function cveDataPath(){ return (htaFolder()||".")+"\\cve.json"; }
@@ -2686,9 +3048,12 @@ var NVD_REQ=[];   // async XMLHTTP objects MUST stay referenced. As locals they 
                   // 35-second callback fires, and the reply is silently lost - the classic MSXML async bug.
 var NVD={state:"idle", err:"", url:"", when:"", n:0, added:0, corroborated:0, conflicted:0};
 function prefsFile(){ var d=htaFolder(); return d?(d+"\\"+SELF_HTA+".prefs.txt"):""; }
-function savePrefs(){ var p=prefsFile(); if(!p) return; try{ writeUtf8(p,"nvd="+(NVD_ON?"1":"0")); }catch(e){} }
+function savePrefs(){ var p=prefsFile(); if(!p) return; try{ writeUtf8(p,"nvd="+(NVD_ON?"1":"0")+"\r\nnet="+(NET_ON?"1":"0")); }catch(e){} }
 function loadPrefs(){ var p=prefsFile(); if(!p||!fileExists(p)) return;
-  try{ var m=(readUtf8(p)||"").match(/nvd\s*=\s*([01])/); if(m) NVD_ON=(m[1]==="1"); }catch(e){} }
+  try{ var t=readUtf8(p)||"";
+    var m=t.match(/nvd\s*=\s*([01])/); if(m) NVD_ON=(m[1]==="1");
+    var n=t.match(/net\s*=\s*([01])/); if(n) NET_ON=(n[1]==="1");
+  }catch(e){} }
 /* host version line ("7.0") and update level (3), from whichever field the platform gave us */
 function nodeLine(){ var m=String(NODE.version||"").match(/^(\d+)\.(\d+)/); return m?(m[1]+"."+m[2]):""; }
 function nodeUpdate(){ var u=parseInt(NODE.update||"",10); if(!isNaN(u)) return u;
@@ -2730,14 +3095,38 @@ function nvdApplies(v, line){
   if(hasBlock && defUnaff) return false;                 // vendor says our line is not affected
   return nvdCpeMentions(v, line);                        // no vendor block: fall back to NVD's CPE list
 }
+/* CPE fallback, FIXED in v1.15.0: the old check tested nvdProdRe() against a hard-coded label -
+   tautologically true - and then substring-matched ":<line>:" anywhere in the criteria string, so ANY
+   VMware product on the same version line (Cloud Foundation 8.0, Workstation...) passed as this host.
+   Now the CPE is parsed and part/vendor/product must actually be this host's product; the version
+   field (or the entry's version range) must cover this host's major.minor line. */
+function nvdCpeParse(c){   // cpe:2.3:<part>:<vendor>:<product>:<version>:...
+  var p=String(c).split(":"); if(p.length<6 || lc(p[0])!=="cpe") return null;
+  return { part:lc(p[2]), vendor:lc(p[3]), product:lc(p[4]), version:lc(p[5]) };
+}
+function verNum(s){ var m=String(s).match(/^(\d+)(?:\.(\d+))?/); return m ? ((+m[1])*1000 + (+(m[2]||0))) : -1; }
+/* range check at major.minor granularity. A bound whose major.minor EQUALS the line counts as
+   in-range regardless of inclusive/exclusive - the line intersects the range and this is a
+   "mentions" (review) signal, so the conservative direction is to surface it. */
+function lineInRange(line, s, e){
+  var v=verNum(line); if(v<0 || (!s && !e)) return false;
+  if(s){ var sv=verNum(s); if(sv<0 || v<sv) return false; }
+  if(e){ var ev=verNum(e); if(ev<0 || v>ev) return false; }
+  return true;
+}
 function nvdCpeMentions(v, line){
+  var want=(BTYPE==="vcsa")?"vcenter_server":"esxi";
   var cfg=v.configurations||[], i, j, k;
   for(i=0;i<cfg.length;i++){ var nd=cfg[i].nodes||[];
     for(j=0;j<nd.length;j++){ var cm=nd[j].cpeMatch||[];
-      for(k=0;k<cm.length;k++){ if(!cm[k].vulnerable) continue;
-        var c=String(cm[k].criteria||"");
-        if(!nvdProdRe().test(BTYPE==="vcsa"?"vCenter Server":"ESXi")) return false;
-        if(c.indexOf(":"+line+":")>=0) return true; } } }
+      for(k=0;k<cm.length;k++){ var e=cm[k]; if(!e.vulnerable) continue;
+        var cp=nvdCpeParse(e.criteria); if(!cp) continue;
+        if(cp.vendor!=="vmware" && cp.vendor!=="broadcom") continue;
+        if(cp.product!==want) continue;
+        if(cp.version===line || cp.version.indexOf(line+".")===0) return true;   // exact line, or line.patch
+        if(cp.version==="*" || cp.version==="-"){
+          if(lineInRange(line, e.versionStartIncluding||e.versionStartExcluding||"", e.versionEndIncluding||e.versionEndExcluding||"")) return true; }
+      } } }
   return false;
 }
 function nvdProdRe(){ return (BTYPE==="vcsa") ? /^vcenter server$/i : /^esxi$/i; }
@@ -2786,6 +3175,11 @@ function nvdCveObj(id,title,verdict,basis,src,kev,sev,url){
    the two queries overlap heavily, and re-merging a row would corroborate it twice and inflate the
    counts the provenance line reports. NVD.seen is the guard; settle() sets the final total. */
 function nvdMerge(j){
+  /* honour totalResults: without pagination a response can be a silent subset. Coverage gaps must be
+     disclosed, not discovered. (2000/page for the CNA query is far above VMware's real CVE count; if
+     this ever fires, the panel's log says exactly what was and was not covered.) */
+  try{ var tot=j.totalResults||0, si=j.startIndex||0, gotN=(j.vulnerabilities||[]).length;
+    if(tot>si+gotN) appendLog("NVD: WARNING - response truncated by paging: received "+(si+gotN)+" of "+tot+" records. CVE verdicts below cover only the received subset."); }catch(eT){}
   var host=buildNumOf(), line=nodeLine(), up=nodeUpdate();
   var rows=j.vulnerabilities||[], i, byId={};
   for(i=0;i<CVES.length;i++){ byId[lc(CVES[i].id)]=CVES[i]; if(!CVES[i].src) CVES[i].src="cve.json"; }
@@ -2844,15 +3238,21 @@ function nvdMerge(j){
     if(sa!==sb) return sa-sb;
     return a.id<b.id?1:-1; });
 }
+/* abort every in-flight NVD request (new run starting, or the user turned the feature off) */
+function nvdAbort(){
+  for(var i=0;i<NVD_REQ.length;i++){ try{ NVD_REQ[i].abort(); }catch(e){} }
+  NVD_REQ=[];
+}
 function nvdStart(){
   if(!BTYPE) return;
-  if(!NVD_ON){ NVD={state:"off", err:"", n:0, added:0, corroborated:0, conflicted:0}; renderCves(); return; }
+  if(!NVD_ON || !NET_ON){ NVD={state:"off", err:(NET_ON?"":"offline mode - network access is disabled"), n:0, added:0, corroborated:0, conflicted:0}; renderCves(); return; }
   var cpe=nvdCpe();
   if(!cpe){ NVD={state:"err", err:"the product version was not identified in this bundle, so NVD cannot be asked which CVEs apply to it", n:0}; renderCves(); return; }
   var urlA=NVD_API+"?virtualMatchString="+encodeURIComponent(cpe)+"&resultsPerPage=200", urlB=nvdSourceUrl();
   NVD={state:"busy", err:"", url:urlA, n:0, added:0, corroborated:0, conflicted:0, seen:{}}; renderCves();
   var settled=false, pending=2, got=0, failMsg="", timer=0;
-  NVD_REQ=[];   // drop the previous run's objects; hold this run's until it settles
+  var rid=RUNID;   // cross-run guard: a reply landing after another bundle was opened must not merge into it
+  nvdAbort();      // and any of the PREVIOUS run's requests still in flight are cancelled outright
   function paint(state, msg){ NVD.state=state; NVD.err=msg||""; if(msg) appendLog("NVD: "+msg); renderCves(); }
   /* Both queries feed the same merge. If ONE fails we still use the other and say coverage is partial -
      better than discarding good vendor data because the second request had a bad day. */
@@ -2873,9 +3273,11 @@ function nvdStart(){
       NVD_REQ.push(x);                                   // keep it alive across the round trip
       x.open("GET",url,true);
       try{ x.setRequestHeader("User-Agent",SELF_HTA+"/"+APP_VERSION); }catch(eh){}
-      /* No "already settled" guard on purpose: if the slow notice has fired, a late reply is still good
-         data and should upgrade the panel rather than be thrown away. */
+      /* No same-run "already settled" guard on purpose: if the slow notice has fired, a late reply is
+         still good data and should upgrade the panel. The rid check is different - it stops a reply
+         from a PREVIOUS bundle's run from merging CVEs into the bundle now on screen. */
       x.onreadystatechange=function(){ if(x.readyState!==4) return;
+        if(rid!==RUNID) return;   // stale run - a new analysis owns the globals now
         try{
           if(x.status!==200){ failMsg=label+" query returned HTTP "+x.status
             +(x.status===403?" - rate-limited. NVD allows 5 requests / 30s without an API key; wait a moment and re-check.":"")
@@ -2893,7 +3295,7 @@ function nvdStart(){
      "offline?" about a healthy connection is a lie the analyst then has to debug. The request keeps
      running; if it lands, finish() paints the real result over this. */
   timer=window.setTimeout(function(){
-    if(settled) return;
+    if(settled || rid!==RUNID) return;
     paint("slow","NVD has not answered within "+(NVD_TIMEOUT/1000)+"s. Its API is often slow (30s+ is normal at busy times) - the request is STILL RUNNING and this panel will update by itself if it lands. Until then the rows below are cve.json only.");
   }, NVD_TIMEOUT);
 }
@@ -3678,14 +4080,19 @@ function attachVmdkExtents(){
       want.push(rel); if(!map[rel]) map[rel]=[]; map[rel].push({vm:v, file:fn}); } }
   if(!want.length) return;
   var base=(MODE==="toc")?extractStripToTemp(want):"";
-  var got=0;
-  for(var r in map){ if(!map.hasOwnProperty(r)) continue;
-    var path=(MODE==="tree")?(ROOT+"\\"+winRel(r)):(base+"\\"+winRel(r));
-    var txt=""; try{ if(fileExists(path)) txt=readUtf8(path); }catch(e){}
-    if(!txt) txt=catMember(r);
-    var d=parseVmdkDesc(txt); if(!d) continue; got++;
-    for(i=0;i<map[r].length;i++){ var t=map[r][i]; t.vm.diskDetail.push({file:t.file, gb:(d.bytes/1073741824), sum:extentSummary(d)}); } }
-  if(got) appendLog("  VMs: parsed "+nf(got)+" vmdk descriptor(s) for disk extents");
+  try{
+    var got=0;
+    for(var r in map){ if(!map.hasOwnProperty(r)) continue;
+      var path=(MODE==="tree")?(ROOT+"\\"+winRel(r)):(base+"\\"+winRel(r));
+      var txt=""; try{ if(fileExists(path)) txt=readUtf8(path); }catch(e){}
+      if(!txt) txt=catMember(r);
+      var d=parseVmdkDesc(txt); if(!d) continue; got++;
+      for(i=0;i<map[r].length;i++){ var t=map[r][i]; t.vm.diskDetail.push({file:t.file, gb:(d.bytes/1073741824), sum:extentSummary(d)}); } }
+    if(got) appendLog("  VMs: parsed "+nf(got)+" vmdk descriptor(s) for disk extents");
+  } finally {
+    /* VM disk descriptors are case evidence - they must not linger in %TEMP% after the run */
+    if(base && !deleteTree(base)) appendLog("  WARNING: could not remove temp extraction dir "+base+" - VM descriptor copies remain there; delete it manually.");
+  }
 }
 
 /* ---------- vCenter (VCSA) VM inventory from logs ---------- */
@@ -3762,8 +4169,7 @@ function crackHashes(hashSets, dictArr){
    datastore /folder HTTP traffic. Labels are evidence-based - "possibly encrypted" only where a
    recovery/restore signal exists. */
 function parseVcsaVms(){
-  var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel && MODE==="tree") rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
-  var lines=rel?logLinesRot(rel,false):[], i, m;
+  var lines=vpxdLines(), i, m;
   var vmName={}, hostName={}, span={first:"",last:""};
   var folder={};   // vmx-base -> {gets,puts,files{},ds{},users{},firstGet,lastGet,putDs{},guid}
   /* vSAN GUID-path sources, best first:
@@ -3913,12 +4319,17 @@ function parseVms(){ VMS=[]; VCSA_VM_META=null;
   var run=runningVms(), got=0;
   if(rels.length){
     var base = (MODE==="toc") ? extractStripToTemp(rels) : "";
-    for(var i=0;i<rels.length;i++){ var rel=rels[i];
-      var path = MODE==="tree" ? (ROOT+"\\"+winRel(rel)) : (base+"\\"+winRel(rel));
-      var txt=""; try{ if(fileExists(path)) txt=readUtf8(path); }catch(e){}
-      if(!txt) txt=catMember(rel);                 // MAX_PATH / deep-path fallback via stdout
-      if(!txt) continue; got++; VMS.push(parseVmx(txt, rel, run)); }
-    appendLog("  VMs: parsed "+nf(got)+"/"+nf(rels.length));
+    try{
+      for(var i=0;i<rels.length;i++){ var rel=rels[i];
+        var path = MODE==="tree" ? (ROOT+"\\"+winRel(rel)) : (base+"\\"+winRel(rel));
+        var txt=""; try{ if(fileExists(path)) txt=readUtf8(path); }catch(e){}
+        if(!txt) txt=catMember(rel);                 // MAX_PATH / deep-path fallback via stdout
+        if(!txt) continue; got++; VMS.push(parseVmx(txt, rel, run)); }
+      appendLog("  VMs: parsed "+nf(got)+"/"+nf(rels.length));
+    } finally {
+      /* VM configurations are case evidence - they must not linger in %TEMP% after the run */
+      if(base && !deleteTree(base)) appendLog("  WARNING: could not remove temp extraction dir "+base+" - VM config copies remain there; delete it manually.");
+    }
   }
   /* ransomware fallback: VM folders whose .vmx is missing or renamed + renamed sibling files */
   try{ var extra=scanEsxiEncFolders(rels), e2;
@@ -4157,7 +4568,7 @@ function vmEvExport(){
   var sel=vmEvFiltered(); if(!sel.length){ setStatus("No VM events match the current filter - widen it to export.","err"); return; }
   var out=["VM,When_UTC,Type,Event,Method,Actor,Via,Log"];
   for(var i=0;i<sel.length;i++){ var e=sel[i];
-    out.push([cq(e.vm),cq(e.when),cq(e.kind),cq(e.what),cq(e.method),cq(e.actor),cq(e.via),cq(e.src)].join(",")); }
+    out.push([cqx(e.vm),cqx(e.when),cqx(e.kind),cqx(e.what),cqx(e.method),cqx(e.actor),cqx(e.via),cqx(e.src)].join(",")); }
   var p=LASTOUTDIR+"\\vm_events_"+nowStamp()+".csv";
   try{ ensureDir(LASTOUTDIR); writeUtf8(p,out.join("\r\n"));
     setStatus("Exported "+nf(sel.length)+(sel.length<VMEV.length?(" of "+nf(VMEV.length)+" (filtered)"):"")+" VM event(s) → "+p,"ok");
@@ -4253,7 +4664,7 @@ function vmsExport(){
     out.push("Name,GuestOS,vCPU,vRAM_MB,DiskCount,Disks,Host,Status");
     for(i=0;i<sel.length;i++){ v=sel[i];
       var st = v.enc ? ("possibly encrypted - "+v.enc) : (v.running ? (BTYPE==="esxi"?"running":"powered on") : (BTYPE==="esxi"?"registered":(v.status||"")));
-      out.push([cq(v.name),cq(v.os),cq(v.vcpu||""),cq(v.memMB||""),cq(v.ndisk),cq(v.disks.join("; ")),cq(vmHostOf(v)),cq(st)].join(",")); }
+      out.push([cqx(v.name),cqx(v.os),cqx(v.vcpu||""),cqx(v.memMB||""),cqx(v.ndisk),cqx(v.disks.join("; ")),cqx(vmHostOf(v)),cqx(st)].join(",")); }
   } else if(BTYPE==="vcsa"){
     /* mirrors the visible columns (VM | MoRef(s) | Host | vDisks | GUID Path | Status | Encrypted/restored);
        each column carries the detail its cell shows on hover (evidence sources, GUID-path provenance).
@@ -4261,14 +4672,14 @@ function vmsExport(){
        it holds the restore SOURCE datastore, which contradicts the (correct) vSAN GUID Path. */
     out.push("Name,MoRefs,BaselineMoRef,Host,vCPU,vRAM_MB,DiskCount,Disks,GUIDPath,GUIDPathSource,Status,EncryptedRestored,Evidence");
     for(i=0;i<sel.length;i++){ v=sel[i]; var srcs=[]; for(var s in v.src){ if(v.src.hasOwnProperty(s)) srcs.push(s); }
-      out.push([cq(v.name),cq(v.mo.join("; ")),cq(v.moBase),cq(v.host),cq(v.vcpu||""),cq(v.memMB||""),cq(v.ndisk),cq(v.disks.join("; ")),cq(v.guidPath),cq(v.guidSrc),cq(v.running?"powered on":v.status),cq(v.enc),cq(srcs.join("; "))].join(",")); }
+      out.push([cqx(v.name),cqx(v.mo.join("; ")),cqx(v.moBase),cqx(v.host),cqx(v.vcpu||""),cqx(v.memMB||""),cqx(v.ndisk),cqx(v.disks.join("; ")),cqx(v.guidPath),cqx(v.guidSrc),cqx(v.running?"powered on":v.status),cqx(v.enc),cqx(srcs.join("; "))].join(",")); }
   } else {
     var showIpX=false; for(i=0;i<VMS.length;i++) if(fleetGuestIp(VMS[i].name)){ showIpX=true; break; }   // Guest IP column is hidden unless a fleet vCenter supplied one - don't export a column the view doesn't show
     out.push("Name,GuestOS,"+(showIpX?"GuestIP,":"")+"vCPU,vRAM_MB,DiskCount,Disks,DiskExtents,Storage,VMPath,GUIDPath,Running,PossiblyEncrypted,ConfigPath");
     for(i=0;i<sel.length;i++){ v=sel[i]; var xt=[];
       if(v.diskDetail){ for(var d=0;d<v.diskDetail.length;d++){ var dd=v.diskDetail[d]; xt.push(dd.file+" ["+dd.gb.toFixed(1)+" GB: "+dd.sum+"]"); } }
-      var rw=[cq(v.name),cq(v.os)]; if(showIpX) rw.push(cq(fleetGuestIp(v.name)));
-      rw.push(cq(v.vcpu),cq(v.memMB),cq(v.ndisk),cq(v.disks.join("; ")),cq(xt.join("; ")),cq(v.vsan?"vSAN":v.ds),cq(vmFolderPath(v)),cq(v.guidPath||""),cq(v.running?"running":"registered"),cq(v.enc||""),cq(v.cfg));
+      var rw=[cqx(v.name),cqx(v.os)]; if(showIpX) rw.push(cqx(fleetGuestIp(v.name)));
+      rw.push(cqx(v.vcpu),cqx(v.memMB),cqx(v.ndisk),cqx(v.disks.join("; ")),cqx(xt.join("; ")),cqx(v.vsan?"vSAN":v.ds),cqx(vmFolderPath(v)),cqx(v.guidPath||""),cqx(v.running?"running":"registered"),cqx(v.enc||""),cqx(v.cfg));
       out.push(rw.join(",")); }
   }
   var p=LASTOUTDIR+"\\vms_"+nowStamp()+".csv";
@@ -4833,8 +5244,8 @@ var FLEET=[], FLEETMODE=false, FLEET_CANDS=[], FLEET_I=0, FLEET_HOSTS={}, FLEET_
    bundle and tool version are unchanged - the big speed win for fleet re-runs. */
 function isoNow(){ var d=new Date(); function p(x){return (x<10?"0":"")+x;}
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); }
-function snapSig(path, archive, mode){ var sz=0; try{ if(archive) sz=fileSize(archive); }catch(e){}
-  return { path:String(path||""), archive:String(archive||""), size:sz, mode:String(mode||""), ver:APP_VERSION }; }
+function snapSig(path, archive, mode){ var sz=0, mt=""; try{ if(archive){ sz=fileSize(archive); mt=fileMtime(archive); } }catch(e){}
+  return { path:String(path||""), archive:String(archive||""), size:sz, mtime:mt, mode:String(mode||""), ver:APP_VERSION }; }
 function snapPath(outdir){ return String(outdir).replace(/[\\\/]+$/,"")+"\\snapshot.json"; }
 function saveSnapshot(outdir, sig, snap){
   try{ writeUtf8(snapPath(outdir), JSON.stringify({sig:sig, snap:snap}, null, 1)); }catch(e){ appendLog("snapshot save failed: "+e.message); } }
@@ -4845,6 +5256,7 @@ function loadSnapshot(outdir, sig){
     if(lc(s.path)!==lc(sig.path)) return null;           // different source path
     if(s.mode!==sig.mode) return null;                   // toc vs tree
     if(sig.size && s.size!==sig.size) return null;       // archive size changed -> re-analyze
+    if(sig.mtime && s.mtime!==sig.mtime) return null;    // archive rewritten in place (same size) -> re-analyze
     var snap=o.snap; snap.reused=true; return snap;
   }catch(e){ return null; } }
 function fleetBase(){ var b=htaFolder(); if(!b){ try{ b=new ActiveXObject("Scripting.FileSystemObject").GetSpecialFolder(2)+""; }catch(e){ return ""; } } return b+"\\_Processed\\_fleet"; }
@@ -4886,12 +5298,13 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; VPXD_LINES=null; VPXD_SRCNOTE=""; logCacheClear(); }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
   var host=sanitHost(d.host||baseName(path)); if(!host) host="host"+FLEET_I;
   LASTOUTDIR=fleetBase()+"\\"+host; EXDIR=LASTOUTDIR+"\\_extracted"; NODEDIR=LASTOUTDIR+"\\_nodecfg"; ensureDir(LASTOUTDIR);
+  bindSourceCache(LASTOUTDIR, (MODE==="tree")?ROOT:ARCHIVE, MODE);   // two same-short-name hosts sharing this folder can no longer feed each other stale extractions
   var sig=snapSig(path, ARCHIVE, MODE);
   if(FLEET_REUSE){ var cached=loadSnapshot(LASTOUTDIR, sig);
     if(cached){ appendLog("  = "+host+" reused saved analysis from "+(cached.analyzedAt||"?")+" (source unchanged, skipped re-parse)"); return cached; } }
@@ -4910,6 +5323,7 @@ function processHostSync(path){
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
   var snap=snapshotHost(dispHost, path);
   try{ saveSnapshot(LASTOUTDIR, sig, snap); }catch(e){}
+  logCacheClear(); VPXD_LINES=null;   // snapshotHost (collectOpTasks/collectManagedHosts) was the last consumer - free before the next host
   return snap;
 }
 function distinct(arr){ var m={},o=[]; for(var i=0;i<arr.length;i++){ var k=lc(arr[i]); if(k&&!m[k]){ m[k]=1; o.push(arr[i]); } } return o; }
@@ -4927,8 +5341,10 @@ function extractCluster(){
    opIDs propagate vCenter->host, so a shared opID ties a vCenter task to the executing host. */
 var OP_NOISE=/PollQuickStats|HB-host|getChanges|fetchQuickStats|createContainerView|retrieveContent|queryBatch|ViewManager|View\.destroy|hasUserPrivilege|hasPrivilege|waitForChanges|sessionIsActive|queryView|CatalogSyncManager|Heartbeat|queryDateTime|currentTime|SearchIndex|queryConfigOption|queryAvailablePerfMetric/i;
 function collectOpTasks(){
-  var out={}, rel = BTYPE==="esxi" ? resolveLog(["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]) : resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$");
-  if(!rel) return out; var lines=logLines(rel), cnt=0;
+  var out={}, lines, cnt=0;
+  if(BTYPE==="esxi"){ var rel=resolveLog(["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]); if(!rel) return out; lines=logLines(rel); }
+  else { lines=vpxdLines(); }
+  if(!lines.length) return out;
   for(var i=0;i<lines.length && cnt<1500;i++){ var m=lines[i].match(/^(\S+Z).*opID=([^\]\s]+)\].*\[VpxLRO\] -- BEGIN \S+(?:\s+--\s+session\[[^\]]*\]\S*)?\s+--\s+(\S+)\s+--/);
     if(!m) continue; var op=m[2], method=m[3]; if(OP_NOISE.test(method)||OP_NOISE.test(op)) continue;
     if(!out[op]){ out[op]={method:method, ts:m[1]}; cnt++; } }
@@ -4938,8 +5354,8 @@ function indicNames(){ var o=[]; for(var i=0;i<INDIC.length;i++) if(INDIC[i].sta
 /* vCenter-managed ESXi hosts (host-N,<fqdn>) + guest IPs (vm [name] (moId:vm-N) ... ipAddress) from vpxd */
 function collectManagedHosts(){
   if(BTYPE!=="vcsa") return {hosts:[], guestIp:{}};
-  var rel=resolveLog(["var/log/vmware/vpxd/"],"^vpxd-\\d+\\.log$"); if(!rel) return {hosts:[], guestIp:{}};
-  var lines=logLines(rel), seenH={}, hosts=[], gip={}, i, m;
+  var lines=vpxdLines(); if(!lines.length) return {hosts:[], guestIp:{}};
+  var seenH={}, hosts=[], gip={}, i, m;
   var hre=/host-\d+,([a-z0-9][a-z0-9.\-]+\.(?:local|lan|com|net|org))/ig;
   var g1=/vm \[([^\]]+)\][^\[\]]{0,80}?\[:?(\d{1,3}(?:\.\d{1,3}){3})\]/ig;   // vm [name] ... [ip]
   var g2=/\[:?(\d{1,3}(?:\.\d{1,3}){3})\][^\[\]]{0,60}?vm \[([^\]]+)\]/ig;    // [ip] ... vm [name]  (conflict lines)
@@ -4998,6 +5414,7 @@ function updateActionBtns(){
 }
 function triageFleet(){
   if(BUSY){ setStatus("Busy - wait for the current run.","err"); return; }
+  RUNID++; try{ nvdAbort(); }catch(eNA){}   // a fleet run also invalidates any single-run callbacks still in flight
   var root=trimStr($("inPath").value);
   if(!folderExists(root)){ setStatus("Fleet mode: point the Bundle field (or Pick folder) at a FOLDER that contains the bundles.","err"); return; }
   try{ FLEET_REUSE = !!$("fleetReuse").checked; }catch(e){ FLEET_REUSE=true; }
@@ -5082,7 +5499,7 @@ function drillHost(rec){ if(!rec) return; FLEETMODE=false; showEl("fleetCard",fa
 }
 function fleetExport(){ if(!FLEET.length){ setStatus("No fleet to export.","err"); return; }
   var out=["Host,Type,Version,Build,Serial,KeyPresent,KeyTotal,KeyMissing,Logons,LogonFlagged,LogonExternal,Actions,ActionFlagged,PersistFlagged,Indicators,CVEFlagged,IOCHits,Risk,Analyzed,Reused"];
-  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; out.push([cq(r.host),cq(r.type),cq(r.version),cq(r.build),cq(r.serial||""),r.keyPresent,r.keyTotal,r.keyMiss,r.logons,r.logonFlagged,r.logonExt,r.actions,r.actFlagged,r.persistFlagged,r.indicHits,r.cveFlag,r.iocHits,r.risk,cq(r.analyzedAt||""),(r.reused?1:0)].join(",")); }
+  for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; out.push([cqx(r.host),cqx(r.type),cqx(r.version),cqx(r.build),cqx(r.serial||""),r.keyPresent,r.keyTotal,r.keyMiss,r.logons,r.logonFlagged,r.logonExt,r.actions,r.actFlagged,r.persistFlagged,r.indicHits,r.cveFlag,r.iocHits,r.risk,cqx(r.analyzedAt||""),(r.reused?1:0)].join(",")); }
   var p=fleetBase()+"\\roster_"+nowStamp()+".csv"; try{ writeUtf8(p,out.join("\r\n")); setStatus("Roster → "+p,"ok"); }catch(e){ setStatus("Export failed: "+e.message,"err"); }
 }
 function fleetReport(){ if(!FLEET.length){ setStatus("No fleet to report.","err"); return; }
@@ -5212,7 +5629,7 @@ function corrTimelineExport(){
   var rows=[]; for(var i=0;i<FLEET.length;i++){ var r=FLEET[i]; for(var j=0;j<(r.flagged||[]).length;j++){ var f=r.flagged[j]; rows.push({host:r.host,cluster:r.clusterLabel||"",ep:f.ep||0,when:f.when,kind:f.kind,detail:f.detail,score:f.score}); } }
   rows.sort(function(a,b){ return (a.ep||0)-(b.ep||0); });
   var out=["When_UTC,Host,Cluster,Kind,Score,Detail"];
-  for(i=0;i<rows.length;i++){ var x=rows[i]; out.push([cq(x.when),cq(x.host),cq(x.cluster),cq(x.kind),cq(x.score),cq(x.detail)].join(",")); }
+  for(i=0;i<rows.length;i++){ var x=rows[i]; out.push([cqx(x.when),cqx(x.host),cqx(x.cluster),cqx(x.kind),cqx(x.score),cqx(x.detail)].join(",")); }
   var p=fleetBase()+"\\fleet_timeline_"+nowStamp()+".csv";
   try{ writeUtf8(p,out.join("\r\n")); setStatus("Cross-host timeline ("+nf(rows.length)+" events) → "+p,"ok"); openInExplorer(p); }catch(e){ setStatus("Export failed: "+e.message,"err"); }
 }
@@ -5376,7 +5793,7 @@ function renderCves(){
     +'<span class="st na" style="width:auto">n/a</span> = does not apply to this host</span></div>';
   h+='</div>'; $("ovCve").innerHTML=h;
   var cb=$("nvdOn"); if(cb){ cb.onclick=function(){ NVD_ON=!!this.checked; savePrefs();
-    if(NVD_ON){ safeStep("cves", buildCves); nvdStart(); } else { safeStep("cves", buildCves); NVD={state:"off",err:"",n:0,added:0,corroborated:0,conflicted:0}; renderCves(); } }; }
+    if(NVD_ON){ safeStep("cves", buildCves); nvdStart(); } else { nvdAbort(); safeStep("cves", buildCves); NVD={state:"off",err:"",n:0,added:0,corroborated:0,conflicted:0}; renderCves(); } }; }
   var rt=$("nvdRetry"); if(rt){ rt.onclick=function(){ safeStep("cves", buildCves); nvdStart(); }; }
   var sp=$("ovCve").getElementsByTagName("span");
   for(i=0;i<sp.length;i++){ if(/\blnk\b/.test(sp[i].className+"") && sp[i].getAttribute("data-url")){ sp[i].onclick=function(){ openUrl(this.getAttribute("data-url")); }; } }
@@ -5780,7 +6197,7 @@ function anExport(){ var rows=window.__anRows||[]; if(!rows.length){ setStatus("
   else if(TAB==="ioc"){ head=["Log","Line","IOC","Excerpt"]; line=function(r){return [r.file,r.line,r.ioc,r.excerpt];}; }
   else if(TAB==="persist"){ head=["Category","Finding","Verdict","Detail","Path"]; line=function(r){return [r.cat,r.name,r.verdict,r.detail,r.rel];}; }
   else { setStatus("Nothing to export on this tab.","err"); return; }
-  var out=[head.join(",")]; for(var i=0;i<rows.length;i++){ var v=line(rows[i]); for(var j=0;j<v.length;j++) v[j]=cq(v[j]); out.push(v.join(",")); }
+  var out=[head.join(",")]; for(var i=0;i<rows.length;i++){ var v=line(rows[i]); for(var j=0;j<v.length;j++) v[j]=cqx(v[j]); out.push(v.join(",")); }
   var path=LASTOUTDIR+"\\"+TAB+"_"+nowStamp()+".csv";
   try{ writeUtf8(path,out.join("\r\n")); setStatus("Exported "+nf(rows.length)+" rows → "+path,"ok"); }catch(e){ setStatus("Export failed: "+e.message,"err"); }
 }
@@ -5823,8 +6240,14 @@ function viewablePath(src){
   var low=lc(src);
   if(!/\.(gz|zst)$/.test(low)) return src;
   var viewDir=LASTOUTDIR+"\\_view"; ensureDir(viewDir);
-  var outName=baseName(src).replace(/\.(gz|zst)$/i,""); if(!/\.\w+$/.test(outName)) outName+=".log";
-  var dst=viewDir+"\\"+outName;
+  /* MIRROR the source's path under _view instead of flattening to the basename - two same-named
+     members from different directories (audit.log.1, vpxd-NNNN.log.gz rotations under different
+     trees) used to collide on one cached file, and whichever decompressed first answered for both. */
+  var sub="", base=lc(EXDIR||"@@"), rootl=lc((ROOT||"@@")+"\\");
+  if(EXDIR && low.indexOf(base+"\\")===0) sub=src.substring(EXDIR.length+1);
+  else if(ROOT && low.indexOf(rootl)===0) sub=src.substring(ROOT.length+1);
+  var outName=(sub||baseName(src)).replace(/\.(gz|zst)$/i,""); if(!/\.\w+$/.test(outName)) outName+=".log";
+  var dst=viewDir+"\\"+outName; ensureDir(parentDir(dst));
   if(fileExists(dst)) return dst;
   if(/\.gz$/.test(low)){
     var srcq=src.replace(/'/g,"''"), dstq=dst.replace(/'/g,"''");
@@ -5860,11 +6283,19 @@ function previewFile(rel, path){
 
 /* ---------- export ---------- */
 function cq(v){ v=(v==null)?"":String(v); return /[",\r\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v; }
+/* spreadsheet-safe quoting for EXPORT CSVs (v1.15.0): log-controlled fields (usernames, VM names,
+   shell commands) beginning =, +, -, @ or a tab execute as formulas when the CSV is opened in Excel.
+   A leading apostrophe makes Excel render them as text. Plain negative numbers are left alone, and
+   IOC.csv keeps plain cq() - it is round-tripped back into the tool, not opened as a spreadsheet.
+   JSON remains the forensic-fidelity format. */
+function cqx(v){ v=(v==null)?"":String(v);
+  if(/^[=+\-@\t]/.test(v) && !/^-?\d+(\.\d+)?$/.test(v)) v="'"+v;
+  return cq(v); }
 function exportInventory(){
   if(!INVENTORY.length){ setStatus("Nothing to export.","err"); return; }
   var out=["Category,File,Description,Present,SizeBytes,Files,RelativePath"];
   for(var i=0;i<INVENTORY.length;i++){ var it=INVENTORY[i];
-    out.push([cq(it.cat),cq(it.name),cq(it.desc),cq(it.present?"present":"absent"),cq(it.size),cq(it.count),cq(it.rel)].join(",")); }
+    out.push([cqx(it.cat),cqx(it.name),cqx(it.desc),cqx(it.present?"present":"absent"),cqx(it.size),cqx(it.count),cqx(it.rel)].join(",")); }
   var path=LASTOUTDIR+"\\inventory_"+nowStamp()+".csv";
   try{ writeUtf8(path, out.join("\r\n")); setStatus("Exported inventory ("+nf(INVENTORY.length)+" rows) → "+path,"ok"); appendLog("Exported: "+path); }
   catch(e){ setStatus("Export failed: "+e.message,"err"); }
@@ -5918,6 +6349,7 @@ function selfVerNewer(r,l){ var a=String(r).split("."),b=String(l).split("."),n=
 function selfPath(){ try{ var p=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\");
   if(/\.hta$/i.test(p) && fileExists(p)) return p; }catch(e){} return (htaFolder()||"")+"\\"+SELF_HTA; }
 function checkSelfUpdate(){
+  if(!NET_ON){ try{ var ap0=$("apppill"); if(ap0){ ap0.className="pill"; ap0.title="Offline mode - the GitHub update check was not made."; } }catch(e0){} return; }
   try{ var x=new ActiveXObject("MSXML2.XMLHTTP.6.0");
     x.open("GET","https://api.github.com/repos/"+SELF_REPO+"/releases/latest",true);
     try{ x.setRequestHeader("User-Agent",SELF_HTA); }catch(eh){}
@@ -5938,6 +6370,7 @@ function checkSelfUpdate(){
   }catch(e){}
 }
 function doSelfUpdate(){
+  if(!NET_ON){ setStatus("Offline mode - self-update is disabled. Tick the 'online' checkbox to allow it.","err"); return; }
   if(!SELF_ASSET_URL){ setStatus("No update available (or offline).","muted"); return; }
   var target=selfPath(); if(!target || !/\.hta$/i.test(target)){ setStatus("Can't locate this app's own file.","err"); return; }
   if(!confirm("Download "+SELF_HTA+" v"+SELF_LATEST+" and replace this file?\n\n"+target+"\n\nAfter it downloads, close and reopen the app.")) return;
@@ -5960,6 +6393,7 @@ function doSelfUpdate(){
 
 /* ---------- Instructions (download latest Field Manual from GitHub) ---------- */
 function openInstructions(){
+  if(!NET_ON){ setStatus("Offline mode - the Field Manual is fetched from GitHub. Tick the 'online' checkbox, or open "+GITHUB+" in a browser.","err"); return; }
   var fso=new ActiveXObject("Scripting.FileSystemObject"), tmp=fso.GetSpecialFolder(2)+"";
   var out=tmp+"\\vSphere-SupportBundle-Analyzer-Manual.html", ps1=tmp+"\\manget_"+uid()+".ps1";
   var url="https://github.com/"+SELF_REPO+"/releases/latest/download/vSphere-SupportBundle-Analyzer-Manual.html";
@@ -5998,6 +6432,10 @@ function init(){
     var rws=window.__anRows||[]; anDetail(rws[parseInt(di,10)]); };
   $("anMaxLbl").innerHTML=nf(ANMAXROWS);
   resolveTar(); checkTar(); resolveZstd(); checkZstd(); loadColw(); loadPrefs(); loadToolkitIoc(); iocBtnLabel();
+  var no=$("netOn"); if(no){ no.checked=NET_ON;
+    no.onclick=function(){ NET_ON=!!this.checked; savePrefs();
+      if(NET_ON){ setStatus("Online mode - update check / NVD / zstd downloads allowed.","ok"); checkSelfUpdate(); }
+      else { nvdAbort(); setStatus("Offline mode - the tool will make no outbound connections.","ok"); } }; }
   try{ var hf=htaFolder(); if(hf && isNetworkPath(hf)){ showEl("netwarn",true); } }catch(e){}
 
   $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };
