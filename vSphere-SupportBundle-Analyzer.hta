@@ -78,6 +78,8 @@
   .btn.green:hover{border-color:#3fb950}
   .btn.orange{background:#bd561d;border-color:#bd561d;color:#fff}
   .btn.orange:hover{border-color:#e3852a}
+  .btn.purple{background:#6e40c9;border-color:#6e40c9;color:#fff}
+  .btn.purple:hover{border-color:#8957e5}
   .btn.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
   .btn[disabled]{opacity:.5;cursor:default}
   .row{white-space:nowrap}
@@ -372,8 +374,8 @@
         </span>
         <span class="sep"></span>
         <button class="btn" id="tclear">clear</button>
-        <button class="btn green" id="texport">Export view &rarr; CSV</button>
-        <button class="btn" id="tcopy">Copy for notes</button>
+        <button class="btn purple" id="texport">Export view &rarr; CSV</button>
+        <button class="btn purple" id="tcopy">Copy to Clipboard</button>
         <span class="muted" id="tcount" style="margin-left:8px"></span>
       </div>
       <div class="scroll" id="tblScroll"><table id="tbl"></table></div>
@@ -456,7 +458,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.15.1";
+var APP_VERSION = "1.15.2";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -1700,6 +1702,24 @@ function parseUptime(){
   var cap=captureEpoch();
   if(cap){ NODE.bootedEpoch=cap-secs; NODE.booted=isoShort(new Date((cap-secs)*1000).toISOString())+" UTC"; }
 }
+/* TZ token out of a `date` output line. Two shapes seen from ESXi busybox and Photon date:
+     "Wed Jun 25 19:25:14 UTC 2025"       token sits between seconds and year
+     "Wed 25 Jun 2025 07:22:01 PM UTC"    token trails, optionally after AM/PM
+   Named zones and numeric offsets (+1000 / +10:00) both count; a bare AM/PM is not a zone. */
+function tzTokenOf(d){
+  d=trimStr(String(d||"")); if(!d) return "";
+  var m=d.match(/\d{2}:\d{2}:\d{2}\s+([A-Za-z]{2,5}|[+-]\d{2}:?\d{2})\s+\d{4}/);
+  if(!m) m=d.match(/\d{2}:\d{2}:\d{2}\s+(?:[AP]M\s+)?([A-Za-z]{2,5}|[+-]\d{2}:?\d{2})\s*$/im);
+  if(!m || /^[AP]M$/i.test(m[1])) return "";
+  return m[1].toUpperCase();
+}
+/* host time zone from EVIDENCE (the TZ token the host's own `date` printed into commands/date.txt),
+   never asserted. ESXi is UTC by design - the token proves it for THIS capture; a non-UTC token on a
+   VCSA warns that appliance logs carry local-offset stamps (toEpoch() normalises those to UTC). */
+function parseHostTz(){
+  var tz=tzTokenOf(readMember("commands/date.txt"));
+  if(tz){ NODE.tz=tz; NODE.tzSrc="commands/date.txt"; }
+}
 function parseNode(){
   NODE={}; NODE.type=typeLabel();
   var readme=readMember("README");
@@ -1707,6 +1727,7 @@ function parseNode(){
   var mVs=readme.match(/vm-support version:\s*(.+)/i); if(mVs) NODE.vmsupport=trimStr(mVs[1]);
   var mCl=readme.match(/Command line:\s*(.+)/i); if(mCl) NODE.cmdline=trimStr(mCl[1]);
   NODE.host=sanitHost($("hostName").value);
+  parseHostTz();
   if(BTYPE==="esxi"){
     var v=readMember("commands/localcli_system-version-get.txt");
     var mp=v.match(/Product:\s*(.+)/i); if(mp) NODE.product=trimStr(mp[1]);
@@ -4808,7 +4829,8 @@ function buildReportHtml(){
     ["Serial / service tag",NODE.serial],["Management IP",NODE.mgmtIp],
     [BTYPE==="vcsa"?"vSphere Client (web)":"Web client (ESXi)",NODE.webUi],
     ["Appliance mgmt (VAMI)",NODE.vami],["iDRAC / BMC IP",NODE.idrac],["Update",NODE.update],["VIB acceptance",NODE.acceptance],
-    ["Captured on",NODE.captured],["vm-support version",NODE.vmsupport],["Capture command",NODE.cmdline]];
+    ["Captured on",NODE.captured],["Host time zone",NODE.tz?(NODE.tz+"  (TZ token in commands/date.txt)"):""],
+    ["vm-support version",NODE.vmsupport],["Capture command",NODE.cmdline]];
   for(i=0;i<nf2.length;i++){ if(nf2[i][1]) h.push('<tr><td class="k">'+rEsc(nf2[i][0])+'</td><td class="mono">'+rEsc(nf2[i][1])+'</td></tr>'); }
   h.push('</table>');
 
@@ -5121,7 +5143,7 @@ function buildSpecHtml(){
     '<h1>Node Specification - '+rEsc(NODE.host||"?")+'</h1>',
     '<div class="muted">'+rEsc(NODE.type||"")+' &middot; '+rEsc((NODE.product||"")+" "+(NODE.version||"")+" build "+(NODE.build||""))+' &middot; generated '+gen+' &middot; tool v'+APP_VERSION+'</div>'];
   h.push('<h2>Node configuration</h2><table>');
-  var nf2=[["Bundle type",NODE.type],["Host",NODE.host],["Product",NODE.product],["Version",NODE.version],["Build",NODE.build],["Update",NODE.update],["VIB acceptance",NODE.acceptance],["Captured on",NODE.captured],["vm-support version",NODE.vmsupport]];
+  var nf2=[["Bundle type",NODE.type],["Host",NODE.host],["Product",NODE.product],["Version",NODE.version],["Build",NODE.build],["Update",NODE.update],["VIB acceptance",NODE.acceptance],["Captured on",NODE.captured],["Host time zone",NODE.tz],["vm-support version",NODE.vmsupport]];
   for(var i=0;i<nf2.length;i++){ if(nf2[i][1]) h.push('<tr><td class="k">'+rEsc(nf2[i][0])+'</td><td class="mono">'+rEsc(nf2[i][1])+'</td></tr>'); }
   h.push('</table>');
   if(SPEC.length){ h.push('<h2>Specification</h2>');
@@ -5701,6 +5723,7 @@ function renderOverview(){
   h+=kvRow("Update", NODE.update);
   h+=kvRow("VIB acceptance", NODE.acceptance);
   h+=kvRow("Captured on", NODE.captured);
+  h+=kvRow("Host time zone", NODE.tz, NODE.tzSrc?("From the TZ token in "+NODE.tzSrc+" - evidence, not assumption. ESXi runs UTC by design; a non-UTC zone on a vCenter appliance means some appliance logs carry local-offset timestamps (the tool normalises them to UTC when merging)."):"");
   h+=kvRow("vm-support version", NODE.vmsupport);
   h+=kvRow("Capture command", NODE.cmdline);
   h+=kvRow("Source", MODE==="toc"?("archive index ("+nf(TOC.length)+" entries)"):"extracted tree");
