@@ -80,6 +80,7 @@
   .btn.orange:hover{border-color:#e3852a}
   .btn.purple{background:#6e40c9;border-color:#6e40c9;color:#fff}
   .btn.purple:hover{border-color:#8957e5}
+  .maxwarn{display:inline-block;color:#e3b341;font-weight:600;cursor:help;border:1px solid #8a7a2a;background:#2a2410;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:6px;vertical-align:middle}
   .btn.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
   .btn[disabled]{opacity:.5;cursor:default}
   .row{white-space:nowrap}
@@ -458,7 +459,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.15.2";
+var APP_VERSION = "1.15.3";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -1430,7 +1431,7 @@ function idracIp(){
      ESXi hostd   : `Task Created : haTask-<objID>-vim.VirtualMachine.unregister-<id>` with `user=` and
                     `opID=` on the same line - and it is `unregister`, not `unregisterVM`.
    `_Task` is accepted but never required. */
-var VMEV=[], VMEV_SRC="", VMEV_KINDS=["create","delete","modify","start","stop","reboot","snapshot","migrate","other"];
+var VMEV=[], VMEV_SRC="", VMEV_TOTAL=0, VMEV_KINDS=["create","delete","modify","start","stop","reboot","snapshot","migrate","other"];
 var VM_NAME_RE=/\[vim\.VirtualMachine:(vm-\d+),([^\]]{1,80})\]/g;   // hoisted: never rebuild a regex inside a 200k-line loop
 /* Was this log CAPPED by the read limit? logLines() reads head+tail halves of LOGCAP (48 MB, or 8 MB
    when FILE_IO falls back to "fso" on a network/redirected path) and records the fact in LOG_TRUNC.
@@ -1530,7 +1531,9 @@ function parseVmEvents(){
     }
   }
   VMEV.sort(function(a,b){ return b.epoch-a.epoch; });
-  if(VMEV.length>3000) VMEV=VMEV.slice(0,3000);
+  VMEV_TOTAL=VMEV.length;
+  if(VMEV.length>3000){ VMEV=VMEV.slice(0,3000);   // newest-first sort above -> the NEWEST 3000 are kept
+    appendLog("  VM events: cap - keeping the newest 3,000 of "+nf(VMEV_TOTAL)+" (the panel discloses this)"); }
   appendLog("  VM events: "+nf(VMEV.length)+(VMEV.length?"":" (none in the retained log window)"));
 }
 /* ---- Maintenance Events ----------------------------------------------------------------------
@@ -1544,7 +1547,7 @@ function parseVmEvents(){
              "time the service was last started". A vc-support bundle has no vobd.
    Deliberately NOT inferred: nothing here is guessed from absence - if a log was not captured the
    table simply has no rows for it, and says so. */
-var MAINT=[], VPXD_HUMANS=[], VM_MOREF_NAME={};
+var MAINT=[], MAINT_TOTAL=0, VPXD_HUMANS=[], VM_MOREF_NAME={};
 var VOBD_MAINT=[
   [/esx\.audit\.host\.boot\b/i,                         "boot",        "Host booted"],
   [/esx\.audit\.host\.stop\.reboot\b/i,                 "reboot",      "Host rebooting"],
@@ -1597,15 +1600,18 @@ function parseMaint(){
       "Booted (derived from uptime)", "capture time minus uptime ("+NODE.uptime+") - not a log entry", NODE.uptimeSrc||"uptime"));
   }
   MAINT.sort(function(a,b){ return b.epoch-a.epoch; });   // newest first: the recent history is what matters
-  if(MAINT.length>400) MAINT=MAINT.slice(0,400);
-  appendLog("  maintenance: "+nf(MAINT.length)+" event(s)");
+  MAINT_TOTAL=MAINT.length;
+  if(MAINT.length>400) MAINT=MAINT.slice(0,400);          // newest 400 kept; renderMaint discloses the cut
+  appendLog("  maintenance: "+nf(MAINT.length)+" event(s)"+(MAINT_TOTAL>MAINT.length?(" (newest 400 of "+nf(MAINT_TOTAL)+")"):""));
 }
 function maintCls(k){ return k==="update"?"audit":(k==="maintenance"?"net":(k==="boot"?"auth":"danger")); }
 function renderMaint(){
   if(!MAINT.length){ $("ovMaint").innerHTML=""; showEl("ovMaintWrap",false); return; }
   showEl("ovMaintWrap",true);
   var h='<div class="panel"><h4>Maintenance events <span class="sub">- '+MAINT.length+' (newest first)'
-    +(BTYPE==="esxi"?" from the vobd audit log + rotations":" from the appliance patch log + vpxd service starts")+'</span></h4>'
+    +(BTYPE==="esxi"?" from the vobd audit log + rotations":" from the appliance patch log + vpxd service starts")+'</span>'
+    +(MAINT_TOTAL>MAINT.length?('<span class="maxwarn" title="'+esc("Keeping the NEWEST 400 of "+nf(MAINT_TOTAL)+" maintenance events - the "+nf(MAINT_TOTAL-400)+" oldest were dropped at parse time. For the full history open the source logs (vobd rotations / PatchRunner.log) from the Key Files tab.")+'">&#9888; Warning: Maximum Rows Exceeded</span>'):'')
+    +'</h4>'
     +'<div class="scroll" id="ovMaintScroll" style="max-height:30vh"><table id="ovMaintTbl"><thead><tr>'
     +'<th title="When the event happened, UTC.">When (UTC)</th>'
     +'<th title="boot / reboot / shutdown / maintenance mode / update. Colour-coded so a patch window is easy to spot behind the other findings.">Kind</th>'
@@ -2734,14 +2740,21 @@ function buildTimeline(){
   TIMELINE.sort(function(x,y){ return x.epoch-y.epoch; });
 }
 /* IOC sweep across the present key logs (not the whole tree) */
+var IOC_SWEEPCAP="";   // non-empty = the sweep STOPPED at the cap; names where, so the gap is citable
 function sweepIocs(){
-  IOCHITS=[]; if(!IOCS.length) return;
+  IOCHITS=[]; IOC_SWEEPCAP=""; if(!IOCS.length) return;
   var logs = BTYPE==="vcsa"
     ? [["var/log/auth.log"],["var/log/vmware/sso/websso.log"],["var/log/vmware/sso/tokenservice.log"],["var/log/vmware/vmdird/vmdird.log"],["var/log/vmware/messages","var/log/messages"]]
     : [["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"],["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]];
   for(var j=0;j<logs.length;j++){ var rel=resolveLog(logs[j]); if(!rel) continue; var lines=logLines(rel);
     for(var L=0;L<lines.length;L++){ var low=lc(lines[L]); var mt=iocMatchLine(low);
-      if(mt){ IOCHITS.push({file:baseName(rel),line:(L+1),ioc:mt.v,ioctype:mt.t,excerpt:trimStr(trunc(lines[L],300)),blob:low}); if(IOCHITS.length>8000) return; } }
+      if(mt){ IOCHITS.push({file:baseName(rel),line:(L+1),ioc:mt.v,ioctype:mt.t,excerpt:trimStr(trunc(lines[L],300)),blob:low});
+        if(IOCHITS.length>=8000){
+          /* stopping mid-log is an EVIDENTIAL GAP, not a display nicety - everything after this
+             point, including whole logs, was never swept. Record exactly where it stopped. */
+          IOC_SWEEPCAP="the sweep STOPPED at 8,000 hits in "+baseName(rel)+" line "+(L+1)+(j<logs.length-1?(" - "+(logs.length-1-j)+" further log(s) were NOT swept at all"):" - the rest of this log was not swept");
+          appendLog("  IOC sweep: CAP HIT - "+IOC_SWEEPCAP+". An IOC list this noisy is matching routine traffic; tighten the terms (or type them - ip/hash/domain get boundary matching) and re-run.");
+          return; } } }
   }
 }
 var ANALYSIS_ERRS=[];
@@ -4556,9 +4569,10 @@ function renderVmEvents(){
   var cnt={}; for(i=0;i<VMEV.length;i++) cnt[VMEV[i].kind]=(cnt[VMEV[i].kind]||0)+1;
   var parts=[]; for(var k=0;k<VMEV_KINDS.length;k++){ var kk=VMEV_KINDS[k]; if(cnt[kk]) parts.push(cnt[kk]+" "+kk); }
   $("vmEvInfo").innerHTML=nf(VMEV.length)+" event(s) &middot; "+esc(parts.join(", "))
-    +(rows.length<VMEV.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'):'');
+    +(rows.length<VMEV.length?(' &middot; <b>'+nf(rows.length)+' shown</b>'):'')
+    +(VMEV_TOTAL>VMEV.length?(' <span class="maxwarn" title="'+esc("The parse retained the NEWEST 3,000 of "+nf(VMEV_TOTAL)+" VM events - the "+nf(VMEV_TOTAL-3000)+" oldest were dropped at parse time, so no filter or export here can recover them. For the complete stream open the source log itself ("+(VMEV_SRC||"vpxd/hostd")+") from the Key Files tab, or narrow the case date window and re-Analyze.")+'">&#9888; Warning: Maximum Rows Exceeded</span>'):'');
   $("vmEvNote").innerHTML = capWarn + ((BTYPE==="vcsa")
-    ? 'From the vpxd task stream (<span class="mono">[VpxLRO] -- BEGIN … vm-N -- vim.VirtualMachine.&lt;method&gt;</span>). Actor is the nearest preceding <b>human</b> SAML login - approximate. Read-only calls are excluded. Tick <b>incl. rotated logs</b> to widen the window.'
+    ? 'From the vpxd task stream (<span class="mono">[VpxLRO] -- BEGIN … vm-N -- vim.VirtualMachine.&lt;method&gt;</span>). Actor is session-matched where the line carries a <span class="mono">session[guid]</span> (exact), else the nearest preceding <b>human</b> SAML login within 12h - approximate. Read-only calls are excluded. Tick <b>incl. rotated logs</b> to widen the window.'
     : 'From hostd&#39;s task stream (<span class="mono">haTask-&lt;objID&gt;-vim.VirtualMachine.&lt;method&gt;</span>), with the user and client it recorded. Object IDs are resolved to VM names via <span class="mono">etc/vmware/hostd/vmInventory.xml</span> - a VM that was unregistered is legitimately absent from that file. Tick <b>incl. rotated logs</b> to widen the window.');
   var h='<thead><tr>'
     +'<th title="The VM the event acted on. vCenter: resolved from the vm-N MoRef via the names vpxd logs. ESXi: resolved from the hostd task objID via vmInventory.xml - an unresolved objID means the VM is no longer in inventory, which is itself consistent with a delete/unregister.">VM</th>'
@@ -4566,7 +4580,7 @@ function renderVmEvents(){
     +'<th title="create / delete / modify / start / stop / reboot / snapshot / migrate - colour-coded, delete in red. Use the Type checkboxes above to narrow.">Type</th>'
     +'<th title="What was done, in plain terms, derived from the method the node logged.">Event</th>'
     +'<th title="The raw API method exactly as the log records it - vpxd writes the VMODL name (lowercase-initial, no _Task suffix); ESXi hostd writes e.g. vim.VirtualMachine.unregister. This is the verbatim evidence behind the Event column.">Method</th>'
-    +'<th title="Who asked for it. ESXi: the user hostd recorded on the task. vCenter: the nearest preceding human SAML login - APPROXIMATE, not a proven attribution.">Actor</th>'
+    +'<th title="Who asked for it. ESXi: the user hostd recorded on the task. vCenter: session-matched via session[guid] where the log carries one (exact); otherwise the nearest preceding human SAML login within 12h - APPROXIMATE, not a proven attribution.">Actor</th>'
     +'<th title="Where the request came in: the ESXi Host Client, a vCenter task (opID lro-*), or the raw opID. An lro-* opID joins this event to the vCenter task chain.">Via</th>'
     +'<th title="Which log the row was parsed from - your evidence citation.">Log</th>'
     +'</tr></thead><tbody>';
@@ -6036,6 +6050,13 @@ function kindLabel(k){ k=String(k||""); var lk=lc(k);
 function scoreCell(r){ return '<td class="first"><span class="sc '+scClass(r.score)+'">'+r.score+'</span>'+tagsHtml(r)+'</td>'; }
 function rowCls(r){ var c=""; if(r.score>=5) c="row-flag"; else if(r.score>=3) c="row-warn"; var isI=false; for(var i=0;i<r.tags.length;i++) if(r.tags[i]==="IOC") isI=true; if(isI) c+=(c?" ":"")+"ioc"; return c; }
 function anPass(r,useWin){ if(FLAGONLY && r.score<3) return false; if(!scorePass(r.score)) return false; if(TQUERY && r.blob.indexOf(TQUERY)<0) return false; if(useWin && (DFROM||DTO) && r.epoch && !inWin(r.epoch)) return false; return true; }
+/* the "more rows than the table draws" chip (v1.15.3). One consistent warning wherever a cap
+   applies, with the remedy in the tooltip - a capped table that merely says "(showing N)" reads
+   as complete to anyone who does not know the cap exists. `extra` appends cap-specific facts. */
+function maxRowsWarn(shown, total, extra){
+  if(!(total>shown)) return "";
+  return ' <span class="maxwarn" title="'+esc("Drawing the first "+nf(shown)+" of "+nf(total)+" matching rows - the render cap keeps the app responsive; it does NOT mean the rest were discarded. Narrow the view (search box, score/date filters, dropdowns) to bring what you need inside the cap, or use Export view -> CSV / Copy to Clipboard: exports always write the FULL filtered set."+(extra?(" "+extra):""))+'">&#9888; Warning: Maximum Rows Exceeded</span>';
+}
 function drawTable(cols, rows, st, key){
   var shown=rows.length>ANMAXROWS?ANMAXROWS:rows.length;
   var html="<thead><tr>"; for(var c=0;c<cols.length;c++){ var ar=(st.k===c)?(st.d>0?" ▲":" ▼"):""; html+='<th data-k="'+c+'"'+colTip(cols[c])+'>'+esc(cols[c].h)+ar+'</th>'; }
@@ -6043,7 +6064,7 @@ function drawTable(cols, rows, st, key){
   for(var i=0;i<shown;i++){ var r=rows[i]; var rc=rowCls(r); html+='<tr data-i="'+i+'"'+(rc?(' class="'+rc+'"'):'')+' style="cursor:pointer">';
     for(var k=0;k<cols.length;k++) html+=cols[k].cell(r); html+="</tr>"; }
   html+="</tbody>"; $("tbl").innerHTML=html;
-  $("tcount").innerHTML=nf(rows.length)+" row"+(rows.length===1?"":"s")+(shown<rows.length?(" (showing "+nf(shown)+")"):"");
+  $("tcount").innerHTML=nf(rows.length)+" row"+(rows.length===1?"":"s")+(shown<rows.length?(" (showing "+nf(shown)+")"):"")+maxRowsWarn(shown, rows.length);
   var ths=$("tbl").getElementsByTagName("th");
   for(var j=0;j<ths.length;j++){ ths[j].onclick=function(e){ e=e||window.event; var t=e.target||e.srcElement; if(t&&/\bcgrip\b/.test(t.className+"")) return;
     var kk=parseInt(this.getAttribute("data-k"),10); if(st.k===kk) st.d*=-1; else { st.k=kk; st.d=1; } render(); }; }
@@ -6171,7 +6192,11 @@ function renderIoc(){ var rows=[]; for(var i=0;i<IOCHITS.length;i++){ if(TQUERY)
   if(!IOCS.length) html+='<tr><td colspan="4" class="muted">No IOC terms loaded. Put an IOC.txt next to this app (one term per line) and re-run analysis.</td></tr>';
   else if(!rows.length) html+='<tr><td colspan="4" class="ok">No IOC hits in the swept key logs.</td></tr>';
   for(var i2=0;i2<rows.length && i2<ANMAXROWS;i2++){ html+='<tr class="ioc">'; for(var k=0;k<IOCCOLS.length;k++) html+=IOCCOLS[k].cell(rows[i2]); html+="</tr>"; }
-  html+="</tbody>"; $("tbl").innerHTML=html; $("tcount").innerHTML=nf(rows.length)+" hit"+(rows.length===1?"":"s");
+  html+="</tbody>"; $("tbl").innerHTML=html;
+  var iocShown=rows.length>ANMAXROWS?ANMAXROWS:rows.length;
+  $("tcount").innerHTML=nf(rows.length)+" hit"+(rows.length===1?"":"s")
+    +maxRowsWarn(iocShown, rows.length)
+    +(IOC_SWEEPCAP?(' <span class="maxwarn" title="'+esc("INCOMPLETE SWEEP: "+IOC_SWEEPCAP+". These hits are a subset of what the logs contain - absence of a term below is NOT evidence of its absence. An IOC list hitting 8,000 times is matching routine traffic: tighten or type the terms (ip/hash/domain get boundary matching via Create IOC list) and Re-run log analysis.")+'">&#9888; Warning: IOC sweep stopped at cap</span>'):'');
   var ths=$("tbl").getElementsByTagName("th"); for(var j=0;j<ths.length;j++){ ths[j].onclick=function(e){ e=e||window.event; var t=e.target||e.srcElement; if(t&&/\bcgrip\b/.test(t.className+"")) return;
     var kk=parseInt(this.getAttribute("data-k"),10); if(st.k===kk) st.d*=-1; else { st.k=kk; st.d=1; } render(); }; }
   applyFreezeTbl(); setupColResizeFor($("tbl"),"ioc"); window.__anRows=rows;
@@ -6224,14 +6249,16 @@ function anExport(){ var rows=window.__anRows||[]; if(!rows.length){ setStatus("
   var path=LASTOUTDIR+"\\"+TAB+"_"+nowStamp()+".csv";
   try{ writeUtf8(path,out.join("\r\n")); setStatus("Exported "+nf(rows.length)+" rows → "+path,"ok"); }catch(e){ setStatus("Export failed: "+e.message,"err"); }
 }
-function anCopy(){ var rows=(window.__anRows||[]).slice(0,500); if(!rows.length){ setStatus("Nothing to copy.","err"); return; }
+function anCopy(){ var all=(window.__anRows||[]), rows=all.slice(0,500); if(!rows.length){ setStatus("Nothing to copy.","err"); return; }
   var out=[]; for(var i=0;i<rows.length;i++){ var r=rows[i];
     if(TAB==="logon" && SESS_VIEW) out.push((r.inTs||"(pre-window)")+" -> "+(r.outTs||"(no logout)")+(r.dur>=0?(" ("+fmtDur(r.dur)+")"):"")+" | "+(r.user||"(unknown)")+(r.sol?" (svc)":"")+" from "+(r.ip||"?")+" | session "+r.sess);
     else if(TAB==="logon") out.push(r.score+" | "+r.when+" | "+r.result+" | "+r.user+" from "+(r.ip||"local")+(r.tags.length?(" | "+r.tags.join(",")):""));
     else if(TAB==="act") out.push(r.score+" | "+r.when+" | "+r.actor+" | "+r.cmd+(r.tags.length?(" | "+r.tags.join(",")):""));
     else if(TAB==="time") out.push(r.score+" | "+r.when+" | "+r.kind+" | "+r.detail);
     else if(TAB==="ioc") out.push(r.file+":"+r.line+" | "+r.ioc+" | "+r.excerpt); }
-  try{ window.clipboardData.setData("Text", out.join("\r\n")); setStatus("Copied "+out.length+" lines.","ok"); }catch(e){ setStatus("Copy failed: "+e.message,"err"); }
+  try{ window.clipboardData.setData("Text", out.join("\r\n"));
+    setStatus("Copied "+out.length+" lines."+(all.length>rows.length?(" NOTE: that is the first 500 of "+nf(all.length)+" filtered rows (clipboard cap) - Export view -> CSV writes the full set."):""),"ok");
+  }catch(e){ setStatus("Copy failed: "+e.message,"err"); }
 }
 
 /* ---------- open file / folder (extract-on-demand + gz/zst decompress) ---------- */

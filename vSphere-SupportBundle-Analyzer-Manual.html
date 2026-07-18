@@ -87,7 +87,7 @@
 <header class="top">
   <h1>vSphere Support Bundle Analyzer</h1>
   <div class="sub">Rapid triage of ESXi <code style="color:#dbe6ff;background:transparent;border:0">vm-support</code> and vCenter <code style="color:#dbe6ff;background:transparent;border:0">vc-support</code> bundles - one HTA, no dependencies, never touches the source host.</div>
-  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.15.2</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer" title="Project repository on GitHub">GitHub &#8599;</a></div>
+  <div class="pills"><span class="pill">Field Manual</span><span class="pill">v1.15.3</span><span class="pill">Windows / mshta</span><span class="pill">ESXi &amp; vCenter</span><a class="pill" style="color:#fff" href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer" title="Project repository on GitHub">GitHub &#8599;</a></div>
 </header>
 
 <h2 id="intro">1. Overview</h2>
@@ -132,6 +132,7 @@
 
 <h2 id="tabs">4. The tabs</h2>
 <p>Every table in the app keeps its <b>header row pinned</b> while you scroll, and columns are drag-resizable (double-click a grip to reset).</p>
+<p><b>Row limits are disclosed, never silent (v1.15.3).</b> Any table with more matching rows than it draws shows an amber <b>&#9888; Warning: Maximum Rows Exceeded</b> chip - hover it for the numbers and the remedy. For the analysis tabs the cap is <b>render-only</b>: narrow the view with the search box, score/date filters or dropdowns, or use <b>Export view &rarr; CSV</b> / <b>Copy to Clipboard</b> - exports always write the <b>full filtered set</b>. Two panels cap at <b>parse time</b> instead (VM events keep the newest 3,000; Maintenance events the newest 400) - their tooltips say so and point at the source log on Key Files, because a parse-time drop cannot be recovered by exporting. If the <b>IOC sweep</b> ever stops at its 8,000-hit cap, its own warning names the exact log and line it stopped at and how many logs were never swept - an IOC list that noisy is matching routine traffic and needs tightening.</p>
 
 <h3 id="overview-tab">Overview</h3>
 <p>Node configuration summary (including <b>Host time zone</b>, read from the TZ token in <code>commands/date.txt</code> - evidence, not assumption) + key-file coverage, the <b>intrusion / ransomware indicator</b> panel, and the <b>CVE exposure</b> panel. The stat bubbles at the bottom (Logons, Actions, Timeline, IOC hits) are <b>clickable</b> - they jump to the matching tab. Buttons: <b>Re-run log analysis</b> and <b>Generate Report</b> (green).</p>
@@ -274,6 +275,7 @@
 <div class="caveat"><b>vCenter task&rarr;user attribution</b> is tiered (v1.15). A task line carrying a <code>session[&lt;guid&gt;]</code> is bound to its authenticated user via the SessionManager pairing - <b>exact</b>, shown as <i>session-matched</i>. Without a session ID the fallback is the nearest-preceding human SAML login, <b>capped at 12&nbsp;hours</b> and shown as <i>user approx</i>; beyond the cap the actor reports <b>unknown</b> rather than a guess. Treat <i>user approx</i> as a lead, corroborate with the Logons tab.</div>
 <div class="caveat"><b>The vCenter&rarr;ESXi chain</b> needs a vCenter and ESXi bundle from the <b>same cluster</b> in the fleet; different environments correctly show no shared opIDs.</div>
 <div class="warn"><b>CVE verdicts are advisory</b> (see §6). <b>Support bundles are targeted</b>, not disk images - some persistence artefacts (cron, systemd-admin, authorized_keys, passwd) are simply not captured and are shown as "not captured".</div>
+<div class="warn"><b>Row caps exist and are disclosed in place</b> (see §4): analysis tables draw at most 8,000 rows (render-only - exports write the full set), VM events retain the newest 3,000 and Maintenance the newest 400 at parse time, and a stopped IOC sweep names where it stopped. Wherever a cap bites, the amber <b>&#9888;</b> chip appears - if you do not see one, the table is complete.</div>
 
 <h2 id="workflow">13. Suggested DFIR workflow</h2>
 <ol>
@@ -288,7 +290,7 @@
 </ol>
 
 <footer>
-  vSphere Support Bundle Analyzer - Field Manual for v1.15.2. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer">github.com/bpmorris22/vSphere-SupportBundle-Analyzer</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
+  vSphere Support Bundle Analyzer - Field Manual for v1.15.3. Source &amp; releases: <a href="https://github.com/bpmorris22/vSphere-SupportBundle-Analyzer">github.com/bpmorris22/vSphere-SupportBundle-Analyzer</a>. Times shown by the tool are UTC. Screenshots use synthetic placeholder data (lab hostnames, TEST-NET IPs) and are illustrative renders of the UI.
 </footer>
 </main>
 </div>
