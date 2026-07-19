@@ -473,7 +473,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.16.0";
+var APP_VERSION = "1.17.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -547,6 +547,24 @@ function lc(s){ return String(s==null?"":s).toLowerCase(); }
    extracted file. Extraction MEMBERS passed to bsdtar keep the original ':' (the archive name). */
 function winRel(rel){ return String(rel).replace(/\//g,"\\").replace(/[:*?"<>|]/g,"_"); }
 function fmtSize(n){ if(!n) return (n===0?"0 B":"-"); var u=["B","KB","MB","GB","TB"], i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(i?1:0)+" "+u[i]; }
+
+/* ---------- raw-byte reader + utmp helpers (v1.17.0, ported from the Linux UAC Analyzer) ----------
+   ADODB.Stream Type=1 reads raw bytes; new VBArray(...).toArray() -> JS array of 0..255 that indexes
+   like the byte buffers the utmp decoders expect. Small files only (wtmp/btmp are KB-scale). */
+function readBytes(path){
+  try{ if(!fileExists(path)) return null;
+    var st=new ActiveXObject("ADODB.Stream"); st.Type=1; st.Open(); st.LoadFromFile(path);
+    var v=st.Read(); st.Close(); if(v==null) return null;
+    return new VBArray(v).toArray();
+  }catch(e){ return null; }
+}
+function leU16(b,o){ return (b[o]|(b[o+1]<<8))>>>0; }
+function leI16(b,o){ var v=leU16(b,o); return v>=0x8000?v-0x10000:v; }
+function leI32(b,o){ return (b[o]|(b[o+1]<<8)|(b[o+2]<<16)|(b[o+3]<<24)); }
+function leU32(b,o){ return leI32(b,o)>>>0; }
+function cStr(b,o,len){ var s=""; for(var i=0;i<len;i++){ var c=b[o+i]; if(c===0) break; if(c>=32) s+=String.fromCharCode(c); } return s; }
+/* a wtmp/btmp ut_host is an IP for remote sessions, a tty string for local ones */
+function ipOfHost(h){ h=trimStr(h||""); return (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || (h.indexOf(":")>=0 && /^[0-9a-f:]+$/i.test(h))) ? h : ""; }
 
 /* ---------- file IO via ActiveX (UTF-8 safe, network-zone fallback) - family ---------- */
 var FILE_IO="adodb";
@@ -1324,7 +1342,11 @@ function analysisRels(){
       "commands/localcli_storage-filesystem-list--i.txt","commands/localcli_storage-filesystem-list.txt",
       "commands/localcli_vsan-datastore-list.txt","commands/localcli_vsan-storage-list.txt",
       "commands/localcli_storage-core-device-capacity-list.txt","commands/localcli_vm-process-list.txt",
-      "commands/localcli_vsan-cluster-get.txt","commands/localcli_system-stats-uptime-get.txt","commands/date.txt","commands/localcli_software-vib-list.txt"]);
+      "commands/localcli_vsan-cluster-get.txt","commands/localcli_system-stats-uptime-get.txt","commands/date.txt","commands/localcli_software-vib-list.txt",
+      "commands/localcli_network_ip_neighbor_list.txt","commands/localcli_software-component-signature-verify.txt",   // v1.17.0: ARP cache + VIB signature verification
+      "commands/auditRecordReader.txt","commands/bootOption_-poC.txt","commands/localcli_software-profile-get---rebooting-image.txt",
+      "commands/localcli_software-profile-get.txt","commands/crx-cli_list.txt"]);
+    // per-VM vmware.log is extracted on its own bounded pass (registered VMs only) in parseVmwareLogs()
   } else if(BTYPE==="vcsa"){
     addLog(["var/log/auth.log"]);                                                         // parseLogons/sudo + IOC + integrity
     addLog(["var/log/vmware/sso/websso.log"]);                                            // parseLogons + IOC + integrity
@@ -1339,7 +1361,11 @@ function analysisRels(){
       "etc/applmgmt/appliance/patching_backup_config.json","var/log/vmware/applmgmt/backupSchedulerCron.log",
       "commands/ifconfig_-a.txt","commands/ps_auwwx---sort--rss.txt","commands/route.txt",
       "commands/sso-config.txt","commands/lw-lsa_get-status.txt","commands/uptime.txt","commands/date.txt","var/log/vmware/applmgmt/PatchRunner.log","var/log/firstboot/cloudvm.log"]);
-    addAll(["etc/passwd","etc/group"]);                                                   // parseUsersV (when the appliance capture carries them)
+    addAll(["etc/passwd","etc/group","var/log/wtmp","var/log/btmp",                       // parseUsersV + binary utmp logons (v1.17.0)
+      "commands/rpm_-qa---verify.txt"]);                                                  // rpm tamper check
+    add(resolveLog(["var/log/vmware/applmgmt-audit/applmgmt-audit.log"]));                // VAMI appliance-mgmt audit
+    if(DEEPROT){ try{ var ar=listUnder("var/log/vmware/applmgmt-audit/",/^applmgmt-audit\.log\.\d+\.gz$/i); for(var aj=0;aj<ar.length;aj++) add("var/log/vmware/applmgmt-audit/"+ar[aj]); }catch(eA){} }
+    try{ var su=systemdUnitRels(); for(var sj=0;sj<su.length;sj++) add(su[sj]); }catch(eS){}   // systemd unit sweep
     try{ for(var pj=0;pj<TOC.length;pj++){ if(/^etc\/pam\.d\/[^\/]+$/i.test(TOC[pj].rel)) add(TOC[pj].rel); } }catch(eP){}   // PAM stack sweep (tiny files, captured in full)
     try{ var dsets=drmDumpSets(); addAll(dsets.latest||[]); addAll(dsets.earliest||[]); }catch(eD){}   // VMs-from-logs: DRS dumps
     try{ var hp="var/log/vmware/vsan-health/", hn=listUnder(hp,/-cloud_health_check_data\.json\.gz$/i), ob=listUnder(hp,/_obfuscationTableForHuman\.json\.gz$/i);
@@ -1529,8 +1555,9 @@ function parseVmEvents(){
       VMEV.push(mkVmEv(toEpoch(m[1]),m[1],vnm,c.kind,c.what,m[4],who,m[2],VMEV_SRC));
     }
   } else if(BTYPE==="esxi"){
+    parseVmwareLogs();   // v1.17.0: per-VM vmware.log lifecycle events (covers each VM's whole life since power-on, not hostd's short window)
     var hrel=resolveLog(["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"]); if(!hrel) return;
-    VMEV_SRC=hrel;
+    VMEV_SRC=(VMEV.length?VMEV_SRC+" + hostd.log":baseName(hrel));
     var hl=logLinesRot(hrel,DEEPROT), objs=esxiObjIdMap();
     /* "Task Created" only - hostd logs Created AND Completed for the same task, and they are ONE event.
        opID/user live in the [Originator@…] bracket; pull them from that bracket rather than trying to
@@ -1554,6 +1581,60 @@ function parseVmEvents(){
   if(VMEV.length>3000){ VMEV=VMEV.slice(0,3000);   // newest-first sort above -> the NEWEST 3000 are kept
     appendLog("  VM events: cap - keeping the newest 3,000 of "+nf(VMEV_TOTAL)+" (the panel discloses this)"); }
   appendLog("  VM events: "+nf(VMEV.length)+(VMEV.length?"":" (none in the retained log window)"));
+}
+/* per-VM vmware.log lifecycle events (ESXi, v1.17.0). vmware.log lives in each VM's folder and covers
+   the VM's whole life since power-on - so it fills the gap when hostd's RAM-disk window is short (the
+   reference bundle showed "VM events: 0" from hostd alone). High-signal, low-noise set only: power on
+   (with the vCenter opID that links to the task chain), clean exit, snapshot create (with the snapshot
+   NAME - routine backup vs a suspicious manual one), snapshot delete/consolidate, and ISO mounts (an
+   attacker-tooling / data-movement vector). vMotion is skipped - far too noisy on a DRS cluster. */
+/* PERF: the useful events cluster at the two ENDS of vmware.log - power-on (with the opID)
+   in the first KBs, snapshots / ISO mounts / clean exit accreting at the tail - so only a small head
+   and tail are ever read, never the middle. Files above VMWARELOG_MAXFILE are skipped outright: a
+   head+tail of a 300 MB chatty-VM log misses almost everything anyway, and in toc mode extracting it
+   would be ruinous. A total-bytes budget caps the whole pass. v1.17.0's naive 4 MB cap read ~140 MB
+   across 60 files (677 MB of logs) and took ~25 s; this bounds it to a few tens of MB. */
+/* asymmetric: the power-on (with opID) is in the first KBs, so a small HEAD suffices; snapshots /
+   ISO mounts / exit accrete at the tail, so TAIL is the larger read. */
+var VMWARELOG_HEAD=128*1024, VMWARELOG_TAIL=384*1024, VMWARELOG_SMALL=192*1024, VMWARELOG_MAXFILE=48*1024*1024,
+    VMWARELOG_BUDGET=40*1024*1024, VMWARELOG_PERVM=60, VMWARELOG_TOTAL=4000;
+function parseVmwareLogs(){
+  if(BTYPE!=="esxi" || !VMS.length) return;
+  var want=[], map={}, sizes={}, skippedBig=0, i, v, rel;
+  for(i=0;i<VMS.length;i++){ v=VMS[i]; if(!v.cfg || v.enc) continue;   // registered, non-encrypted VMs
+    rel=dirOfRel(v.cfg)+"/vmware.log";
+    var sz = (MODE==="toc") ? (TOCMAP[rel]!=null?TOCMAP[rel]:-1) : (fileExists(ROOT+"\\"+winRel(rel))?fileSize(ROOT+"\\"+winRel(rel)):-1);
+    if(sz<0 || map[lc(rel)]) continue;
+    if(sz>VMWARELOG_MAXFILE){ skippedBig++; continue; }   // too big to read cheaply - skip (disclosed)
+    map[lc(rel)]=v.name; sizes[lc(rel)]=sz; want.push(rel); }
+  if(!want.length){ appendLog("  vmware.log: none present for the registered VMs"+(skippedBig?(" ("+skippedBig+" skipped - over "+fmtSize(VMWARELOG_MAXFILE)+")"):"")); return; }
+  VMEV_SRC="vmware.log";
+  var base = (MODE==="toc") ? extractStripToTemp(want) : "";
+  var added=0, files=0, budget=VMWARELOG_BUDGET;
+  try{
+    for(i=0;i<want.length && added<VMWARELOG_TOTAL && budget>0;i++){ rel=want[i];
+      var path = (MODE==="tree") ? (ROOT+"\\"+winRel(rel)) : (base+"\\"+winRel(rel));
+      var txt=""; try{ if(fileExists(path)){ var fsz=sizes[lc(rel)];
+        if(fsz<=VMWARELOG_SMALL){ txt=readUtf8(path); budget-=fsz; }
+        else { txt=readCappedText(path,VMWARELOG_HEAD)+"\n"+readTailText(path,VMWARELOG_TAIL); budget-=(VMWARELOG_HEAD+VMWARELOG_TAIL); } } }catch(e){}
+      if(!txt) continue; files++;
+      var lines=String(txt).split("\n"), vmName=map[lc(rel)]||baseName(dirOfRel(rel)), perVm=0;
+      for(var L=0;L<lines.length && perVm<VMWARELOG_PERVM;L++){ var ln=lines[L];
+        if(ln.indexOf("SnapshotVMX")<0 && ln.indexOf("PowerOn request")<0 && ln.indexOf("left the building")<0 && ln.indexOf(".iso")<0) continue;   // cheap prefilter
+        var tm=ln.match(/^(\S+Z)/); if(!tm) continue; var ep=toEpoch(tm[1]), ev=null, opid="";
+        if(/Bootstrap\.PowerOn request/.test(ln)){ opid=(ln.match(/opID=([^\s:]+(?::[^\s]+)?)/)||[])[1]||""; ev={k:"start", w:"VM powered on (guest log)"}; }
+        else if(/left the building/.test(ln)){ ev={k:"stop", w:"VMX exited (clean power-off / shutdown)"}; }
+        else if(/SnapshotVMX_TakeSnapshot start/.test(ln)){ var snm=(ln.match(/start:\s*'([^']*)'/)||[])[1]||""; ev={k:"snapshot", w:"snapshot created"+(snm?(" - '"+trunc(snm,60)+"'"):"")}; }
+        else if(/SnapshotVMX.*(DeleteSnapshot|Consolidate)/.test(ln)){ ev={k:"snapshot", w:"snapshot removed / consolidated"}; }
+        else if(/Connecting to.*\.iso/i.test(ln)){ var iso=(ln.match(/Connecting to\s+([^\s,]+\.iso)/i)||[])[1]||""; ev={k:"other", w:"ISO image mounted"+(iso?(" - "+trunc(baseName(iso),50)):"")}; }
+        if(!ev) continue;
+        var via=opid?(/^esxui/i.test(opid)?"ESXi Host Client":(/^host-/i.test(opid)?"vCenter task":opid)):"";
+        VMEV.push(mkVmEv(ep,tm[1],vmName,ev.k,ev.w,"vmware.log",via?"":"",via,"vmware.log")); added++; perVm++; }
+    }
+    appendLog("  vmware.log: "+nf(added)+" event(s) from "+nf(files)+"/"+nf(want.length)+" VM log(s) (head+tail read)"+(skippedBig?("; "+skippedBig+" oversized log(s) skipped"):"")+(budget<=0?"; byte budget reached":""));
+  } finally {
+    if(base && !deleteTree(base)) appendLog("  WARNING: could not remove temp vmware.log dir "+base);
+  }
 }
 /* ---- Maintenance Events ----------------------------------------------------------------------
    The node's own service history: boots, shutdown/reboot (with the REASON where the host records
@@ -2340,8 +2421,38 @@ function parseLogons(){
       m=val[i].match(/Accepted\s+\S+\s+for\s+(\S+)\s+from\s+([\d.]+)/); if(m){ ep=toEpoch(vt); LOGON.push(mkLogon(ep,vt,"OK",m[1],m[2],"ssh","auth.log")); continue; }
       m=val[i].match(/Failed\s+password\s+for\s+(?:invalid user\s+)?(\S+)\s+from\s+([\d.]+)/); if(m){ ep=toEpoch(vt); LOGON.push(mkLogon(ep,vt,"FAIL",m[1],m[2],"ssh","auth.log")); }
     }
+    parseUtmpLogons();   // v1.17.0: binary wtmp (OS login/logout/reboot) + btmp (failed logins w/ source)
   }
   for(i=0;i<LOGON.length;i++) scoreLogon(LOGON[i]);
+}
+/* utmp struct (glibc x86-64, 384 B/record): type@0(i16) line@8(32) user@44(32) host@76(256)
+   tv_sec@340(i32). VCSA is Photon/glibc/x86-64, so this layout applies; a sanity gate on the record
+   timestamps discards a mis-decoded file rather than fabricating logon rows. wtmp = login/logout +
+   boots (independent of auth.log's short retention); btmp = failed logins with source host. */
+var UTMP_USER=7, UTMP_BOOT=2;
+function parseUtmpRecords(rel){
+  var src=ensureExtracted(rel); if(!src) return null;
+  var b=readBytes(src); if(!b) return null;
+  var reclen=384, n=Math.floor(b.length/reclen), out=[], bad=0, nonzero=0;
+  var capEp=captureEpoch()||Math.floor(new Date().getTime()/1000);
+  for(var r=0;r<n;r++){ var o=r*reclen, type=leI16(b,o), sec=leU32(b,o+340); if(!sec) continue;
+    nonzero++;
+    if(sec<946684800 || sec>capEp+172800){ bad++; continue; }   // pre-2000 or future = wrong layout
+    out.push({type:type, sec:sec, user:cStr(b,o+44,32), line:cStr(b,o+8,32), host:cStr(b,o+76,256)}); }
+  if(nonzero && bad>nonzero*0.2){ appendLog("  "+baseName(rel)+": "+bad+"/"+nonzero+" records implausible for the glibc layout - binary decode discarded (non-glibc / corrupt / tampered)."); return null; }
+  return out;
+}
+function parseUtmpLogons(){
+  var nW=0, nB=0, recs, i, rc;
+  recs=parseUtmpRecords("var/log/wtmp");
+  if(recs){ for(i=0;i<recs.length;i++){ rc=recs[i];
+    if(rc.type===UTMP_USER && trimStr(rc.user)){ var ts=new Date(rc.sec*1000).toISOString();
+      LOGON.push(mkLogon(rc.sec, ts, "OK", rc.user, ipOfHost(rc.host), "OS login (wtmp)", "wtmp")); nW++; } } }
+  recs=parseUtmpRecords("var/log/btmp");
+  if(recs){ for(i=0;i<recs.length;i++){ rc=recs[i]; if(!trimStr(rc.user)) continue;
+    var ts2=new Date(rc.sec*1000).toISOString();
+    LOGON.push(mkLogon(rc.sec, ts2, "FAIL", rc.user, ipOfHost(rc.host), "OS login (btmp)", "btmp")); nB++; } }
+  if(nW||nB) appendLog("  utmp: "+nf(nW)+" wtmp session(s), "+nf(nB)+" btmp failed login(s)");
 }
 function mkLogon(ep,ts,res,user,ip,method,src){ return {kind:"logon",epoch:ep,when:isoShort(ts),result:res,user:user,ip:ip,method:method,src:src,score:0,tags:[],reasons:[],blob:lc(res+" "+user+" "+ip+" "+method+" "+src)}; }
 function scoreLogon(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob);
@@ -2458,9 +2569,35 @@ function parseActions(){
     var val=logLinesRot(resolveLog(["var/log/auth.log"]));
     for(i=0;i<val.length;i++){ m=val[i].match(/^(\S+[\+Z][\d:]*).*\bsudo:\s+(\S+)\s*:\s+.*COMMAND=(.+)$/); if(!m) continue;
       ep=toEpoch(m[1]); ACTIONS.push(mkAct(ep,m[1],m[2],m[3],"auth.log","sudo command")); }
-    parseSsoAudit(); parseAuditd();
+    parseSsoAudit(); parseAuditd(); parseApplmgmtAudit();
   }
   for(i=0;i<ACTIONS.length;i++) scoreAction(ACTIONS[i]);
+}
+/* VAMI / appliance-management audit (var/log/vmware/applmgmt-audit/). Records per-user authentication
+   and per-operation AUTHORIZATION decisions on the appliance API - this is where log-forwarding and
+   backup-config changes (anti-forensics), firewall/network/NTP edits, and VAMI shutdown/reboot land.
+   The stream is mostly routine root activity, so it is all added as Actions (searchable) but only the
+   SENSITIVE operations are scored - matched by service_id/operation_id keyword. */
+/* The audit stream is dominated by config READS (get/query/list) - those are noise. Only WRITE
+   operations are real actions, and only writes on a security-relevant service are scored. */
+var APPLMGMT_WRITE=/^(create|set|update|delete|add|remove|start|stop|enable|disable|import|restore|apply|patch|install|reset|modify|change|configure)/i;
+var APPLMGMT_SENS=/logging|forward|firewall|backup|restore|network|ntp|\btime\b|shutdown|reboot|user|account|access\b|\bssh\b|update|patch|certificate|deployment/i;
+function parseApplmgmtAudit(){
+  var rel=resolveLog(["var/log/vmware/applmgmt-audit/applmgmt-audit.log"]); if(!rel) return;
+  var lines=DEEPROT?logLinesRot(rel,true):logLines(rel), n=0, i;
+  for(i=0;i<lines.length && n<4000;i++){ var ln=lines[i];
+    if(ln.indexOf("Authorization request")<0) continue;
+    var m=ln.match(/^(\S+?):\s.*Authorization request by user:\s*([^\s]+)\s+for service_id:\s*([^\s,]+),\s*operation_id:\s*([^\s]+)/);
+    if(!m) continue;
+    var ts=m[1], user=m[2], svc=m[3], op=m[4].replace(/\$task$/,"");
+    if(!APPLMGMT_WRITE.test(op)) continue;   // reads (get/query/list/check) are not actions
+    var resp=(lines[i+1]||"").match(/authorized=(\w+)/i) || (ln.match(/authorized=(\w+)/i));
+    var authd=resp?/true/i.test(resp[1]):null;
+    var svcShort=svc.replace(/^com\.vmware\.appliance\./,"").replace(/^com\.vmware\./,"");
+    var a=mkAct(toEpoch(ts.replace(" ","T")), ts.replace(" ","T"), user, svcShort+" -> "+op+(authd===false?" (DENIED)":""), "applmgmt-audit", "VAMI appliance-mgmt");
+    if(APPLMGMT_SENS.test(svc+" "+op)) a.applmgmtSens=true;
+    ACTIONS.push(a); n++; }
+  if(n) appendLog("  applmgmt audit: "+nf(n)+" appliance-mgmt CHANGE operation(s) (reads excluded)");
 }
 /* ---- vobd: the host's own audit-event stream (esx.audit.*). Live vobd.log often does NOT
    exist (rotations only), so rotations are ALWAYS read here - they are small. vob.* duplicates
@@ -2609,6 +2746,7 @@ function parseNetwork(){
     }
     NETINFO.sus=scanSusProc(readMember("commands/ps_-Cc---tree.txt"));
     NETINFO.web=parseRhttp();
+    NETINFO.arp=parseArpNeighbors();   // v1.17.0: ARP/neighbor cache - a live capture that survives log encryption
   } else if(BTYPE==="vcsa"){
     txt=readMember("commands/netstat_-anp.txt");
     if(trimStr(txt)){ NETINFO.captured=true; var vl=txt.split("\n");
@@ -2623,6 +2761,33 @@ function parseNetwork(){
     NETINFO.web=parseEnvoy();
   }
   NETINFO.listen.sort(function(a,b){ if(a.scope!==b.scope) return a.scope<b.scope?1:-1; return a.proc<b.proc?-1:1; });
+}
+/* ARP / neighbor cache (ESXi: localcli network ip neighbor list). A point-in-time capture of L2
+   peers at bundle time - so, unlike the logs, it SURVIVES a ransomware log wipe (proven on the
+   reference ransomed host). Cross-joining with logon source IPs answers "was this login source on
+   the same management segment": a logon IP present in ARP shares the L2; one absent is routed/remote. */
+function parseArpNeighbors(){
+  var txt=readMember("commands/localcli_network_ip_neighbor_list.txt"); if(!trimStr(txt)) return null;
+  var lines=String(txt).split("\n"), out=[], i;
+  for(i=0;i<lines.length;i++){ var ln=trimStr(lines[i]); if(!ln) continue;
+    var m=ln.match(/^(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]+)\s+([0-9a-f:]{17}|\(incomplete\))\s+(\S+)\s+(\S+)/i);
+    if(!m || /^Neighbor\b/i.test(ln)) continue;
+    out.push({ip:m[1], mac:(/incomplete/i.test(m[2])?"":m[2]), vmknic:m[3], state:(ln.match(/\b(Reachable|Stale|Dynamic|Invalid|Probe|Delay|Permanent)\b/i)||[])[1]||""});
+  }
+  return out.length?out:null;
+}
+/* logon source IPs that also appear in the ARP cache = same L2 segment (management-adjacent). The
+   management segment is itself RFC1918, so private IPs are NOT excluded here - the question is purely
+   L2 adjacency: an IP in the ARP cache shares the segment; one absent is routed/remote. Only empty and
+   loopback sources are skipped (they name no external host). */
+function arpLogonOverlap(){
+  if(!(NETINFO && NETINFO.arp)) return null;
+  var inArp={}, i; for(i=0;i<NETINFO.arp.length;i++) inArp[lc(NETINFO.arp[i].ip)]=1;
+  var onSeg={}, off={};
+  for(i=0;i<LOGON.length;i++){ var ip=LOGON[i].ip; if(!ip || ip==="*" || isLoopback(ip)) continue;
+    (inArp[lc(ip)]?onSeg:off)[ip]=1; }
+  var a=[],b=[],k; for(k in onSeg){ if(onSeg.hasOwnProperty(k)) a.push(k); } for(k in off){ if(off.hasOwnProperty(k)) b.push(k); }
+  return {onSegment:a, offSegment:b};
 }
 function scanSusProc(txt){ var out=[]; if(!trimStr(txt)) return out; var lines=String(txt).split("\n");
   for(var i=0;i<lines.length && out.length<40;i++){ var ln=trimStr(lines[i]); if(!ln) continue;
@@ -2751,6 +2916,12 @@ function scoreAction(r){ r.score=0; r.tags=[]; r.reasons=[]; var h=iocHit(r.blob
   if(r.src==="sso audit" && /creat|add|delete|remove|password|unlock|policy|certificat/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("SSO identity/config change"); }
   if(r.src==="esxupdate.log"){ r.score+=1; r.reasons.push("software installed/removed on host"); }
   if(r.src==="auditd"){ r.score+=1; r.tags.push("SUSPECT"); r.reasons.push("non-routine appliance shell command"); }
+  if(r.src==="applmgmt-audit" && r.applmgmtSens){
+    if(/logging|forward/i.test(r.cmd)){ r.score+=3; r.tags.push("SUSPECT"); r.reasons.push("appliance log-forwarding change (anti-forensics vector)"); }
+    else if(/backup|restore/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("appliance backup/restore configuration change"); }
+    else if(/firewall|network|ssh|access|certificate/i.test(r.cmd)){ r.score+=2; r.tags.push("SUSPECT"); r.reasons.push("appliance security/network configuration change"); }
+    else { r.score+=1; r.reasons.push("sensitive appliance-management operation"); }
+  }
 }
 function buildTimeline(){
   TIMELINE=[]; var i;
@@ -3653,6 +3824,7 @@ function buildPersistence(){
     PERSIST.push(cronCap
       ? pfind("Persistence","cron / scheduled tasks","review","cron evidence present at "+cronCap.rel+" - unusual for a vm-support bundle; open and read it",cronCap.rel)
       : pfind("Persistence","cron / scheduled tasks","na","vm-support collects NO cron evidence on ESXi (no /var/spool/cron/crontabs, no crontab capture, no cron log), so a cron-based persistence entry is UNKNOWABLE from this bundle - it is not absent. Check the host directly, and see rc.local.d above plus any shell 'crontab' command in Actions"));
+    esxiPostureRows();   // v1.17.0: VIB signature verification, audit facility, pending image, container runtime
     logIntegrity([["var/run/log/shell.log","scratch/log/shell.log","var/log/shell.log"],["var/run/log/auth.log","scratch/log/auth.log","var/log/auth.log"],["var/run/log/hostd.log","scratch/log/hostd.log","var/log/hostd.log"],["var/run/log/vpxa.log","scratch/log/vpxa.log","var/log/vpxa.log"]]);
   } else if(BTYPE==="vcsa"){
     var pre = MODE==="tree" ? fileExists(ROOT+"\\etc\\ld.so.preload") : (TOCMAP["etc/ld.so.preload"]!=null);
@@ -3694,8 +3866,80 @@ function buildPersistence(){
       ? pfind("Persistence","cron jobs DEFINED (etc/cron.d, etc/crontab, var/spool/cron)","review",(crons.length?(crons.length+" cron.d file(s): "+trunc(crons.join(", "),90)+"; "):"")+(ct!==""?"etc/crontab present; ":"")+(spool.length?(spool.length+" user crontab(s)"):""))
       : pfind("Persistence","cron jobs DEFINED (etc/cron.d, etc/crontab, var/spool/cron)","na","vc-support does not collect the crontabs - their CONTENT is unknowable from this bundle. Check var/log/cron above for what actually ran, and read the crontabs on the appliance itself"));
     PERSIST.push(pfind("Persistence","SSH authorized_keys / accounts","na","authorized_keys / passwd not captured in vc-support bundle"));
+    rpmVerifyRow();      // v1.17.0: tampered-binary detection from rpm -qa --verify
+    systemdContentRows();// v1.17.0: inspect systemd unit CONTENT for suspicious ExecStart
     logIntegrity(["var/log/vmware/sso/websso.log","var/log/auth.log","var/log/vmware/vmdird/vmdird.log"]);
   }
+}
+/* ESXi posture / integrity rows (v1.17.0), each reading a captured command output. */
+function esxiPostureRows(){
+  // per-component VIB signature verification (stronger than the acceptance-level check above)
+  var sv=readMember("commands/localcli_software-component-signature-verify.txt");
+  if(trimStr(sv)){ var svl=String(sv).split("\n"), failed=[], j;
+    for(j=0;j<svl.length;j++){ if(/^\s*(Name|-{3,})/.test(svl[j])) continue; if(/\bFailed\b/i.test(svl[j])){ var nm=trimStr(svl[j]).split(/\s{2,}/)[0]; if(nm) failed.push(nm); } }
+    PERSIST.push(failed.length
+      ? pfind("Integrity","VIB signature verification","suspect",failed.length+" component(s) FAILED signature verification: "+trunc(failed.join(", "),160)+" - unsigned/tampered VIB","commands/localcli_software-component-signature-verify.txt")
+      : pfind("Integrity","VIB signature verification","clean","all installed components pass signature verification","commands/localcli_software-component-signature-verify.txt")); }
+  // host audit facility state (esx.audit / viewAudit)
+  var au=readMember("commands/auditRecordReader.txt");
+  if(trimStr(au)){ var off=/not in use|disabled/i.test(au);
+    PERSIST.push(pfind("Config","Host audit record facility",off?"review":"clean",off?"the ESXi audit record storage facility is NOT in use - the host's own tamper-resistant audit trail is off, so shell/DCUI actions are only in the (wipeable) text logs":"audit record facility active","commands/auditRecordReader.txt")); }
+  // pending (staged-but-not-booted) image profile - a change queued for next reboot
+  var reb=readMember("commands/localcli_software-profile-get---rebooting-image.txt");
+  if(trimStr(reb)){ var pending=!/No pending image profile/i.test(reb);
+    PERSIST.push(pfind("Config","Pending image profile (next boot)",pending?"review":"clean",pending?"a DIFFERENT image profile is staged for the next reboot than the one running now - a queued change; confirm it is an authorised patch, not an attacker-staged image":"no pending image - the running profile is what boots","commands/localcli_software-profile-get---rebooting-image.txt")); }
+  // ESXi 8 container runtime (crx) - a running container on a hypervisor deserves a look
+  var crx=readMember("commands/crx-cli_list.txt");
+  if(trimStr(crx)){ var cl=String(crx).split("\n"), cn=0, ck;
+    for(ck=0;ck<cl.length;ck++){ var t=trimStr(cl[ck]); if(t && !/^ID\b|^-{3,}/.test(t)) cn++; }
+    PERSIST.push(cn
+      ? pfind("Persistence","CRX / container runtime","review",cn+" CRX container(s) listed - native containers on the hypervisor; verify each is an expected workload","commands/crx-cli_list.txt")
+      : pfind("Persistence","CRX / container runtime","clean","no CRX containers running","commands/crx-cli_list.txt")); }
+}
+/* rpm -qa --verify: package-DB deviations. Most drift is routine on a patched appliance - config
+   files (c), Python bytecode (__pycache__/.pyc), kernel modules.* indexes (regenerated by depmod),
+   and firstboot-customized .properties/.conf/.war/.xml. The ONLY reliable tamper signal here is an
+   actual EXECUTABLE in bin/sbin or a shared LIBRARY (.so) with an md5 (content) deviation. Even then
+   an appliance patch can update a file the RPM DB does not track, so this is a REVIEW lead, not a
+   verdict. On the reference vCenter this correctly yields zero after the noise is excluded. */
+var RPM_NOISE=/__pycache__|\.py[co]$|\/modules\.\w+(\.bin)?$|\/lib\/modules\/|\.(properties|conf|cfg|war|jar|xml|service|timer|alias|dep|symbols|devname|map|cache|db|json|txt|md)$/i;
+var RPM_EXEC=/^\/(bin|sbin|usr\/bin|usr\/sbin|usr\/local\/bin|usr\/local\/sbin)\/|\.so(\.\d+)*$/i;
+function rpmVerifyRow(){
+  var txt=readMember("commands/rpm_-qa---verify.txt"); if(!trimStr(txt)){ PERSIST.push(pfind("Integrity","Package verification (rpm --verify)","na","rpm_-qa---verify.txt not captured")); return; }
+  var lines=String(txt).split("\n"), hits=[], i;
+  for(i=0;i<lines.length;i++){ var ln=trimStr(lines[i]); if(!ln) continue;
+    var m=ln.match(/^(\S{9})\s+(?:([cdglr])\s+)?(\/\S+)$/); if(!m) continue;
+    var flags=m[1], ftype=m[2]||"", path=m[3];
+    if(ftype==="c" || ftype==="d" || ftype==="g") continue;        // config / doc / ghost - routine drift
+    if(flags.charAt(2)!=="5") continue;                            // require an MD5 (content) deviation
+    if(RPM_NOISE.test(path)) continue;                             // regenerated / customized data files
+    if(!RPM_EXEC.test(path)) continue;                             // only bin/sbin executables + .so libraries
+    if(hits.length<12) hits.push(path); }
+  PERSIST.push(hits.length
+    ? pfind("Integrity","Package verification (rpm --verify)","review",hits.length+" executable/library file(s) differ (md5) from the package database - a patch can update files the RPM DB does not track, but an UNEXPECTED one is a tampered-binary lead; review each: "+trunc(hits.join(", "),180),"commands/rpm_-qa---verify.txt")
+    : pfind("Integrity","Package verification (rpm --verify)","clean","no executable/library content deviations from the RPM database (config drift, bytecode and regenerated indexes are expected and ignored)","commands/rpm_-qa---verify.txt"));
+}
+/* systemd unit CONTENT inspection (v1.17.0): the existing check LISTS units/timers/overrides; this
+   reads their bodies and upgrades to SUSPECT when an ExecStart* line runs a shell/download/decoder -
+   the actual persistence payload, not just the presence of a unit. */
+var SYSD_EXEC_SUS=/ExecStart\w*=.*(\bcurl\b|\bwget\b|\bnc\b|\bncat\b|bash\s+-|sh\s+-c|base64|python\s+-c|\/tmp\/|\/dev\/shm\/|\|\s*sh\b)/i;
+function systemdUnitRels(){
+  var out=[], re=/^etc\/systemd\/system\/.+\.(service|timer|conf)$/i, i;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ if(re.test(TOC[i].rel)) out.push(TOC[i].rel); } }   // any depth (drop-ins live in .service.d/)
+  else { var pre="etc/systemd/system", baseD=ROOT+"\\"+winRel(pre);
+    try{ var fso=new ActiveXObject("Scripting.FileSystemObject");
+      if(fso.FolderExists(baseD)){ (function walk(dir,relpre){ var fo; try{ fo=fso.GetFolder(dir); }catch(e){ return; }
+        var e2=new Enumerator(fo.Files); for(;!e2.atEnd();e2.moveNext()){ var nm=e2.item().Name+""; if(/\.(service|timer|conf)$/i.test(nm)) out.push(relpre+"/"+nm); }
+        var s=new Enumerator(fo.SubFolders); for(;!s.atEnd();s.moveNext()){ walk(s.item().Path+"", relpre+"/"+(s.item().Name+"")); } })(baseD, pre); }
+    }catch(x){} }
+  return out;
+}
+function systemdContentRows(){
+  var rels=systemdUnitRels(), sus=[], i;
+  for(i=0;i<rels.length && sus.length<10;i++){ var body=readMember(rels[i]); if(!body) continue;
+    var ml=String(body).split("\n");
+    for(var j=0;j<ml.length;j++){ if(SYSD_EXEC_SUS.test(ml[j])){ sus.push(baseName(rels[i])+": "+trunc(trimStr(ml[j]),90)); break; } } }
+  if(sus.length) PERSIST.push(pfind("Persistence","systemd unit ExecStart payload","suspect",sus.length+" unit(s) run a shell/download/decoder at start: "+trunc(sus.join(" | "),200),"etc/systemd/system"));
 }
 function persistHits(){ var n=0; for(var i=0;i<PERSIST.length;i++){ var v=PERSIST[i].verdict; if(v==="suspect"||v==="review") n++; } return n; }
 
@@ -5246,6 +5490,14 @@ function buildReportHtml(){
     if(NETINFO.sus.length){ h.push('<h3 class="hit">Suspicious processes ('+NETINFO.sus.length+') - attacker-tool / reverse-shell patterns</h3><div class="pre">');
       for(i=0;i<NETINFO.sus.length;i++) h.push(rEsc(NETINFO.sus[i]));
       h.push('</div>'); }
+    if(NETINFO.arp && NETINFO.arp.length){ var rov=arpLogonOverlap();
+      h.push('<h3>ARP / neighbor cache ('+NETINFO.arp.length+' L2 neighbor(s) at capture time)</h3>');
+      h.push('<p class="muted">A live command capture, so it survives a log wipe.'+(rov&&rov.onSegment.length?(' <b>'+rov.onSegment.length+' logon source IP(s) are on this segment:</b> '+rEsc(rov.onSegment.slice(0,10).join(", "))):'')+'</p>');
+      var rInLog={}; for(i=0;i<LOGON.length;i++){ if(LOGON[i].ip) rInLog[lc(LOGON[i].ip)]=1; }
+      h.push('<table><tr><th>Neighbor IP</th><th>MAC</th><th>Vmknic</th><th>State</th><th>Logon source?</th></tr>');
+      for(i=0;i<NETINFO.arp.length;i++){ var nb=NETINFO.arp[i]; var isL=rInLog[lc(nb.ip)];
+        h.push('<tr'+(isL?' class="rw"':'')+'><td class="mono">'+rEsc(nb.ip)+'</td><td class="mono">'+rEsc(nb.mac||"(incomplete)")+'</td><td class="mono muted">'+rEsc(nb.vmknic)+'</td><td class="mono">'+rEsc(nb.state||"-")+'</td><td class="mono'+(isL?'':' muted')+'">'+(isL?"yes":"-")+'</td></tr>'); }
+      h.push('</table>'); }
     h.push('<h3>External connections ('+NETINFO.ext.length+')</h3>');
     if(!NETINFO.ext.length) h.push('<p class="muted">None - every established session is to a private/local address.</p>');
     else { h.push('<table><tr><th>Proto</th><th>Local</th><th>Foreign (external)</th><th>Process</th></tr>');
@@ -6201,6 +6453,14 @@ function renderNetwork(){
   }
   if(NETINFO.sus.length){ h+='<div class="panel" style="margin-bottom:10px"><h4 style="color:#ff8b8b">Suspicious processes ('+NETINFO.sus.length+') - attacker-tool / reverse-shell patterns</h4>';
     h+='<div class="dl" style="max-height:20vh">'; for(i=0;i<NETINFO.sus.length;i++) h+=esc(NETINFO.sus[i])+"\n"; h+='</div></div>'; }
+  if(NETINFO.arp && NETINFO.arp.length){ var ov=arpLogonOverlap();
+    h+='<div class="panel" style="margin-bottom:10px"><h4>ARP / neighbor cache <span class="sub">- '+NETINFO.arp.length+' L2 neighbor(s) at capture time (localcli network ip neighbor list) - a LIVE capture that survives a log wipe'+(ov&&ov.onSegment.length?('; '+ov.onSegment.length+' logon source IP(s) are on this segment'):'')+'</span></h4>';
+    if(ov && ov.onSegment.length){ h+='<div style="font-size:12px;margin-bottom:4px"><b style="color:#e3b341">Logon sources also in the ARP cache (same management L2 segment):</b> <span class="mono">'+esc(ov.onSegment.slice(0,10).join(", "))+'</span></div>'; }
+    h+='<div class="scroll" style="max-height:26vh"><table><thead><tr><th title="Neighbor IP the host had resolved at capture time. Because this is a live command capture, it persists even when an attacker wipes the text logs - it is often the only surviving record of who was on the segment.">Neighbor IP</th><th title="Hardware (MAC) address. (incomplete) = the host tried to resolve it but got no answer - a probe for a host that was not responding, which can itself be a scanning tell.">MAC</th><th title="The VMkernel NIC the neighbor was seen on.">Vmknic</th><th title="ARP entry state - Reachable/Stale/Dynamic are normal; Invalid/(incomplete) mean an unresolved probe.">State</th><th title="Whether this neighbor IP also appears as a logon source (same L2 segment) - a strong management-adjacency signal.">Logon source?</th></tr></thead><tbody>';
+    var inLog={}; for(i=0;i<LOGON.length;i++){ if(LOGON[i].ip) inLog[lc(LOGON[i].ip)]=1; }
+    for(i=0;i<NETINFO.arp.length;i++){ var nb=NETINFO.arp[i]; var isLog=inLog[lc(nb.ip)]; var incomplete=!nb.mac;
+      h+='<tr'+(isLog?' class="hl-ioc"':'')+'><td class="mono">'+esc(nb.ip)+'</td><td class="mono'+(incomplete?' muted':'')+'">'+esc(nb.mac||"(incomplete)")+'</td><td class="mono muted">'+esc(nb.vmknic)+'</td><td class="mono'+(/invalid/i.test(nb.state)?' muted':'')+'">'+esc(nb.state||"-")+'</td><td class="mono'+(isLog?'':' muted')+'">'+(isLog?"yes - logon source":"-")+'</td></tr>'; }
+    h+='</tbody></table></div></div>'; }
   h+='<div class="panel" style="margin-bottom:10px"><h4>External connections <span class="sub">- established sessions to non-private (public) IPs; '+NETINFO.ext.length+' found</span></h4>';
   if(!NETINFO.ext.length) h+='<div class="muted" style="font-size:12px">none - all established sessions are to private/local addresses</div>';
   else { h+='<div class="scroll" style="max-height:30vh"><table><thead><tr><th title="Socket protocol (TCP/UDP).">Proto</th><th title="Local address:port on this node - the side of the connection the appliance owns.">Local</th><th title="The remote end of an ESTABLISHED connection to a non-local address - an outbound connection from an appliance is unusual and worth explaining.">Foreign (external)</th><th title="The process holding the socket.">Process</th></tr></thead><tbody>';
