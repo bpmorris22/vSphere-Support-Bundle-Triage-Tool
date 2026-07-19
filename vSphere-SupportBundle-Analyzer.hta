@@ -63,10 +63,12 @@
   .wrap{padding:12px 14px}
   .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
   /* Heading ladder (was inverted: the pane title was 11px, SMALLER than the 12px headings inside it).
-   pane title 14px  >  heading inside a pane 12px (.panel h4 / a section <h3> in the card body)  >
+   pane title 14px  >  heading inside a pane 11px (.panel h4 / a section <h3> in the card body)  >
    table column header 10px (th). ".card > h3" = the card's OWN title (direct child); a nested <h3>
-   rendered into a body div (e.g. "Top findings" in #secBody) is NOT a direct child and stays 12px. */
-.card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
+   rendered into a body div (e.g. "Top findings" in #secBody) is NOT a direct child and stays 11px.
+   v1.16.0: section headings follow the UAC Analyzer convention - 11px UPPERCASE, letter-spaced,
+   BRIGHT (#e6edf3) with any inline description staying muted/lowercase via its own span. */
+.card h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#e6edf3}
 .card > h3{font-size:14px;margin:0 0 10px}
   label.fld{display:block;margin:6px 0 2px;font-size:11px;color:#8b949e}
   input.txt,select,textarea{background:#1c2330;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:5px 8px;font-size:13px;font-family:Consolas,monospace}
@@ -80,6 +82,13 @@
   .btn.orange:hover{border-color:#e3852a}
   .btn.purple{background:#6e40c9;border-color:#6e40c9;color:#fff}
   .btn.purple:hover{border-color:#8957e5}
+  /* tab data-state colours (UAC Analyzer convention, v1.16.0): once a bundle is analysed the tab bar
+     answers "where is there something to read" at a glance - selected stays blue (.on), light green =
+     the tab has content, light orange = it parsed empty. Painted only after analysis. */
+  .btn.hasdata{background:#cff3d9;border-color:#7bc99a;color:#0a1710}
+  .btn.hasdata:hover{border-color:#2ea043}
+  .btn.nodata{background:#ffe2c2;border-color:#e0a860;color:#1a1206}
+  .btn.nodata:hover{border-color:#e3a03a}
   .maxwarn{display:inline-block;color:#e3b341;font-weight:600;cursor:help;border:1px solid #8a7a2a;background:#2a2410;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:6px;vertical-align:middle}
   .btn.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
   .btn[disabled]{opacity:.5;cursor:default}
@@ -114,6 +123,10 @@
   .tag.cmd{background:#21262d;color:#8b949e;border:1px solid #30363d}
   .tag.danger{background:#3a1416;color:#ff6b6b;border:1px solid #b83030;font-weight:700}
   .tag.sus{background:#3a1416;color:#ff8b8b;border:1px solid #8b3a3a}
+  /* tagCls() returns "ioc"/"info" but these had no rule and fell back to the unstyled base .tag -
+     so IOC / CRITICAL / BREACH / UID0 (the strongest findings) rendered muted. ioc = brightest red. */
+  .tag.ioc{background:#4a1418;color:#ff5c5c;border:1px solid #d13030;font-weight:700}
+  .tag.info{background:#161b22;color:#8b949e;border:1px solid #30363d}
   .hl-ioc{color:#ff6b6b;font-weight:600}
   tr.hl-ioc td{color:#ff8b8b}
   .pgood{color:#3fb950;font-weight:600}.pmiss{color:#8b949e}.pkey{color:#e3b341;font-weight:700}
@@ -138,7 +151,7 @@
   .ioctbl input.txt,.ioctbl select{width:100%;box-sizing:border-box;margin:0}
   .roadmap{font-size:11px;color:#8b949e;border:1px dashed #30363d;border-radius:6px;padding:6px 10px;margin-top:8px}
   .panel{border:1px solid #30363d;border-radius:8px;padding:10px 12px;background:#0f141b}
-  .panel h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#c9d1d9}
+  .panel h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#e6edf3}
   .panel h4 .evf{font-size:11px;margin-right:6px;cursor:pointer;white-space:nowrap}
 .sub{text-transform:none;letter-spacing:0;color:#8b949e;font-weight:400;font-size:11px}
   .ind{display:flex;align-items:flex-start;padding:4px 0;border-bottom:1px solid #1c222b;font-size:12px}
@@ -246,6 +259,7 @@
         <button class="btn" id="tabSec" data-tab="sec" title="Opens with the intrusion &amp; ransomware indicator panel (derived from the parsed Logons/Actions + node config - SSH/shell use, external source IPs, host-encryption or recovery-key access, mass power-off, firewall disabled, payloads in /tmp, bulk VMDK/VMX ops, ransom-note scan). Below it, the graded security posture: installed VIBs (unsigned / CommunitySupported / unrecognized vendor / added after the base image), VIB acceptance level, host encryption mode, Secure Boot / TPM / execInstalledOnly, MOB, account lockout and password policy, shell/SSH idle timeout, DCUI access list, plus the advisory known-CVE exposure.">Security</button>
         <button class="btn" id="tabNet" data-tab="net" title="Socket snapshot at capture time (ESXi: localcli network ip connection list; vCenter: netstat -anp) - listeners, which are network-facing vs loopback-only, established external connections, and suspicious processes holding sockets. Also the web/proxy request summary by source IP.">Network</button>
         <button class="btn" id="tabVms" data-tab="vms" title="The hosted VM inventory. ESXi: parsed from each registered .vmx, and VMs whose .vmx is missing or ransom-renamed are still listed and tagged 'possibly encrypted'. vCenter: reconstructed from vpxd + DRS dumps + the vSAN-health baseline (a vc-support bundle has no .vmx). Includes the vSAN GUID Path for recovery. Click a VM (ESXi) for its activity timeline.">VMs</button>
+        <button class="btn" id="tabUsers" data-tab="users" title="Every account this bundle gives evidence for, from CONFIG (etc/passwd / etc/group / SSH authorized_keys where captured - vm-support usually omits passwd, so on ESXi the GROUP file is the created-account tell) joined with OBSERVED ACTIVITY (logons OK/FAIL, external source IPs, sessions, actions, SSO identity events). Flags UID-0 clones, non-stock local accounts and service accounts with shells.">Users</button>
         <button class="btn" id="tabLogon" data-tab="logon" title="Who authenticated, from where. ESXi: shell.log, auth.log (SSH/DCUI/PAM) and hostd SOAP logins. vCenter: SSO websso.log (the authoritative login source), OS auth.log/sudo, and human SAML logins from vpxd. Shows user, source IP, success/failure - scored for external/public IPs, failures, and privileged accounts.">Logons</button>
         <button class="btn" id="tabAct" data-tab="act" title="What was DONE, and by whom. ESXi: shell command history and hostd tasks. vCenter: meaningful vpxd tasks (*_Task, permission/role changes) attributed to the nearest preceding human login. Scored for suspicious commands - SSH enable, host-encryption change, mass power-off, firewall disable, payloads in /tmp, bulk VMDK ops.">Actions</button>
         <button class="btn" id="tabTime" data-tab="time" title="Logons and Actions merged into one time-ordered view - the sequence that turns isolated events into a story. Filter by score and by the case window (Set case window /from /to). Exports a Timeline-Explorer-friendly CSV.">Timeline</button>
@@ -265,8 +279,6 @@
           <div class="kvgrid" id="ovMeta"></div>
         </div>
         <div class="col3" style="width:49%">
-          <h3>Key-file coverage</h3>
-          <div id="ovStats"></div>
           <div id="ovMissing" style="margin-top:8px"></div>
         </div>
       </div>
@@ -364,6 +376,8 @@
             <label style="font-size:12px" title="Hide unpaired rows - sessions missing a login or logout in the captured window (blank duration: still active at capture, pre-window, or a failed login). The brief filter deliberately keeps these; tick this to drop them too."><input type="checkbox" id="sessNoUnp"> hide unpaired</label></span></span>
         <span id="actFilt" class="hide"><span class="sep"></span>
           <span style="font-size:12px">actor <select id="actActor" class="txt" style="max-width:160px" title="Filter Actions by actor"></select> &middot; kind <select id="actKind" class="txt" style="max-width:170px" title="Filter Actions by kind"></select></span></span>
+        <span id="usersFilt" class="hide"><span class="sep"></span>
+          <span style="font-size:12px">user <select id="userSel" class="txt" style="max-width:190px" title="Filter by BASE identity (the part before @). Selecting 'administrator' shows every variant that base was attempted under - all domains AND all typo'd principal strings from failed logons, which is exactly how a guessing/typo cluster is reviewed as one group."></select></span></span>
         <span id="timeFilt" class="hide"><span class="sep"></span>
           <span style="font-size:12px">kind <select id="timeKind" class="txt" style="max-width:180px" title="Filter Timeline by kind"></select></span></span>
         <span class="sep"></span>
@@ -459,7 +473,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.15.3";
+var APP_VERSION = "1.16.0";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -477,7 +491,7 @@ var INVENTORY=[];            // [{cat,name,desc,rels,prefix,key,present,size,cou
 var NODE={};                 // node-config kv
 var LASTOUTDIR="", EXDIR="", NODEDIR="";
 var TAB="overview", QUERY="", CATF="", PRESONLY=false, BUSY=false, qTimer=null, inTimer=null;
-var SORT={ inv:{k:0,d:1}, logon:{k:0,d:-1}, act:{k:0,d:-1}, time:{k:1,d:-1}, ioc:{k:0,d:1}, sess:{k:0,d:-1} };
+var SORT={ inv:{k:0,d:1}, logon:{k:0,d:-1}, act:{k:0,d:-1}, time:{k:1,d:-1}, ioc:{k:0,d:1}, sess:{k:0,d:-1}, users:{k:0,d:-1} };
 var SESSIONS=[];        // paired login sessions (Logons tab "Login sessions" view)
 var SESS_VIEW=false;    // Logons tab: false=raw login events, true=paired sessions
 var SESS_HIDELOOP=true; // sessions view: hide loopback-source (internal-service) sessions - ON by default
@@ -486,6 +500,7 @@ var SESS_MINSEC=5;      // brief-session threshold, seconds
 var SESS_NOUNP=false;   // sessions view: hide unpaired rows (no login or no logout in window = blank duration)
 var LISTEN_HIDELOOP=true; // Network tab: hide loopback-only listeners - ON by default
 var ACT_ACTOR="", ACT_KIND="";  // Actions tab: actor + kind dropdown filters
+var USER_SEL="";                // Users tab: base-identity dropdown filter
 var TIME_KIND="";               // Timeline tab: kind dropdown filter
 var VM_OS="";                   // Hosted VMs tab: Guest-OS dropdown filter
 var VM_SIMPLE=true;             // Hosted VMs tab: Simplified view (default ON) - only VMs with an identified host, VM/Host/Status columns only
@@ -947,7 +962,7 @@ function analyze(){
   if(!requireHost()) return;
   var outdir=trimStr($("outDir").value); if(!outdir){ syncOutDir(); outdir=trimStr($("outDir").value); }
   LASTOUTDIR=outdir; EXDIR=outdir+"\\_extracted"; NODEDIR=outdir+"\\_nodecfg"; ensureDir(outdir);
-  ANALYZED=false; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[];
+  ANALYZED=false; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; USERSV=[]; PAM_FINDS=null;
   VPXD_LINES=null; VPXD_SRCNOTE=""; WRAPD=0; logCacheClear();
   $("anStats").innerHTML=""; $("ovIndic").innerHTML=""; $("ovCve").innerHTML=""; $("anStatus").innerHTML="Logons / Actions / Timeline / Persistence / IOC not parsed yet.";
 
@@ -1295,6 +1310,8 @@ function analysisRels(){
     addLog(["var/run/log/rhttpproxy.log","scratch/log/rhttpproxy.log","var/log/rhttpproxy.log"]);
     addAll(rotationsOf("var/run/log/vobd.log"));                                          // vobd rotations are ALWAYS read (small)
     add(resolveLog(["var/run/log/vobd.log","scratch/log/vobd.log","var/log/vobd.log"]));
+    addAll(["etc/passwd","etc/group"]);                                                   // parseUsersV (vm-support usually omits passwd; group is the tell)
+    try{ var kfs=sshKeyFiles(); for(var kf1=0;kf1<kfs.length;kf1++) add(kfs[kf1].rel); }catch(eKF){}   // per-user authorized_keys
     addAll(["etc/hosts","etc/vmsyslog.conf","etc/ntp.conf","etc/resolv.conf",             // parseNode / persistence / security / spec members
       "etc/vmware/hostd/vmInventory.xml","etc/vmware/hostd/vmAutoStart.xml","etc/vmware/hostd/dvportgroups.xml.gz","etc/ssh/keys-root/authorized_keys",
       "commands/smbiosDump.txt","commands/ifconfig_-a.txt","commands/localcli_hardware-ipmi-bmc-get.txt",
@@ -1322,6 +1339,8 @@ function analysisRels(){
       "etc/applmgmt/appliance/patching_backup_config.json","var/log/vmware/applmgmt/backupSchedulerCron.log",
       "commands/ifconfig_-a.txt","commands/ps_auwwx---sort--rss.txt","commands/route.txt",
       "commands/sso-config.txt","commands/lw-lsa_get-status.txt","commands/uptime.txt","commands/date.txt","var/log/vmware/applmgmt/PatchRunner.log","var/log/firstboot/cloudvm.log"]);
+    addAll(["etc/passwd","etc/group"]);                                                   // parseUsersV (when the appliance capture carries them)
+    try{ for(var pj=0;pj<TOC.length;pj++){ if(/^etc\/pam\.d\/[^\/]+$/i.test(TOC[pj].rel)) add(TOC[pj].rel); } }catch(eP){}   // PAM stack sweep (tiny files, captured in full)
     try{ var dsets=drmDumpSets(); addAll(dsets.latest||[]); addAll(dsets.earliest||[]); }catch(eD){}   // VMs-from-logs: DRS dumps
     try{ var hp="var/log/vmware/vsan-health/", hn=listUnder(hp,/-cloud_health_check_data\.json\.gz$/i), ob=listUnder(hp,/_obfuscationTableForHuman\.json\.gz$/i);
       if(hn.length) add(hp+hn[0]); for(var oo=0;oo<ob.length;oo++) add(hp+ob[oo]); }catch(eH){}        // VMs-from-logs: vSAN-health baseline
@@ -2757,6 +2776,198 @@ function sweepIocs(){
           return; } } }
   }
 }
+/* ============================================================
+   USERS (v1.16.0) - every account the bundle gives evidence for.
+   Ported concepts from the Linux UAC Analyzer's accounts view, adapted to what vSphere bundles
+   actually capture: vm-support usually OMITS etc/passwd (confirmed on the reference bundles), but
+   creating a local ESXi account creates a matching GROUP - so on ESXi the group file is the
+   created-account tell. vc-support captures neither passwd nor group but DOES capture etc/pam.d
+   in full, and its logs (websso/SAML/SSO-audit/sudo) name every principal that acted. Rows are the
+   union of CONFIG evidence (passwd/group/authorized_keys, when captured) and OBSERVED ACTIVITY
+   (logons, sessions, actions), each row citing its sources.
+   ============================================================ */
+var USERSV=[], PAM_FINDS=null, PAM_SCANNED=0;
+/* SSO-audit actors were stored as "user from client" - strip the client for per-user aggregation */
+function actorBase(a){ a=trimStr(String(a||"")); var i=a.indexOf(" from "); if(i>0) a=a.substring(0,i); return trimStr(a); }
+/* base identity = the part before @, lowercased. SSO logs the ATTEMPTED principal verbatim, so one
+   human shows up as admin@corp.example, admin@CORP and three typo'd domains - the base groups them. */
+function userBaseOf(u){ u=lc(trimStr(String(u||""))); var i=u.indexOf("@"); return i>0?u.substring(0,i):u; }
+/* bounded Levenshtein for typo detection - bails early once distance must exceed `max` */
+function levDist(a,b,max){
+  a=String(a); b=String(b);
+  var la=a.length, lb=b.length;
+  if(Math.abs(la-lb)>max) return max+1;
+  var prev=[], cur=[], i, j;
+  for(j=0;j<=lb;j++) prev[j]=j;
+  for(i=1;i<=la;i++){ cur[0]=i; var rowMin=i;
+    for(j=1;j<=lb;j++){
+      var c=(a.charAt(i-1)===b.charAt(j-1))?0:1;
+      var v=prev[j]+1; if(cur[j-1]+1<v) v=cur[j-1]+1; if(prev[j-1]+c<v) v=prev[j-1]+c;
+      cur[j]=v; if(v<rowMin) rowMin=v; }
+    if(rowMin>max) return max+1;
+    var t=prev; prev=cur; cur=t; }
+  return prev[lb];
+}
+/* groups a stock ESXi image ships; anything else in etc/group marks a CREATED local account */
+function esxiStockGroup(g){ return /^(root|users|daemon|nobody|nfsnobody|vimuser|everyone)$/i.test(trimStr(g||"")); }
+/* one pam.d line -> finding or null. Baselined against a stock VCSA: 34 files, zero hits - so any
+   hit is a change from stock, not noise. pam_mgmt_cli.so (VMware's own CLI hook) is stock and NOT
+   flagged; pam_exec.so running an arbitrary program on auth events is the classic backdoor hook. */
+function pamFlagOf(line){
+  var l=trimStr(String(line||"")); if(!l || l.charAt(0)==="#") return null;
+  if(/\bpam_exec\.so\b/i.test(l)) return {v:"suspect", why:"pam_exec.so runs an external program on auth events - credential-capture / backdoor hook; verify the target"};
+  if(/^auth\s+(sufficient|optional)\s+\S*pam_permit\.so/i.test(l)) return {v:"suspect", why:"pam_permit as sufficient in the auth stack - authentication always succeeds"};
+  if(/\bnullok\b/i.test(l)) return {v:"review", why:"nullok - an empty password is accepted"};
+  return null;
+}
+function sshKeyFiles(){   // ESXi per-user authorized_keys members: etc/ssh/keys-<user>/authorized_keys
+  var out=[], re=/^etc\/ssh\/keys-([^\/]+)\/authorized_keys$/i, i, m;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ m=TOC[i].rel.match(re); if(m) out.push({rel:TOC[i].rel, user:m[1]}); } }
+  else { try{ var fso=new ActiveXObject("Scripting.FileSystemObject"), base=ROOT+"\\etc\\ssh";
+      if(fso.FolderExists(base)){ var e=new Enumerator(fso.GetFolder(base).SubFolders);
+        for(; !e.atEnd(); e.moveNext()){ var nm=e.item().Name+""; var mm=nm.match(/^keys-(.+)$/i);
+          if(mm && fileExists(e.item().Path+"\\authorized_keys")) out.push({rel:"etc/ssh/"+nm+"/authorized_keys", user:mm[1]}); } } }catch(eK){} }
+  return out;
+}
+function parseUsersV(){
+  USERSV=[]; PAM_FINDS=null; PAM_SCANNED=0;
+  var map={}, i, j, t;
+  function urow(u){
+    u=trimStr(String(u||"")); if(!u) return null;
+    var k=lc(u); if(map[k]) return map[k];
+    var r={user:u, srcs:{}, uid:-1, shell:"", home:"", groups:[], keys:-1,
+           ok:0, fail:0, sess:0, acts:0, extIps:{}, ips:{}, methods:{},
+           firstEp:0, lastEp:0, score:0, tags:[], reasons:[], blob:""};
+    map[k]=r; USERSV.push(r); return r;
+  }
+  function seen(r,ep){ if(!ep) return; if(!r.firstEp||ep<r.firstEp) r.firstEp=ep; if(ep>r.lastEp) r.lastEp=ep; }
+  // ---- config evidence: etc/passwd (rare in vm-support, sometimes present elsewhere) ----
+  var pw=readMember("etc/passwd"), havePw=!!trimStr(pw);
+  if(havePw){ var pl=String(pw).split("\n");
+    for(i=0;i<pl.length;i++){ t=trimStr(pl[i]); if(!t||t.charAt(0)==="#") continue; var f=t.split(":"); if(f.length<7) continue;
+      var r0=urow(f[0]); if(!r0) continue;
+      r0.srcs["etc/passwd"]=1; r0.uid=parseInt(f[2],10); if(isNaN(r0.uid)) r0.uid=-1;
+      r0.home=trimStr(f[5]||""); r0.shell=trimStr(f[6]||""); } }
+  // ---- config evidence: etc/group (THE created-account tell on ESXi) ----
+  var gp=readMember("etc/group"), haveGp=!!trimStr(gp);
+  if(haveGp){ var gl=String(gp).split("\n");
+    for(i=0;i<gl.length;i++){ t=trimStr(gl[i]); if(!t||t.charAt(0)==="#") continue; var g=t.split(":"); if(g.length<3) continue;
+      var gname=g[0], members=trimStr(g[3]||"");
+      if(members){ var ms=members.split(",");
+        for(j=0;j<ms.length;j++){ var mr=urow(ms[j]); if(mr){ mr.srcs["etc/group"]=1; if(mr.groups.length<12) mr.groups.push(gname); } } }
+      if(BTYPE==="esxi" && !esxiStockGroup(gname)){
+        var cr=urow(gname);   // account-matching group: surface the ACCOUNT it evidences
+        if(cr && !cr.tags.length){ cr.srcs["etc/group"]=1;
+          cr.score+=3; cr.tags.push("NON-STD-ACCT");
+          cr.reasons.push("non-standard local group '"+gname+"' (gid "+g[2]+") - a local ESXi account creates a matching group, and vm-support omits etc/passwd, so this group is the account evidence. It is NON-STANDARD, not necessarily new: the bundle carries no account-creation timestamp. Verify it is expected."); } }
+    } }
+  // ---- config evidence: per-user SSH authorized_keys (ESXi) ----
+  var kf=sshKeyFiles();
+  for(i=0;i<kf.length;i++){ var kr=urow(kf[i].user); if(!kr) continue;
+    kr.srcs[kf[i].rel]=1;
+    var kt=readMember(kf[i].rel), kn=0, kl=String(kt).split("\n");
+    for(j=0;j<kl.length;j++){ var kln=trimStr(kl[j]); if(kln && kln.charAt(0)!=="#") kn++; }
+    kr.keys=(kr.keys<0?0:kr.keys)+kn; }
+  // ---- observed activity: logons / sessions / actions ----
+  for(i=0;i<LOGON.length;i++){ var L=LOGON[i], lr=urow(L.user); if(!lr) continue;
+    lr.srcs["logons"]=1; if(L.result==="OK") lr.ok++; else lr.fail++;
+    if(L.ip){ lr.ips[L.ip]=1; if(!ipIsLocal(L.ip)) lr.extIps[L.ip]=1; }
+    if(L.method) lr.methods[L.method]=1;
+    seen(lr,L.epoch); }
+  for(i=0;i<SESSIONS.length;i++){ var S=SESSIONS[i], sr=urow(S.user); if(!sr) continue;
+    sr.srcs["sessions"]=1; sr.sess++;
+    if(S.ip){ sr.ips[S.ip]=1; if(!ipIsLocal(S.ip)) sr.extIps[S.ip]=1; }
+    seen(sr,S.inEp||S.outEp); }
+  for(i=0;i<ACTIONS.length;i++){ var A=ACTIONS[i], an=actorBase(A.actor);
+    if(!an || lc(an)==="vpxd") continue;
+    var ar=urow(an); if(!ar) continue;
+    ar.srcs["actions"]=1; ar.acts++; seen(ar,A.epoch); }
+  // ---- flags ----
+  /* typo / guessing detection: SSO logs the ATTEMPTED principal verbatim, so failed attempts with a
+     mistyped name each become their own "account" row. A row with ONLY failures whose string sits
+     within edit-distance 2 of an account that succeeded is almost certainly a typo'd or guessed
+     attempt at that account - tag it and NAME the target instead of leaving N baffling duplicates. */
+  var succNames=[];
+  for(i=0;i<USERSV.length;i++){ if(USERSV[i].ok>0 || USERSV[i].sess>0 || USERSV[i].srcs["etc/passwd"] || USERSV[i].srcs["etc/group"]) succNames.push(USERSV[i].user); }
+  for(i=0;i<USERSV.length;i++){ var u=USERSV[i];
+    u.base=userBaseOf(u.user);
+    if(u.ok===0 && u.fail>0 && !u.sess && !u.acts && !u.srcs["etc/passwd"] && !u.srcs["etc/group"]){
+      var near="";
+      for(var sn=0;sn<succNames.length;sn++){ var cand=succNames[sn]; if(lc(cand)===lc(u.user)) continue;
+        if(u.user.length<=48 && cand.length<=48 && levDist(lc(u.user),lc(cand),2)<=2){ near=cand; break; } }
+      if(near){ u.score+=2; u.tags.push("NEAR-MISS"); u.reasons.push("failed-only principal within edit-distance 2 of '"+near+"' (which authenticated successfully) - a typo'd or guessed attempt at that account, logged verbatim by SSO"); }
+      else { u.tags.push("FAILED LOGONS ONLY"); u.reasons.push("principal string seen ONLY in failed logons - never authenticated, holds no config presence. An attempted identity, not an established account."); }
+    }
+    if(u.uid===0 && lc(u.user)!=="root"){ u.score+=5; u.tags.push("UID0"); u.reasons.push("non-root account with UID 0 - a root-clone backdoor account"); }
+    if(BTYPE==="vcsa" && havePw && u.uid>0 && u.uid<1000 && u.shell && !/(nologin|false)$/i.test(u.shell)){
+      u.score+=2; u.tags.push("SVC-SHELL"); u.reasons.push("service account with an interactive shell ("+u.shell+") - these ship with nologin/false"); }
+    var extN=0, extL=[]; for(var k2 in u.extIps){ if(u.extIps.hasOwnProperty(k2)){ extN++; if(extL.length<4) extL.push(k2); } }
+    if(extN){ u.score+=2; u.tags.push("EXTERNAL"); u.reasons.push("activity from "+extN+" external (non-private) source IP(s): "+extL.join(", ")); }
+    u.extN=extN;
+    var srcl=[]; for(var k3 in u.srcs){ if(u.srcs.hasOwnProperty(k3)) srcl.push(k3); } u.srcList=srcl.join(", ");
+    var ipl=[]; for(var k4 in u.ips){ if(u.ips.hasOwnProperty(k4) && ipl.length<8) ipl.push(k4); }
+    u.ipList=ipl.join(", ");
+    var mel=[]; for(var k5 in u.methods){ if(u.methods.hasOwnProperty(k5)) mel.push(k5); }
+    u.when=u.lastEp?isoShort(new Date(u.lastEp*1000).toISOString()):"";
+    u.epoch=u.lastEp;
+    u.detail="account: "+u.user+"\nsources: "+u.srcList
+      +(u.uid>=0?("\nuid: "+u.uid+(u.shell?("  shell: "+u.shell):"")):"")
+      +(u.groups.length?("\ngroups: "+u.groups.join(", ")):"")
+      +(u.keys>=0?("\nSSH authorized_keys entries: "+u.keys):"")
+      +"\nlogons: "+u.ok+" OK / "+u.fail+" failed"+(u.sess?("  sessions: "+u.sess):"")+(u.acts?("  actions: "+u.acts):"")
+      +(ipl.length?("\nsource IPs: "+ipl.join(", ")):"")
+      +(mel.length?("\nmethods: "+mel.join(", ")):"");
+    u.blob=lc(u.user+" "+u.srcList+" "+u.groups.join(" ")+" "+u.shell+" "+ipl.join(" ")+" "+mel.join(" ")+" "+u.tags.join(" "));
+  }
+  USERSV.sort(function(a,b){ return (b.score-a.score) || (lc(a.user)<lc(b.user)?-1:1); });
+  // ---- PAM stack sweep (vc-support captures etc/pam.d in full; vm-support does not) ----
+  var pamRels=[], reP=/^etc\/pam\.d\/[^\/]+$/i;
+  if(MODE==="toc"){ for(i=0;i<TOC.length;i++){ if(reP.test(TOC[i].rel)) pamRels.push(TOC[i].rel); } }
+  else { var names=listUnder("etc/pam.d/", /./); for(i=0;i<names.length;i++) pamRels.push("etc/pam.d/"+names[i]); }
+  if(pamRels.length){
+    PAM_FINDS=[]; PAM_SCANNED=pamRels.length;
+    for(i=0;i<pamRels.length;i++){ var body=readMember(pamRels[i]); if(!body) continue;
+      var bl=String(body).split("\n");
+      for(j=0;j<bl.length;j++){ var fnd=pamFlagOf(bl[j]);
+        if(fnd) PAM_FINDS.push({file:baseName(pamRels[i]), rel:pamRels[i], v:fnd.v, why:fnd.why, line:trimStr(bl[j])}); } }
+  }
+  appendLog("  users: "+nf(USERSV.length)+" account(s) evidenced ("+(havePw?"passwd+":"")+(haveGp?"group+":"")+"logs)"+(PAM_FINDS!==null?("; pam.d swept: "+PAM_SCANNED+" file(s), "+PAM_FINDS.length+" finding(s)"):""));
+}
+/* Accounts + PAM persistence rows (UAC Analyzer checks ported where the bundles carry the source) */
+function buildPersistAccounts(){
+  var havePw=!!trimStr(readMember("etc/passwd")), haveGp=!!trimStr(readMember("etc/group"));
+  var uid0=[], created=[], svc=[], i;
+  for(i=0;i<USERSV.length;i++){ var u=USERSV[i];
+    for(var t=0;t<u.tags.length;t++){
+      if(u.tags[t]==="UID0") uid0.push(u.user);
+      else if(u.tags[t]==="NON-STD-ACCT") created.push(u.user);
+      else if(u.tags[t]==="SVC-SHELL") svc.push(u.user); } }
+  if(havePw) PERSIST.push(uid0.length
+    ? pfind("Accounts","UID-0 clone accounts","suspect",uid0.length+" non-root account(s) with UID 0 - root-clone backdoor: "+uid0.join(", "),"etc/passwd")
+    : pfind("Accounts","UID-0 clone accounts","clean","no non-root UID-0 accounts","etc/passwd"));
+  else PERSIST.push(pfind("Accounts","UID-0 clone accounts","na", BTYPE==="esxi"
+    ? "etc/passwd not captured (vm-support omits it) - the group-file check below is the created-account tell"
+    : "etc/passwd not captured in this bundle"));
+  if(BTYPE==="esxi"){
+    if(haveGp) PERSIST.push(created.length
+      ? pfind("Accounts","Non-stock local account (group-file tell)","review",created.join(", ")+" - creating a local ESXi account creates a matching group; verify each is expected (see Users tab)","etc/group")
+      : pfind("Accounts","Non-stock local account (group-file tell)","clean","only stock ESXi groups present","etc/group"));
+    else PERSIST.push(pfind("Accounts","Non-stock local account (group-file tell)","na","etc/group not captured"));
+  }
+  if(svc.length) PERSIST.push(pfind("Accounts","Service account with interactive shell","review",svc.join(", ")+" - service accounts ship with nologin/false","etc/passwd"));
+  if(BTYPE==="vcsa"){
+    if(PAM_FINDS===null) PERSIST.push(pfind("Accounts","PAM auth stack (etc/pam.d)","na","not captured in this bundle"));
+    else if(!PAM_FINDS.length) PERSIST.push(pfind("Accounts","PAM auth stack (etc/pam.d)","clean",PAM_SCANNED+" pam.d file(s) swept - no pam_exec hooks, no pam_permit-sufficient, no nullok (all zero on a stock appliance)"));
+    else{
+      var sus=[], rev=[], susRel="", revRel="";
+      for(i=0;i<PAM_FINDS.length;i++){ var p=PAM_FINDS[i];
+        if(p.v==="suspect"){ sus.push(p.file+": "+p.why); if(!susRel) susRel=p.rel; }
+        else { rev.push(p.file+": "+p.why); if(!revRel) revRel=p.rel; } }
+      if(sus.length) PERSIST.push(pfind("Accounts","PAM auth stack (etc/pam.d)","suspect",trunc(sus.join(" | "),220),susRel));
+      if(rev.length) PERSIST.push(pfind("Accounts","PAM auth stack (etc/pam.d)","review",rev.length+" weak-auth line(s): "+trunc(rev.join(" | "),180),revRel));
+    }
+  }
+}
 var ANALYSIS_ERRS=[];
 /* run one analysis stage isolated: a malformed log fails only its own stage, not the whole pass */
 function safeStep(name, fn){ try{ fn(); }catch(e){ ANALYSIS_ERRS.push(name); appendLog("  ["+name+"] FAILED: "+(e&&e.message?e.message:e)); } }
@@ -2772,8 +2983,12 @@ function runAnalysis(){
       safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
       safeStep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
       safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence);
-      safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity);
-      safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); ANALYZED=true;
+      safeStep("network", parseNetwork); safeStep("sessions", finalizeSessions);
+      safeStep("users", parseUsersV); safeStep("persist-accounts", buildPersistAccounts);   // after sessions: rows carry the envoy-joined IPs
+      safeStep("security", buildSecurity);
+      safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents);
+      safeStep("spec", buildSpec);   // after parseVms: the vCenter cluster-node table reads VCSA_VM_META (v1.16.0)
+      ANALYZED=true; paintTabs();
       safeStep("nvd", nvdStart);   // async: paints from cve.json now, repaints when NVD answers (or explains why it could not)
       writeAnalysisOutputs(); amendRunInfo();
       var msg=nf(LOGON.length)+" logons, "+nf(ACTIONS.length)+" actions, "+nf(TIMELINE.length)+" timeline, "+nf(IOCHITS.length)+" IOC hits.";
@@ -3885,10 +4100,55 @@ function buildSpecVcsa(){
   var rt=readMember("commands/route.txt"); var gw=(rt.match(/^0\.0\.0\.0\s+([\d.]+)/m)||rt.match(/default\s+([\d.]+)/i)||[])[1]; kvAdd(net,"Default gateway", gw);
   var etchosts=hosts; var host6=null; var dnss=[]; var rc=readMember("etc/resolv.conf"); var rm; var rre=/nameserver\s+([\d.]+)/ig; while((rm=rre.exec(rc))) dnss.push(rm[1]); kvAdd(net,"DNS servers", dnss.join(", "));
   var ntp=readMember("etc/ntp.conf"); var ns=[]; var nl=String(ntp).split("\n"); for(var i=0;i<nl.length;i++){ var m=nl[i].match(/^\s*server\s+(\S+)/i); if(m) ns.push(m[1]); } kvAdd(net,"NTP servers", ns.join(", "));
-  // managed ESXi hosts (from vpxd host-N,fqdn)
-  var mh=collectManagedHosts();
-  if(mh.hosts.length){ var inv=specSec("Managed inventory"); kvAdd(inv,"Managed ESXi hosts ("+mh.hosts.length+")", mh.hosts.join(", "));
-    var ng=0; for(var gk in mh.guestIp){ if(mh.guestIp.hasOwnProperty(gk)) ng++; } if(ng) kvAdd(inv,"Guest IPs observed", ng+" VM(s) with a reported guest IP (see fleet correlation / VMs)"); }
+  // managed ESXi cluster nodes - one row per host (v1.16.0), from vpxd morefs + the vSAN health baseline
+  buildManagedNodesSpec();
+}
+/* which of the anonymous per-host product bags applies to which host is NOT derivable when a cluster
+   is mixed-build, so this summarises honestly: uniform -> every row carries the version; mixed -> the
+   distribution is stated and rows say "mixed". Pure function so the tests can pin the behaviour. */
+function summarizeEsxiProducts(products){
+  var n=(products||[]).length; if(!n) return {label:"", note:""};
+  var cnt={}, keys=[], i;
+  for(i=0;i<n;i++){ var p=products[i]; if(!cnt[p]){ cnt[p]=0; keys.push(p); } cnt[p]++; }
+  if(keys.length===1) return {label:keys[0], note:"uniform across "+n+" host record(s) in the vSAN health capture"};
+  var parts=[]; for(i=0;i<keys.length;i++) parts.push(cnt[keys[i]]+"x "+keys[i]);
+  return {label:"mixed", note:"MIXED builds - "+parts.join("; ")+". The health capture anonymises which host runs which; verify per host on the live estate or from each host's own bundle."};
+}
+function buildManagedNodesSpec(){
+  var meta=VCSA_VM_META||{}, hostName=meta.hostName||{}, inBase=meta.hostsInBaseline||{}, cracked=meta.hostBaseNames||{};
+  var morefs=[], k;
+  for(k in hostName){ if(hostName.hasOwnProperty(k)) morefs.push(k); }
+  for(k in inBase){ if(inBase.hasOwnProperty(k)){ var found=false; for(var x=0;x<morefs.length;x++) if(morefs[x]===k){ found=true; break; } if(!found) morefs.push(k); } }
+  if(!morefs.length){   // no per-node evidence -> keep the old flat summary rather than an empty table
+    var mh=collectManagedHosts();
+    if(mh.hosts.length){ var inv=specSec("Managed inventory"); kvAdd(inv,"Managed ESXi hosts ("+mh.hosts.length+")", mh.hosts.join(", ")); }
+    return;
+  }
+  morefs.sort(function(a,b){ return (parseInt(a.substring(5),10)||0)-(parseInt(b.substring(5),10)||0); });
+  var pv=summarizeEsxiProducts(meta.products||[]);
+  // VMs placed per host, from the reconstructed VM board (DRS placement / vpxd)
+  var vmN={}, vmRun={}, i;
+  for(i=0;i<VMS.length;i++){ var h=lc(VMS[i].host||""); if(!h) continue;
+    vmN[h]=(vmN[h]||0)+1; if(VMS[i].running) vmRun[h]=(vmRun[h]||0)+1; }
+  var s=specSec("Managed ESXi cluster nodes ("+morefs.length+")","tbl");
+  s.head=["Host","MoRef","ESXi version (vSAN health)","VMs placed","In vSAN health baseline"];
+  s.tips=["Node FQDN, from vpxd's [vim.HostSystem:host-N,<fqdn>] references - the log names every host it manages. IPs are NOT recoverable per-host from a vc-support bundle (the vSAN health capture hashes them without a per-host binding); resolve the FQDN, or read each host's own bundle.",
+    "vCenter's managed-object ID for the host - joins this row to vpxd tasks, DRS dump placements and the fleet vCenter->ESXi chain.",
+    "From the per-host product records in the vSAN health capture (cleartext). The records are anonymised, so a mixed-build cluster shows the distribution rather than guessing which host runs which.",
+    "VMs the reconstructed VM board places on this host (powered-on placement from the newest DRS dump) - running/total.",
+    "Whether this host appears in the vSAN cloud-health baseline, and whether its obfuscated name was recovered by sha256 cracking - a host managed by vpxd but ABSENT from the vSAN baseline joined after the capture or is not a vSAN member."];
+  for(i=0;i<morefs.length;i++){ var mo=morefs[i], fq=hostName[mo]||cracked[mo]||"";
+    var hk=lc(fq), hs=hk?(hk.indexOf(".")>0?hk.substring(0,hk.indexOf(".")):hk):"";
+    var n1=vmN[hk]||vmN[hs]||0, r1=vmRun[hk]||vmRun[hs]||0;
+    s.rows.push([ fq||"(name not recovered)", mo, pv.label||"(no vSAN health capture)",
+      n1?(r1+"/"+n1):"-",
+      inBase[mo]?(cracked[mo]?"yes (name recovered)":"yes (name still hashed)"):"not in baseline" ]);
+  }
+  var note=specSec("Cluster node notes");
+  if(pv.note) kvAdd(note,"ESXi versions", pv.note);
+  kvAdd(note,"Node IPs","not recoverable per-host from a vc-support bundle - vpxd references hosts by FQDN and the vSAN health capture hashes IPs without a usable per-host binding. Resolve the FQDNs against DNS, or open each host's own vm-support bundle (fleet mode joins them).");
+  var mh2=collectManagedHosts(); var ng=0; for(var gk in mh2.guestIp){ if(mh2.guestIp.hasOwnProperty(gk)) ng++; }
+  if(ng) kvAdd(note,"Guest IPs observed", ng+" VM(s) with a reported guest IP (see fleet correlation / VMs)");
 }
 function specSectionCount(){ var n=0; for(var i=0;i<SPEC.length;i++){ n+= (SPEC[i].kind==="tbl"?SPEC[i].rows.length:SPEC[i].kv.length); } return n; }
 /* parse "Header:\n   Key: Value" block output (vsan-storage-list etc.) */
@@ -4169,7 +4429,7 @@ function parseDrmPlacement(rel){
 /* vSAN cloud-health baseline: hashed vim.VirtualMachine/HostSystem entries + the human obfuscation
    table (word-triple -> REAL string). The real strings feed the sha256 dictionary. */
 function vsanHealthBaseline(){
-  var pre="var/log/vmware/vsan-health/", res={vms:{}, hosts:{}, dict:[], stamp:"", clusterUuid:""};
+  var pre="var/log/vmware/vsan-health/", res={vms:{}, hosts:{}, dict:[], products:[], stamp:"", clusterUuid:""};
   var names=listUnder(pre, /-cloud_health_check_data\.json\.gz$/i);
   var obf=listUnder(pre, /_obfuscationTableForHuman\.json\.gz$/i);
   if(!names.length) return res;
@@ -4183,6 +4443,12 @@ function vsanHealthBaseline(){
   var txt=readMemberGz(pre+names[0])||"", m;
   var re=/"@type":\s*"vim\.(VirtualMachine|HostSystem)",\s*"moId":\s*"((?:vm|host)-\d+)",\s*"name":\s*"([0-9a-f]{64})"/g;
   while((m=re.exec(txt))){ if(m[1]==="VirtualMachine") res.vms[m[2]]=m[3]; else res.hosts[m[2]]=m[3]; }
+  /* per-host detail bags carry summary.config.product with the ESXi version/build in CLEARTEXT
+     (one bag per cluster member). The bags are anonymised, so a MIXED cluster cannot be bound
+     per-host from this file - the caller reports the distribution honestly instead. */
+  res.products=[];
+  var pre2=/"fullName":\s*"(VMware ESXi [^"]{1,60})"/g;
+  while((m=pre2.exec(txt))){ res.products.push(m[1]); }
   for(var o=0;o<obf.length;o++){ var ot=readMemberGz(pre+obf[o])||"";
     var vre=/"[a-z0-9\-]+":\s*"((?:[^"\\]|\\.){1,120})"/g;
     while((m=vre.exec(ot))){ var val=m[1].replace(/\\(.)/g,"$1"); if(val && val.length<=90) res.dict.push(val); } }
@@ -4339,7 +4605,11 @@ function parseVcsaVms(){
   VMS=order;
   VMS.sort(function(a,b){ var ea=a.enc?0:1, eb=b.enc?0:1; if(ea!==eb) return ea-eb;
     if(a.running!==b.running) return a.running?-1:1; return lc(a.name)<lc(b.name)?-1:(lc(a.name)>lc(b.name)?1:0); });
-  VCSA_VM_META={ span:span, drmNew:dNew, drmOld:dOld, baseStamp:hb.stamp||"" };
+  VCSA_VM_META={ span:span, drmNew:dNew, drmOld:dOld, baseStamp:hb.stamp||"",
+    hostName:hostName,                          // moref -> fqdn (vpxd, plus vSAN-baseline cracked names)
+    hostsInBaseline:hb.hosts||{},               // moref -> name-hash (presence in the vSAN health capture)
+    hostBaseNames:baseNames||{},                // moref -> cracked real name where sha256 recovery succeeded
+    products:(hb.products||[]) };               // per-host ESXi fullName strings (anonymous bags)
   appendLog("  VMs (vCenter, from logs): "+nf(VMS.length)+" - vpxd names "+nf((function(){var n=0;for(var x in vmName)if(vmName.hasOwnProperty(x))n++;return n;})())
     +", DRS powered-on "+nf((function(){var n=0;for(var x in placeNew)if(placeNew.hasOwnProperty(x))n++;return n;})())
     +(dNew?(" @ "+dNew):""));
@@ -4819,6 +5089,7 @@ function buildReportHtml(){
   if(NETINFO && NETINFO.captured) toc.push(["r-net","Network",nfNet]);
   if(VMS.length) toc.push(["r-vms","Hosted VMs",nfEnc]);
   if(VMEV.length) toc.push(["r-vmev","VM activity",0]);
+  if(USERSV.length){ var nfU=0; for(i=0;i<USERSV.length;i++) if(USERSV[i].score>=3) nfU++; toc.push(["r-users","Users",nfU]); }
   toc.push(["r-logon","Logons",flagged(LOGON).length]);
   if(SESSIONS.length) toc.push(["r-sess","Login sessions",0]);
   toc.push(["r-act","Actions",flagged(ACTIONS).length]);
@@ -5016,6 +5287,22 @@ function buildReportHtml(){
         +'<td>'+rEsc(ve.what)+'</td><td class="mono muted">'+rEsc(ve.method)+'</td><td class="mono">'+rEsc(ve.actor||"-")+'</td>'
         +'<td class="mono muted">'+rEsc(trunc(ve.via||"-",40))+'</td><td class="mono muted">'+rEsc(ve.src)+'</td></tr>'); }
     h.push('</table>'); }
+
+  /* ---- users (v1.16.0: config-evidenced accounts + observed activity) ---- */
+  if(USERSV.length){
+    var uFlag=0; for(i=0;i<USERSV.length;i++) if(USERSV[i].score>=3) uFlag++;
+    h.push(rSection("r-users","Users ("+nf(USERSV.length)+")", uFlag?(uFlag+" flagged"):"config + observed-activity evidence per account"));
+    h.push('<table><tr><th>Flags</th><th>User</th><th>Sources</th><th>UID / shell</th><th>Groups</th><th>Keys</th><th>OK</th><th>Failed</th><th>Ext IPs</th><th>Actions</th><th>First seen (UTC)</th><th>Last seen (UTC)</th></tr>');
+    for(i=0;i<USERSV.length;i++){ var uu=USERSV[i];
+      h.push('<tr'+(uu.score>=3?' class="rf"':'')+'><td class="mono'+(uu.score>=3?' hit':'')+'">'+rEsc(uu.tags.join(", ")||"-")+'</td><td class="mono"><b>'+rEsc(uu.user)+'</b></td>'
+        +'<td class="mono muted">'+rEsc(uu.srcList)+'</td><td class="mono">'+(uu.uid>=0?rEsc(uu.uid+(uu.shell?(" "+uu.shell):"")):"-")+'</td>'
+        +'<td class="mono muted">'+rEsc(trunc(uu.groups.join(", "),40)||"-")+'</td><td class="mono">'+(uu.keys>=0?uu.keys:"-")+'</td>'
+        +'<td class="mono">'+(uu.ok||"")+'</td><td class="mono">'+(uu.fail||"")+'</td><td class="mono'+(uu.extN?' hit':'')+'">'+(uu.extN||"")+'</td>'
+        +'<td class="mono">'+(uu.acts||"")+'</td><td class="mono nw">'+rEsc(uu.firstEp?isoShort(new Date(uu.firstEp*1000).toISOString()):"-")+'</td>'
+        +'<td class="mono nw">'+rEsc(uu.when||"-")+'</td></tr>'); }
+    h.push('</table>');
+    h.push('<p class="muted">Sources name the evidence: config files (etc/passwd / etc/group / authorized_keys) vs observed activity (logons / sessions / actions). vm-support usually omits etc/passwd - on ESXi a non-stock GROUP is the created-account evidence.</p>');
+  }
 
   /* ---- logons (all rows, window-filtered exactly as the tab is) ---- */
   var ext=logonExternal();
@@ -5334,7 +5621,7 @@ function readTocSync(archive){
   var ok=false; try{ if(fso.FileExists(raw)){ parseTocRaw(readUtf8(raw)); ok=TOC.length>0; fso.DeleteFile(raw); } }catch(e){}
   if(ok) cacheToc(archive); return ok;
 }
-function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; VPXD_LINES=null; VPXD_SRCNOTE=""; logCacheClear(); }
+function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; VPXD_LINES=null; VPXD_SRCNOTE=""; USERSV=[]; PAM_FINDS=null; logCacheClear(); }
 function processHostSync(path){
   var d=resolveBundleDesc(path); if(!d) return null;
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
@@ -5353,7 +5640,8 @@ function processHostSync(path){
   safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
   safeStep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
   safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
-  safeStep("sessions", finalizeSessions); safeStep("security", buildSecurity); safeStep("spec", buildSpec); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents);
+  safeStep("sessions", finalizeSessions); safeStep("users", parseUsersV); safeStep("persist-accounts", buildPersistAccounts);
+  safeStep("security", buildSecurity); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); safeStep("spec", buildSpec);
   if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
@@ -5686,19 +5974,47 @@ function userTab(t){
   if(BUSY){ try{ alert("Please wait - extraction / log analysis is still running.\n\nTab switching is disabled until the current bundle finishes so every tab renders with complete data. Watch the status line (or click \"Show log\") for progress, then try again."); }catch(e){} return; }
   setTab(t);
 }
+var TAB_IDS={overview:"tabOverview",spec:"tabSpec",sec:"tabSec",net:"tabNet",vms:"tabVms",inv:"tabInv",users:"tabUsers",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
+/* does a tab have anything to read? Drives the tab-bar data-state colours (UAC Analyzer convention). */
+function tabHasData(k){
+  switch(k){
+    case "overview": return true;                        // node summary always renders
+    case "inv":     { for(var i=0;i<INVENTORY.length;i++) if(INVENTORY[i].present) return true; return false; }
+    case "spec":    return SPEC.length>0;
+    case "sec":     return SECPOST.length>0 || INDIC.length>0;
+    case "net":     return !!(NETINFO && NETINFO.captured);
+    case "vms":     return VMS.length>0;
+    case "users":   return USERSV.length>0;
+    case "logon":   return LOGON.length>0 || SESSIONS.length>0;
+    case "act":     return ACTIONS.length>0;
+    case "time":    return TIMELINE.length>0;
+    case "persist": return PERSIST.length>0;
+    case "ioc":     return IOCHITS.length>0;
+  }
+  return false;
+}
+/* paint the tab bar: selected = blue (.on); after analysis, light green = has content, light
+   orange = parsed empty. Before analysis every non-selected tab stays neutral. */
+function paintTabs(){
+  for(var k in TAB_IDS){ if(!TAB_IDS.hasOwnProperty(k)) continue;
+    var el=$(TAB_IDS[k]); if(!el) continue;
+    if(k===TAB) el.className="btn on";
+    else if(!ANALYZED) el.className="btn";
+    else el.className="btn "+(tabHasData(k)?"hasdata":"nodata");
+  }
+}
 function setTab(t){
   TAB=t;
   showEl("detailCard",false); $("detBody").innerHTML="";   // close any open preview when switching tabs
-  var ids={overview:"tabOverview",spec:"tabSpec",sec:"tabSec",net:"tabNet",vms:"tabVms",inv:"tabInv",logon:"tabLogon",act:"tabAct",time:"tabTime",persist:"tabPersist",ioc:"tabIoc"};
-  for(var k in ids){ if(ids.hasOwnProperty(k)) $(ids[k]).className=(k===t)?"btn on":"btn"; }
+  paintTabs();
   showEl("ovCard", t==="overview"); showEl("invCard", t==="inv"); showEl("specCard", t==="spec"); showEl("secCard", t==="sec"); showEl("netCard", t==="net"); showEl("vmsCard", t==="vms");
   showEl("secIndicCard", t==="sec");   // indicators panel sits above Security posture; renderIndicators() then hides it if there is nothing to show
-  var isAn=(t==="logon"||t==="act"||t==="time"||t==="ioc"||t==="persist");
+  var isAn=(t==="logon"||t==="act"||t==="time"||t==="ioc"||t==="persist"||t==="users");
   showEl("tblCard", isAn); showEl("dateWrap", t==="time"||t==="logon");
   showEl("sessWrap", t==="logon");
   showEl("sessOpts", t==="logon" && SESS_VIEW);
-  showEl("actFilt", t==="act"); showEl("timeFilt", t==="time");
-  showEl("scoreFilt", (t==="logon"&&!SESS_VIEW)||t==="act"||t==="time");   // score buckets only where rows have a score (sessions are unscored)
+  showEl("actFilt", t==="act"); showEl("timeFilt", t==="time"); showEl("usersFilt", t==="users");
+  showEl("scoreFilt", (t==="logon"&&!SESS_VIEW)||t==="act"||t==="time"||t==="users");   // score buckets only where rows have a score (sessions are unscored)
   if(t==="inv") $("q").value=QUERY;
   if(isAn) $("tq").value=TQUERY;
   render();
@@ -5711,7 +6027,7 @@ function render(){
   if(TAB==="vms"){ renderVms(); return; }
   if(TAB==="inv"){ renderInventory(); return; }
   if(!ANALYZED){ $("tbl").innerHTML='<thead><tr><th>Parsing…</th></tr></thead><tbody><tr><td class="muted">Log analysis runs automatically after Analyze. If this stays empty, open <b>Show log</b> for per-log diagnostics, or click <b>Re-run log analysis</b> on Overview.</td></tr></tbody>'; $("tcount").innerHTML=""; return; }
-  if(TAB==="logon") renderLogon(); else if(TAB==="act") renderAct(); else if(TAB==="time") renderTime(); else if(TAB==="persist") renderPersist(); else if(TAB==="ioc") renderIoc();
+  if(TAB==="logon") renderLogon(); else if(TAB==="act") renderAct(); else if(TAB==="time") renderTime(); else if(TAB==="persist") renderPersist(); else if(TAB==="ioc") renderIoc(); else if(TAB==="users") renderUsers();
 }
 
 /* optional 3rd arg = hover text. Used to name the SOURCE of a derived field (install / uptime / booted
@@ -5743,14 +6059,8 @@ function renderOverview(){
   h+=kvRow("Source", MODE==="toc"?("archive index ("+nf(TOC.length)+" entries)"):"extracted tree");
   $("ovMeta").innerHTML=h||'<div class="muted">No node metadata parsed.</div>';
 
-  var present=0, key=0, keyPresent=0;
-  for(var i=0;i<INVENTORY.length;i++){ var it=INVENTORY[i]; if(it.present) present++; if(it.key){ key++; if(it.present) keyPresent++; } }
-  var s="";
-  s+=statCard(nf(present)+"/"+nf(INVENTORY.length),"key files present","ok2");
-  s+=statCard(nf(keyPresent)+"/"+nf(key),"critical present",(keyPresent<key?"warn":"ok2"));
-  $("ovStats").innerHTML=s;
-
-  var miss=[]; for(i=0;i<INVENTORY.length;i++){ if(INVENTORY[i].key && !INVENTORY[i].present) miss.push(INVENTORY[i].name); }
+  /* key-file coverage bubbles moved into the stat row (right of net listeners) - v1.16.0 */
+  var miss=[], i; for(i=0;i<INVENTORY.length;i++){ if(INVENTORY[i].key && !INVENTORY[i].present) miss.push(INVENTORY[i].name); }
   if(miss.length){ var mh='<div class="muted" style="font-size:12px"><b style="color:#e3b341">Absent critical artifacts</b> (each is itself a finding):<br>';
     mh+=esc(miss.join(", "))+"</div>"; $("ovMissing").innerHTML=mh; }
   else $("ovMissing").innerHTML='<div class="ok" style="font-size:12px">All critical artifacts present.</div>';
@@ -6016,26 +6326,37 @@ function wireOpenLinks(){
 /* ---------- analysis stat cards on Overview ---------- */
 function flaggedCount(a){ var n=0; for(var i=0;i<a.length;i++) if(a[i].score>=3) n++; return n; }
 function renderAnStats(){
-  if(!ANALYZED){ $("anStats").innerHTML=""; return; }
-  var lf=flaggedCount(LOGON), af=flaggedCount(ACTIONS);
   var s="";
-  s+=statCard(nf(LOGON.length),"logons",lf?"flag":"","logon");
-  if(lf) s+=statCard(nf(lf),"flagged logon","flag","logon");
-  s+=statCard(nf(ACTIONS.length),"actions",af?"flag":"","act");
-  if(af) s+=statCard(nf(af),"flagged action","flag","act");
-  s+=statCard(nf(TIMELINE.length),"timeline","","time");
-  s+=statCard(nf(IOCHITS.length),"IOC hits",IOCHITS.length?"flag":"","ioc");
-  if(SECPOST.length){ var ss=secScoreOf(); s+=statCard(ss.p+"/"+ss.t,"security posture",(ss.p<ss.t?"warn":"ok2"),"sec"); }
-  if(NETINFO && NETINFO.captured){ s+=statCard(nf(NETINFO.netFacing)+"/"+nf(NETINFO.listenN),"net listeners",(NETINFO.sus.length||NETINFO.ext.length)?"flag":"","net"); }
+  if(ANALYZED){
+    var lf=flaggedCount(LOGON), af=flaggedCount(ACTIONS);
+    s+=statCard(nf(LOGON.length),"logons",lf?"flag":"","logon");
+    if(lf) s+=statCard(nf(lf),"flagged logon","flag","logon");
+    s+=statCard(nf(ACTIONS.length),"actions",af?"flag":"","act");
+    if(af) s+=statCard(nf(af),"flagged action","flag","act");
+    s+=statCard(nf(TIMELINE.length),"timeline","","time");
+    s+=statCard(nf(IOCHITS.length),"IOC hits",IOCHITS.length?"flag":"","ioc");
+    if(SECPOST.length){ var ss=secScoreOf(); s+=statCard(ss.p+"/"+ss.t,"security posture",(ss.p<ss.t?"warn":"ok2"),"sec"); }
+    if(NETINFO && NETINFO.captured){ s+=statCard(nf(NETINFO.netFacing)+"/"+nf(NETINFO.listenN),"net listeners",(NETINFO.sus.length||NETINFO.ext.length)?"flag":"","net"); }
+  }
+  /* key-file coverage bubbles - moved here (right of net listeners) from their own labelled column
+     (v1.16.0). Clickable: they jump to the Key Files board. Rendered even before log analysis
+     finishes so coverage is visible the moment the inventory exists. */
+  if(INVENTORY.length){
+    var present=0, key=0, keyPresent=0;
+    for(var i=0;i<INVENTORY.length;i++){ var it=INVENTORY[i]; if(it.present) present++; if(it.key){ key++; if(it.present) keyPresent++; } }
+    s+=statCard(nf(present)+"/"+nf(INVENTORY.length),"key files present","ok2","inv");
+    s+=statCard(nf(keyPresent)+"/"+nf(key),"critical present",(keyPresent<key?"warn":"ok2"),"inv");
+  }
   $("anStats").innerHTML=s; wireStatTabs($("anStats"));
 }
 /* ---------- shared analysis table rendering ---------- */
 function scClass(s){ return s>=5?"sc5":(s>=3?"sc3":(s>=1?"sc1":"sc0")); }
 function tagCls(t){ t=String(t).toUpperCase();
-  if(t==="IOC"||t==="CRITICAL"||t==="BREACH") return "ioc";   // BREACH = guessing that SUCCEEDED
+  if(t==="IOC"||t==="CRITICAL"||t==="BREACH"||t==="UID0") return "ioc";   // BREACH = guessing that SUCCEEDED; UID0 = root-clone backdoor (score +5)
   if(t==="BURST"||t==="SPRAY") return "danger";
-  if(t==="NOTE"||t==="CONFIG") return "info";       // low-tier (enumeration / context) - muted
-  if(t==="AUTHZ") return "audit";                   // access re-granted - amber, not "destructive"
+  if(t==="NOTE"||t==="CONFIG"||t==="FAILED LOGONS ONLY") return "info";   // low-tier (enumeration / context) - muted
+  if(t==="NEAR-MISS"||t==="NON-STD-ACCT") return "danger";   // typo'd/guessed principal, or a non-standard local account (both score-3 findings) - red
+  if(t==="AUTHZ"||t==="SVC-SHELL") return "audit";  // access re-granted / service acct with a shell - amber review tier
   if(t==="EXPOSURE") return "net";                  // attack surface widened (service/firewall)
   if(t==="SUSPECT"||t==="DESTRUCTIVE") return "danger";
   if(t==="EXTERNAL") return "net";
@@ -6047,7 +6368,7 @@ function tagsHtml(r){ var h=""; for(var i=0;i<r.tags.length;i++){ var t=r.tags[i
 function kindLabel(k){ k=String(k||""); var lk=lc(k);
   var color = /shell command/.test(lk)?"#ff6b6b" : (/sudo/.test(lk)?"#f0883e" : (/vpxd|task/.test(lk)?"#79c0ff" : (/logon/.test(lk)?"#8b949e":"#c9d1d9")));
   return '<span style="color:'+color+(/shell command/.test(lk)?";font-weight:700":"")+'">'+esc(k)+'</span>'; }
-function scoreCell(r){ return '<td class="first"><span class="sc '+scClass(r.score)+'">'+r.score+'</span>'+tagsHtml(r)+'</td>'; }
+function scoreCell(r){ return '<td class="first"><span class="sc '+scClass(r.score)+'">'+r.score+'</span>&nbsp; '+tagsHtml(r)+'</td>'; }
 function rowCls(r){ var c=""; if(r.score>=5) c="row-flag"; else if(r.score>=3) c="row-warn"; var isI=false; for(var i=0;i<r.tags.length;i++) if(r.tags[i]==="IOC") isI=true; if(isI) c+=(c?" ":"")+"ioc"; return c; }
 function anPass(r,useWin){ if(FLAGONLY && r.score<3) return false; if(!scorePass(r.score)) return false; if(TQUERY && r.blob.indexOf(TQUERY)<0) return false; if(useWin && (DFROM||DTO) && r.epoch && !inWin(r.epoch)) return false; return true; }
 /* the "more rows than the table draws" chip (v1.15.3). One consistent warning wherever a cap
@@ -6201,6 +6522,41 @@ function renderIoc(){ var rows=[]; for(var i=0;i<IOCHITS.length;i++){ if(TQUERY)
     var kk=parseInt(this.getAttribute("data-k"),10); if(st.k===kk) st.d*=-1; else { st.k=kk; st.d=1; } render(); }; }
   applyFreezeTbl(); setupColResizeFor($("tbl"),"ioc"); window.__anRows=rows;
 }
+/* ---------- Users tab (v1.16.0) ---------- */
+var UCOLSV=[
+  {h:"Score / tags", t:"Account-level flags: UID0 (non-root uid 0 = root-clone backdoor, +5), NON-STD-ACCT (non-standard ESXi local account, evidenced by a non-stock group; not necessarily new - the bundle carries no creation timestamp, +3), SVC-SHELL (service account with an interactive shell, +2), EXTERNAL (activity from a non-private source IP, +2). Hover a tag for the reason.", sk:function(r){return r.score;}, cell:function(r){return scoreCell(r);}},
+  {h:"User", t:"The account. Config-evidenced accounts come from etc/passwd / etc/group / authorized_keys; log-evidenced principals (SSO/AD users) exist only in the logs - both are listed, each citing its sources.", sk:function(r){return lc(r.user);}, cell:function(r){return '<td class="mono first"><b>'+esc(r.user)+'</b></td>';}},
+  {h:"Sources", t:"Where the evidence for this account comes from: config files (etc/passwd, etc/group, authorized_keys) and/or observed activity (logons, sessions, actions). An account evidenced ONLY by config never acted in the log window; one evidenced only by logs is not a local OS account (SSO/AD principal).", sk:function(r){return r.srcList;}, cell:function(r){return '<td class="mono muted" style="font-size:11px" title="'+esc(r.srcList)+'">'+esc(trunc(r.srcList,40))+'</td>';}},
+  {h:"UID / shell", t:"From etc/passwd when captured (vm-support usually omits it - blank is 'not captured', not 'no account'). UID 0 on a non-root name is flagged.", sk:function(r){return r.uid;}, cell:function(r){return '<td class="mono">'+(r.uid>=0?esc(r.uid+(r.shell?(" "+r.shell):"")):'<span class="muted">-</span>')+'</td>';}},
+  {h:"Groups", t:"Group membership from etc/group. On ESXi a non-stock group IS the created-account evidence (vm-support omits passwd but group survives).", sk:function(r){return r.groups.join(",");}, cell:function(r){return '<td class="mono muted" style="font-size:11px" title="'+esc(r.groups.join(", "))+'">'+esc(trunc(r.groups.join(", "),30)||"-")+'</td>';}},
+  {h:"Keys", t:"Non-comment entries in this account's SSH authorized_keys (etc/ssh/keys-<user>/). A key an admin cannot explain is persistence.", sk:function(r){return r.keys;}, cell:function(r){return '<td class="mono" style="text-align:right">'+(r.keys>=0?esc(r.keys):'<span class="muted">-</span>')+'</td>';}},
+  {h:"OK", t:"Successful logons for this account in the parsed window (see the Logons tab for each one).", sk:function(r){return r.ok;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(r.ok||"")+'</td>';}},
+  {h:"Failed", t:"Failed logons. Volume alone is not an attack - read alongside the brute-force tags on the Logons tab.", sk:function(r){return r.fail;}, cell:function(r){return '<td class="mono" style="text-align:right">'+(r.fail?('<span style="color:#e3b341">'+esc(r.fail)+'</span>'):"")+'</td>';}},
+  {h:"Ext IPs", t:"Distinct external (non-private) source IPs this account was seen from - the management plane should never see these. Scored +2.", sk:function(r){return r.extN;}, cell:function(r){return '<td class="mono" style="text-align:right">'+(r.extN?('<span style="color:#ff8b8b">'+esc(r.extN)+'</span>'):"")+'</td>';}},
+  {h:"Source IPs", t:"Distinct client addresses this principal was seen from (first 8). On a vCenter these are clients reaching THIS appliance - SSO logons are to vCenter itself, never to a node; node-local logons live in each node's own bundle (fleet correlation joins accounts across hosts).", sk:function(r){return r.ipList||"";}, cell:function(r){return '<td class="mono muted" style="font-size:11px" title="'+esc(r.ipList||"")+'">'+esc(trunc(r.ipList||"",34)||"-")+'</td>';}},
+  {h:"Actions", t:"Shell commands / sudo / vpxd tasks / SSO identity events attributed to this account (see the Actions tab).", sk:function(r){return r.acts;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(r.acts||"")+'</td>';}},
+  {h:"First seen (UTC)", t:"Earliest observed activity for this account in the parsed window. Blank = config-evidenced only, no activity in the window.", sk:function(r){return r.firstEp;}, cell:function(r){return '<td class="mono muted">'+esc(r.firstEp?isoShort(new Date(r.firstEp*1000).toISOString()):"-")+'</td>';}},
+  {h:"Last seen (UTC)", t:"Latest observed activity for this account in the parsed window.", sk:function(r){return r.lastEp;}, cell:function(r){return '<td class="mono">'+esc(r.when||"-")+'</td>';}}
+];
+function renderUsers(){
+  var bases=[], i;
+  for(i=0;i<USERSV.length;i++) bases.push(USERSV[i].base||userBaseOf(USERSV[i].user));
+  fillFilterSel("userSel", bases, USER_SEL);
+  var rows=[];
+  for(i=0;i<USERSV.length;i++){ var u=USERSV[i];
+    if(TQUERY && u.blob.indexOf(TQUERY)<0) continue;
+    if(FLAGONLY && u.score<3) continue;
+    if(!scorePass(u.score)) continue;
+    if(USER_SEL && (u.base||userBaseOf(u.user))!==lc(USER_SEL)) continue;
+    rows.push(u); }
+  sortRows(rows,UCOLSV,SORT.users); drawTable(UCOLSV,rows,SORT.users,"users");
+  if(!USERSV.length){
+    $("tbl").innerHTML='<thead><tr><th title="No account evidence parsed. This is a statement about what the bundle CAPTURED, not about the host&#39;s accounts.">Users</th></tr></thead><tbody><tr><td class="muted">No account evidence in this bundle - no etc/passwd or etc/group captured and no principals named in the parsed logs. '
+      +(BTYPE==="esxi"?'vm-support usually omits etc/passwd; etc/group and the logs are the normal sources.':'vc-support carries no passwd/group; accounts here come from the SSO / auth logs.')+'</td></tr></tbody>';
+    $("tcount").innerHTML="0 accounts"; return; }
+  var flagged=0; for(i=0;i<USERSV.length;i++) if(USERSV[i].score>=3) flagged++;
+  $("tcount").innerHTML+=' &middot; '+nf(flagged)+' flagged of '+nf(USERSV.length)+' account(s)';
+}
 function persistRank(v){ return v==="suspect"?0:(v==="review"?1:(v==="na"?3:2)); }   // suspect/review float up, clean above na
 function persistLbl(v){ return v==="suspect"?"SUSPECT":(v==="review"?"REVIEW":(v==="na"?"n/a":"clean")); }
 function persistCls(v){ return v==="suspect"?"hit":(v==="review"?"warn":(v==="na"?"na":"clear")); }
@@ -6243,6 +6599,8 @@ function anExport(){ var rows=window.__anRows||[]; if(!rows.length){ setStatus("
   else if(TAB==="act"){ head=["Score","Tags","When_UTC","Actor","Command","Kind","Log"]; line=function(r){return [r.score,r.tags.join(";"),r.when,r.actor,r.cmd,r.akind,r.src];}; }
   else if(TAB==="time"){ head=["Score","Tags","When_UTC","Kind","Detail","Log"]; line=function(r){return [r.score,r.tags.join(";"),r.when,r.kind,r.detail,r.src];}; }
   else if(TAB==="ioc"){ head=["Log","Line","IOC","Excerpt"]; line=function(r){return [r.file,r.line,r.ioc,r.excerpt];}; }
+  else if(TAB==="users"){ head=["Score","Tags","User","BaseIdentity","Sources","UID","Shell","Groups","SSHKeys","LogonsOK","LogonsFailed","ExtIPs","SourceIPs","Actions","FirstSeen_UTC","LastSeen_UTC"];
+    line=function(r){return [r.score,r.tags.join(";"),r.user,(r.base||""),r.srcList,(r.uid>=0?r.uid:""),r.shell,r.groups.join("; "),(r.keys>=0?r.keys:""),r.ok,r.fail,r.extN,(r.ipList||""),r.acts,(r.firstEp?isoShort(new Date(r.firstEp*1000).toISOString()):""),r.when];}; }
   else if(TAB==="persist"){ head=["Category","Finding","Verdict","Detail","Path"]; line=function(r){return [r.cat,r.name,r.verdict,r.detail,r.rel];}; }
   else { setStatus("Nothing to export on this tab.","err"); return; }
   var out=[head.join(",")]; for(var i=0;i<rows.length;i++){ var v=line(rows[i]); for(var j=0;j<v.length;j++) v[j]=cqx(v[j]); out.push(v.join(",")); }
@@ -6558,12 +6916,13 @@ function init(){
   $("sessNoUnp").onclick=function(){ SESS_NOUNP=!!this.checked; render(); };
   $("sessMinSec").onchange=function(){ var v=parseInt(this.value,10); SESS_MINSEC=(isNaN(v)||v<0)?5:v; this.value=SESS_MINSEC; if(SESS_MINON) render(); };
   $("actActor").onchange=function(){ ACT_ACTOR=this.value; render(); };
+  $("userSel").onchange=function(){ USER_SEL=this.value; render(); };
   $("actKind").onchange=function(){ ACT_KIND=this.value; render(); };
   $("timeKind").onchange=function(){ TIME_KIND=this.value; render(); };
   $("dfrom").onchange=function(){ DFROM=dayNum(this.value); render(); };
   $("dto").onchange=function(){ DTO=dayNum(this.value); render(); };
   $("tclear").onclick=function(){ $("tq").value=""; TQUERY=""; SCOREF={c5:true,c3:true,c1:true,c0:true};
-    ACT_ACTOR=""; ACT_KIND=""; TIME_KIND="";
+    ACT_ACTOR=""; ACT_KIND=""; TIME_KIND=""; USER_SEL="";
     $("scf5").checked=$("scf3").checked=$("scf1").checked=$("scf0").checked=true; render(); };
   $("texport").onclick=anExport;
   $("tcopy").onclick=anCopy;
