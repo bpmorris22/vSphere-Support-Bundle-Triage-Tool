@@ -473,7 +473,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.17.0";
+var APP_VERSION = "1.17.1";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -4723,20 +4723,35 @@ function parseVcsaVms(){
      C) last resort: a vSAN-looking dsName + exactly one known vSAN cluster UUID (from the
         vsan-health file prefix) - marked derived. */
   var vsanByGuid={}, vsanByVm={}, dsPair=[], dsUuidsSeen={};
+  /* PERF (v1.17.0 hotspot fix): this loop runs over the whole ~500k-line vpxd set. Previously it ran
+     5 regexes on EVERY line - and re-created the regex objects inside the loop - i.e. ~2.4M regex
+     execs + 500k allocations, the single biggest vCenter cost and the one pass that (unlike Actions /
+     VM events) had no cheap prefilter. Regexes are now hoisted and each is gated by an indexOf that
+     fails in a few ns for the ~99% of lines that cannot match. Same matches, a fraction of the work. */
+  var VM_RE=/\[vim\.VirtualMachine:(vm-\d+),([^\]]{1,80})\]/g;
+  var HOST_RE=/\[vim\.HostSystem:(host-\d+),([^\]]{1,80})\]/g;
+  var VSAN_RE=/\/vmfs\/volumes\/vsan:([0-9a-f]{16}-[0-9a-f]{16})\/([0-9a-f][0-9a-f-]{34}[0-9a-f])\/([^\s",;)]+)/ig;
+  var FOLDER_RE=/Got HTTP (GET|PUT) request for \/folder\/([^?\s"]+)\?dcPath=([^&\s"]*)&dsName=([^&\s"]+)/;
+  /* span = first & last timestamps. Lines are chronological, so scan in from each end for the first
+     timestamped line rather than date-matching all ~500k lines inside the hot loop. */
+  var DATE_RE=/^(\d{4}-\d{2}-\d{2})T/, dm;
+  for(i=0;i<lines.length;i++){ dm=lines[i].match(DATE_RE); if(dm){ span.first=dm[1]; break; } }
+  for(i=lines.length-1;i>=0;i--){ dm=lines[i].match(DATE_RE); if(dm){ span.last=dm[1]; break; } }
   for(i=0;i<lines.length;i++){ var ln=lines[i];
-    var vre=/\[vim\.VirtualMachine:(vm-\d+),([^\]]{1,80})\]/g;
-    while((m=vre.exec(ln))){ if(!vmName[m[1]]) vmName[m[1]]=trimStr(m[2]); }
-    var hre=/\[vim\.HostSystem:(host-\d+),([^\]]{1,80})\]/g;
-    while((m=hre.exec(ln))){ if(!hostName[m[1]]) hostName[m[1]]=trimStr(m[2]); }
-    m=ln.match(/^(\d{4}-\d{2}-\d{2})T/); if(m){ if(!span.first) span.first=m[1]; span.last=m[1]; }
-    /* A) literal vSAN paths (ds:///vmfs/volumes/vsan:<ds>/<vmGuid>/<file> and the bare form) */
-    var vre=/\/vmfs\/volumes\/vsan:([0-9a-f]{16}-[0-9a-f]{16})\/([0-9a-f][0-9a-f-]{34}[0-9a-f])\/([^\s",;)]+)/ig;
-    while((m=vre.exec(ln))){ var vds=lc(m[1]), vguid=lc(m[2]), vfile=m[3];
-      dsUuidsSeen[vds]=1; vsanByGuid[vguid]=vds;
-      var vx=vfile.match(/^(.+)\.vmx$/i);
-      if(vx) vsanByVm[lc(vx[1])]={ds:vds, guid:vguid, via:"vpxd vsan path"};
+    if(ln.indexOf("[vim.")>=0){
+      VM_RE.lastIndex=0; while((m=VM_RE.exec(ln))){ if(!vmName[m[1]]) vmName[m[1]]=trimStr(m[2]); }
+      HOST_RE.lastIndex=0; while((m=HOST_RE.exec(ln))){ if(!hostName[m[1]]) hostName[m[1]]=trimStr(m[2]); }
     }
-    m=ln.match(/Got HTTP (GET|PUT) request for \/folder\/([^?\s"]+)\?dcPath=([^&\s"]*)&dsName=([^&\s"]+)/);
+    /* A) literal vSAN paths (ds:///vmfs/volumes/vsan:<ds>/<vmGuid>/<file> and the bare form) */
+    if(ln.indexOf("/vmfs/volumes/vsan:")>=0){
+      VSAN_RE.lastIndex=0; while((m=VSAN_RE.exec(ln))){ var vds=lc(m[1]), vguid=lc(m[2]), vfile=m[3];
+        dsUuidsSeen[vds]=1; vsanByGuid[vguid]=vds;
+        var vx=vfile.match(/^(.+)\.vmx$/i);
+        if(vx) vsanByVm[lc(vx[1])]={ds:vds, guid:vguid, via:"vpxd vsan path"};
+      }
+    }
+    if(ln.indexOf("/folder/")<0) continue;
+    m=ln.match(FOLDER_RE);
     if(m){ var verb=m[1], p=m[2], ds=m[4]; var segs=p.split("/"); var fn=segs[segs.length-1];
       var bm=fn.match(/^(.+)\.vmx$/i); var user=(ln.match(/user=(\S+)\]/)||[])[1]||"";
       var fguid=(segs.length>=2 && /^[0-9a-f][0-9a-f-]{34}[0-9a-f]$/i.test(segs[0])) ? lc(segs[0]) : "";
