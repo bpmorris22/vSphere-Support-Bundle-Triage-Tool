@@ -473,7 +473,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.17.3";
+var APP_VERSION = "1.17.4";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -534,6 +534,17 @@ function logCacheClear(){ LOGCACHE={}; LOGCACHE_BYTES=0; }
    accumulate until the process is killed with no catchable error. Calling this between heavy stages
    keeps peak memory near single-Analyze levels. No-op where CollectGarbage is absent (e.g. tests). */
 function gcNow(){ try{ if(typeof CollectGarbage!=="undefined") CollectGarbage(); }catch(e){} }
+/* crash tracer (v1.17.4): the on-screen log dies with the app, so a silent close leaves no clue where
+   it happened. This appends one line per fleet stage to _fleet\_fleet-trace.txt and CLOSES the handle
+   each time, so the write is flushed to disk immediately - the last line in that file after a crash
+   names the exact stage that killed it. Cheap enough to leave on. */
+var FLEET_TRACE_PATH="";
+function fleetTraceInit(){ try{ FLEET_TRACE_PATH=fleetBase()+"\\_fleet-trace.txt";
+  var fso=new ActiveXObject("Scripting.FileSystemObject"); var f=fso.CreateTextFile(FLEET_TRACE_PATH,true,false);
+  f.WriteLine("# fleet trace - app v"+APP_VERSION+" - if the app closed, the LAST line is the stage that crashed"); f.Close();
+}catch(e){ FLEET_TRACE_PATH=""; } }
+function fleetTrace(msg){ if(!FLEET_TRACE_PATH) return; try{ var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var f=fso.OpenTextFile(FLEET_TRACE_PATH,8,true); f.WriteLine(msg); f.Close(); }catch(e){} }
 var TOC_BAD=0, TOC_BADSAMPLE=[], TOC_CLASH=0, TOC_CLASHSAMPLE=[];   // malicious-member rejections (per index)
 var SELF_SHA=null;         // lazy SHA-256 of this .hta (certutil), for run provenance
 var WRAPD=0;               // outer-wrapper unwrap depth this run (max 1 unwrap: outer -> nested bundle)
@@ -1276,10 +1287,21 @@ function dirStats(pre){   // sum size + count files under a prefix
   else { var dir=ROOT+"\\"+winRel(pre); if(folderExists(dir)){ var r=treeCount(dir); total=r.size; cnt=r.count; } }
   return {size:total, count:cnt};
 }
-function treeCount(dir){ var fso=new ActiveXObject("Scripting.FileSystemObject"), size=0, count=0;
-  try{ var fo=fso.GetFolder(dir); var e=new Enumerator(fo.Files); for(; !e.atEnd(); e.moveNext()){ size+=e.item().Size; count++; }
-    var s=new Enumerator(fo.SubFolders); for(; !s.atEnd(); s.moveNext()){ var r=treeCount(s.item().Path+""); size+=r.size; count+=r.count; }
-  }catch(x){} return {size:size, count:count};
+/* v1.17.4: was UNBOUNDED recursion that also created a new COM object per call - on a deep or
+   reparse-looping extracted tree that is a stack-overflow / resource-exhaustion path that closes the
+   app with no catchable error. Now one hoisted FSO, a depth cap, a node budget, and reparse-skip. */
+var TREECOUNT_MAXDEPTH=40, TREECOUNT_BUDGET=200000;
+function treeCount(dir){ var fso=new ActiveXObject("Scripting.FileSystemObject"), budget={n:0};
+  function rec(d, depth){ var size=0, count=0;
+    if(depth>TREECOUNT_MAXDEPTH || budget.n>TREECOUNT_BUDGET) return {size:0,count:0};
+    var fo; try{ fo=fso.GetFolder(d); }catch(x){ return {size:0,count:0}; }
+    try{ var e=new Enumerator(fo.Files); for(; !e.atEnd(); e.moveNext()){ size+=e.item().Size; count++; budget.n++; } }catch(e1){}
+    try{ var s=new Enumerator(fo.SubFolders); for(; !s.atEnd(); s.moveNext()){ var sub=s.item();
+      if(isReparsePoint(sub)) continue; if(budget.n>TREECOUNT_BUDGET) break;
+      var r=rec(sub.Path+"", depth+1); size+=r.size; count+=r.count; } }catch(e2){}
+    return {size:size, count:count};
+  }
+  return rec(dir, 0);
 }
 function buildInventory(){
   INVENTORY=[]; var cat=curCatalog();
@@ -1618,11 +1640,13 @@ function parseVmwareLogs(){
     map[lc(rel)]=v.name; sizes[lc(rel)]=sz; want.push(rel); }
   if(!want.length){ appendLog("  vmware.log: none present for the registered VMs"+(skippedBig?(" ("+skippedBig+" skipped - over "+fmtSize(VMWARELOG_MAXFILE)+")"):"")); return; }
   VMEV_SRC="vmware.log";
+  fleetTrace("    vmware.log: "+want.length+" file(s)"+(MODE==="toc"?" -> extractStripToTemp":""));
   var base = (MODE==="toc") ? extractStripToTemp(want) : "";
   var added=0, files=0, budget=VMWARELOG_BUDGET;
   try{
     for(i=0;i<want.length && added<VMWARELOG_TOTAL && budget>0;i++){ rel=want[i];
       var path = (MODE==="tree") ? (ROOT+"\\"+winRel(rel)) : (base+"\\"+winRel(rel));
+      fleetTrace("    vmware.log file "+(i+1)+"/"+want.length+" ("+fmtSize(sizes[lc(rel)])+")");
       var txt=""; try{ if(fileExists(path)){ var fsz=sizes[lc(rel)];
         if(fsz<=VMWARELOG_SMALL){ txt=readUtf8(path); budget-=fsz; }
         else { txt=readCappedText(path,VMWARELOG_HEAD)+"\n"+readTailText(path,VMWARELOG_TAIL); budget-=(VMWARELOG_HEAD+VMWARELOG_TAIL); } } }catch(e){}
@@ -4889,7 +4913,9 @@ var VCSA_VM_META=null;
 function parseVms(){ VMS=[]; VCSA_VM_META=null;
   if(BTYPE==="vcsa"){ try{ parseVcsaVms(); }catch(e){ appendLog("  VMs (vCenter) parse error: "+e.message); } return; }
   if(BTYPE!=="esxi") return;
+  fleetTrace("    parseVms: findVmxRels");
   var rels=findVmxRels(); appendLog("  VMs: "+nf(rels.length)+" .vmx in bundle");
+  fleetTrace("    parseVms: "+rels.length+" vmx; runningVms");
   var run=runningVms(), got=0;
   if(rels.length){
     var base = (MODE==="toc") ? extractStripToTemp(rels) : "";
@@ -4906,6 +4932,7 @@ function parseVms(){ VMS=[]; VCSA_VM_META=null;
     }
   }
   /* ransomware fallback: VM folders whose .vmx is missing or renamed + renamed sibling files */
+  fleetTrace("    parseVms: scanEsxiEncFolders (walks vmfs tree)");
   try{ var extra=scanEsxiEncFolders(rels), e2;
     var partialByDir={};
     for(e2=0;e2<extra.length;e2++){ if(extra[e2].partial) partialByDir[lc(extra[e2].dir)]=extra[e2]; }
@@ -4915,7 +4942,9 @@ function parseVms(){ VMS=[]; VCSA_VM_META=null;
     for(e2=0;e2<extra.length;e2++){ if(!extra[e2].partial){ VMS.push(extra[e2]); nEnc++; } }
     if(nEnc) appendLog("  VMs: +"+nf(nEnc)+" folder(s) with missing/renamed .vmx - POSSIBLY ENCRYPTED");
   }catch(eE){ appendLog("  VMs enc-scan error: "+eE.message); }
+  fleetTrace("    parseVms: attachVmdkExtents");
   try{ attachVmdkExtents(); }catch(eX){ appendLog("  VMs extent parse error: "+eX.message); }
+  fleetTrace("    parseVms: done");
   VMS.sort(function(a,b){ var ea=a.enc?0:1, eb=b.enc?0:1; if(ea!==eb) return ea-eb;
     if(a.running!==b.running) return a.running?-1:1; return a.name<b.name?-1:(a.name>b.name?1:0); });
 }
@@ -5913,23 +5942,29 @@ function readTocSync(archive){
 }
 function resetHostGlobals(){ TOC=[]; TOCMAP={}; PREFIX=""; BTYPE=""; NODE={}; INVENTORY=[]; LOGON=[]; BF=null; RANSOM=null; MAINT=[]; VMEV=[]; VMEV_SRC=""; VPXD_HUMANS=[]; VM_MOREF_NAME={}; ACTIONS=[]; TIMELINE=[]; IOCHITS=[]; INDIC=[]; CVES=[]; PERSIST=[]; SPEC=[]; VMS=[]; SECPOST=[]; VIBS=[]; VIBS_NOTABLE=[]; VOBD_STATS=null; ESXUP_EVENTS=[]; NETINFO=null; LOG_TRUNC=[]; VPXD_LINES=null; VPXD_SRCNOTE=""; USERSV=[]; PAM_FINDS=null; logCacheClear(); }
 function processHostSync(path){
-  var d=resolveBundleDesc(path); if(!d) return null;
+  var tp="h"+FLEET_I+" "+baseName(path);
+  fleetTrace(tp+" | ENTER processHostSync");
+  var d=resolveBundleDesc(path); if(!d){ fleetTrace(tp+" | resolveBundleDesc -> null (skip)"); return null; }
   resetHostGlobals(); MODE=d.mode; ARCHIVE=d.archive||""; ROOT=d.root||"";
   var host=sanitHost(d.host||baseName(path)); if(!host) host="host"+FLEET_I;
   LASTOUTDIR=fleetBase()+"\\"+host; EXDIR=LASTOUTDIR+"\\_extracted"; NODEDIR=LASTOUTDIR+"\\_nodecfg"; ensureDir(LASTOUTDIR);
+  fleetTrace(tp+" | mode="+MODE+" host="+host+" -> bindSourceCache");
   bindSourceCache(LASTOUTDIR, (MODE==="tree")?ROOT:ARCHIVE, MODE);   // two same-short-name hosts sharing this folder can no longer feed each other stale extractions
   var sig=snapSig(path, ARCHIVE, MODE);
   if(FLEET_REUSE){ var cached=loadSnapshot(LASTOUTDIR, sig);
-    if(cached){ appendLog("  = "+host+" reused saved analysis from "+(cached.analyzedAt||"?")+" (source unchanged, skipped re-parse)"); return cached; } }
+    if(cached){ fleetTrace(tp+" | reused cached snapshot"); appendLog("  = "+host+" reused saved analysis from "+(cached.analyzedAt||"?")+" (source unchanged, skipped re-parse)"); return cached; } }
   $("hostName").value=host;
+  fleetTrace(tp+" | detectType");
   if(MODE==="toc"){ if(!readTocSync(ARCHIVE)) return null; detectType(); }
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
-  if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
-  buildInventory(); extractKeyFilesToc(); parseNode(); gcNow();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
+  if(!BTYPE){ fleetTrace(tp+" | no BTYPE (skip)"); return null; }                    // wrapper / not a real bundle -> skip
+  fleetTrace(tp+" | buildInventory");   buildInventory();
+  fleetTrace(tp+" | extractKeyFilesToc"); extractKeyFilesToc();
+  fleetTrace(tp+" | parseNode"); parseNode(); gcNow();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
   ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
   /* fleet runs the whole per-host analysis synchronously, so force a GC after each stage - without
      it, transient parse garbage accumulates across the block and OOMs a constrained mshta (v1.17.3). */
-  function fstep(name, fn){ safeStep(name, fn); gcNow(); }
+  function fstep(name, fn){ fleetTrace(tp+" | stage "+name); safeStep(name, fn); gcNow(); }
   fstep("maint", parseMaint); fstep("logons", parseLogons); fstep("bruteforce", bfApply); fstep("actions", parseActions); fstep("timeline", buildTimeline); fstep("ioc", sweepIocs);
   fstep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
   fstep("indicators", buildIndicators); fstep("cves", buildCves); fstep("persistence", buildPersistence); fstep("network", parseNetwork);
@@ -5937,10 +5972,12 @@ function processHostSync(path){
   fstep("security", buildSecurity); fstep("vms", parseVms); fstep("vmevents", parseVmEvents); fstep("spec", buildSpec);
   if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
+  fleetTrace(tp+" | writeRunInfo + snapshotHost");
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
   var snap=snapshotHost(dispHost, path);
   try{ saveSnapshot(LASTOUTDIR, sig, snap); }catch(e){}
   logCacheClear(); VPXD_LINES=null; gcNow();   // snapshotHost (collectOpTasks/collectManagedHosts) was the last consumer - free before the next host
+  fleetTrace(tp+" | DONE (snapshot saved)");
   return snap;
 }
 function distinct(arr){ var m={},o=[]; for(var i=0;i<arr.length;i++){ var k=lc(arr[i]); if(k&&!m[k]){ m[k]=1; o.push(arr[i]); } } return o; }
@@ -6039,6 +6076,8 @@ function triageFleet(){
   appendLog("=== FLEET discovery under "+root+" ==="+(FLEET_REUSE?" (reuse cached analysis where source unchanged)":" (forced fresh re-analysis)"));
   setStatus("Fleet: scanning "+root+" for bundles…","muted");
   FLEET=[]; FLEET_HOSTS={}; FLEET_I=0;
+  ensureDir(fleetBase()); fleetTraceInit();   // crash tracer: _fleet\_fleet-trace.txt - last line = crashing stage
+  fleetTrace("triageFleet start; root="+root);
   try{ FLEET_CANDS=discoverBundles(root); }
   catch(eDisc){ FLEET_CANDS=[]; setStatus("Fleet discovery failed while scanning "+root+": "+(eDisc&&eDisc.message?eDisc.message:eDisc)+" - try pointing at the folder that directly holds the bundles.","err"); appendLog("Fleet discovery error: "+(eDisc&&eDisc.message?eDisc.message:eDisc)); return; }
   if(!FLEET_CANDS.length){ setStatus("No bundle archives or extracted bundle folders found under that folder.","err"); return; }
