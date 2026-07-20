@@ -473,7 +473,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.17.2";
+var APP_VERSION = "1.17.3";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -523,8 +523,17 @@ var VPXD_SRCNOTE="";       // which vpxd files fed VPXD_LINES (for provenance/lo
    hostd.log three times (logons / sessions / VM events), every vobd rotation twice (maintenance +
    audit) - and each re-read of a CAPPED log pushed a duplicate LOG_TRUNC entry. Consumers never
    mutate the arrays (verified), so one read serves all passes. Budgeted, cleared per run/host. */
-var LOGCACHE={}, LOGCACHE_BYTES=0, LOGCACHE_MAX=160*1024*1024;
+/* v1.17.3: lowered 160MB -> 64MB. On a memory-constrained host (a 32-bit mshta tops out ~1.2GB) the
+   live per-run line cache stacked with transient parse garbage was enough to OOM fleet mode, which
+   runs a host's whole analysis in one synchronous block (single-Analyze survives because its timed
+   chunks let GC run). 64MB still covers the working set; anything larger is simply re-read. */
+var LOGCACHE={}, LOGCACHE_BYTES=0, LOGCACHE_MAX=64*1024*1024;
 function logCacheClear(){ LOGCACHE={}; LOGCACHE_BYTES=0; }
+/* force a full GC (Trident/JScript CollectGarbage). During a long SYNCHRONOUS block - which is exactly
+   how fleet mode processes each host - the collector rarely runs on its own, so transient allocations
+   accumulate until the process is killed with no catchable error. Calling this between heavy stages
+   keeps peak memory near single-Analyze levels. No-op where CollectGarbage is absent (e.g. tests). */
+function gcNow(){ try{ if(typeof CollectGarbage!=="undefined") CollectGarbage(); }catch(e){} }
 var TOC_BAD=0, TOC_BADSAMPLE=[], TOC_CLASH=0, TOC_CLASHSAMPLE=[];   // malicious-member rejections (per index)
 var SELF_SHA=null;         // lazy SHA-256 of this .hta (certutil), for run provenance
 var WRAPD=0;               // outer-wrapper unwrap depth this run (max 1 unwrap: outer -> nested bundle)
@@ -1630,6 +1639,8 @@ function parseVmwareLogs(){
         if(!ev) continue;
         var via=opid?(/^esxui/i.test(opid)?"ESXi Host Client":(/^host-/i.test(opid)?"vCenter task":opid)):"";
         VMEV.push(mkVmEv(ep,tm[1],vmName,ev.k,ev.w,"vmware.log",via?"":"",via,"vmware.log")); added++; perVm++; }
+      txt=null; lines=null;                     // drop the file's buffers before the next VM
+      if((files & 7)===0) gcNow();              // and reclaim every 8th file - keeps peak bounded on a constrained host
     }
     appendLog("  vmware.log: "+nf(added)+" event(s) from "+nf(files)+"/"+nf(want.length)+" VM log(s) (head+tail read)"+(skippedBig?("; "+skippedBig+" oversized log(s) skipped"):"")+(budget<=0?"; byte budget reached":""));
   } finally {
@@ -5914,19 +5925,22 @@ function processHostSync(path){
   if(MODE==="toc"){ if(!readTocSync(ARCHIVE)) return null; detectType(); }
   else { PREFIX=baseName(ROOT); detectTypeTree(); }
   if(!BTYPE) return null;                    // wrapper / not a real bundle -> skip
-  buildInventory(); extractKeyFilesToc(); parseNode();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
+  buildInventory(); extractKeyFilesToc(); parseNode(); gcNow();   // one up-front archive pass per host (extractKeyFilesToc no-ops in tree mode / on re-runs)
   ANALYSIS_ERRS=[];   // per-host fault isolation: one bad log on one host doesn't abort the whole fleet run
-  safeStep("maint", parseMaint); safeStep("logons", parseLogons); safeStep("bruteforce", bfApply); safeStep("actions", parseActions); safeStep("timeline", buildTimeline); safeStep("ioc", sweepIocs);
-  safeStep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
-  safeStep("indicators", buildIndicators); safeStep("cves", buildCves); safeStep("persistence", buildPersistence); safeStep("network", parseNetwork);
-  safeStep("sessions", finalizeSessions); safeStep("users", parseUsersV); safeStep("persist-accounts", buildPersistAccounts);
-  safeStep("security", buildSecurity); safeStep("vms", parseVms); safeStep("vmevents", parseVmEvents); safeStep("spec", buildSpec);
+  /* fleet runs the whole per-host analysis synchronously, so force a GC after each stage - without
+     it, transient parse garbage accumulates across the block and OOMs a constrained mshta (v1.17.3). */
+  function fstep(name, fn){ safeStep(name, fn); gcNow(); }
+  fstep("maint", parseMaint); fstep("logons", parseLogons); fstep("bruteforce", bfApply); fstep("actions", parseActions); fstep("timeline", buildTimeline); fstep("ioc", sweepIocs);
+  fstep("ransom", ransomScan);   // must precede indicators: srcState() asks it whether a missing log was encrypted
+  fstep("indicators", buildIndicators); fstep("cves", buildCves); fstep("persistence", buildPersistence); fstep("network", parseNetwork);
+  fstep("sessions", finalizeSessions); fstep("users", parseUsersV); fstep("persist-accounts", buildPersistAccounts);
+  fstep("security", buildSecurity); fstep("vms", parseVms); fstep("vmevents", parseVmEvents); fstep("spec", buildSpec);
   if(ANALYSIS_ERRS.length) appendLog("  = "+host+": "+ANALYSIS_ERRS.length+" stage(s) failed ("+ANALYSIS_ERRS.join(", ")+")");
   var dispHost=betterHost(host, NODE.host);   // roster shows the real FQDN parsed from bundle content, not the wrapper label
   try{ writeRunInfo(LASTOUTDIR, path); writeAnalysisOutputs(); }catch(e){}
   var snap=snapshotHost(dispHost, path);
   try{ saveSnapshot(LASTOUTDIR, sig, snap); }catch(e){}
-  logCacheClear(); VPXD_LINES=null;   // snapshotHost (collectOpTasks/collectManagedHosts) was the last consumer - free before the next host
+  logCacheClear(); VPXD_LINES=null; gcNow();   // snapshotHost (collectOpTasks/collectManagedHosts) was the last consumer - free before the next host
   return snap;
 }
 function distinct(arr){ var m={},o=[]; for(var i=0;i<arr.length;i++){ var k=lc(arr[i]); if(k&&!m[k]){ m[k]=1; o.push(arr[i]); } } return o; }
