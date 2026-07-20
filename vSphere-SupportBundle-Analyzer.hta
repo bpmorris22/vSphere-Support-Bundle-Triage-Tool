@@ -473,7 +473,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "1.17.1";
+var APP_VERSION = "1.17.2";
 var APP_NAME    = "vSphere";
 var SELF_HTA    = "vSphere-SupportBundle-Analyzer.hta";
 var SELF_REPO   = "bpmorris22/vSphere-SupportBundle-Analyzer";
@@ -5851,11 +5851,18 @@ function loadSnapshot(outdir, sig){
   }catch(e){ return null; } }
 function fleetBase(){ var b=htaFolder(); if(!b){ try{ b=new ActiveXObject("Scripting.FileSystemObject").GetSpecialFolder(2)+""; }catch(e){ return ""; } } return b+"\\_Processed\\_fleet"; }
 var SKIP_DIRS={"_processed":1,"_extracted":1,"_view":1,"tools":1,"_fleet":1,"_nodecfg":1};
+/* reparse point (junction / symlink) - descending into these is how a fleet walk on a fresh VM loops
+   or faults: profile / ProgramData junctions self-reference or deny access. FILE_ATTRIBUTE_REPARSE_POINT
+   = 0x400. Guarded because .Attributes can throw on some special folders. */
+function isReparsePoint(fo){ try{ return (fo.Attributes & 1024)!==0; }catch(e){ return false; } }
+var DISCOVER_MAX=60000;   // hard cap on folders visited - a runaway tree can't hang / exhaust the app
 function discoverBundles(root){
-  var cands=[], seen={}, fso=new ActiveXObject("Scripting.FileSystemObject");
+  var cands=[], seen={}, visited={n:0, capped:false}, fso=new ActiveXObject("Scripting.FileSystemObject");
   function push(p){ var k=lc(p); if(!seen[k]){ seen[k]=1; cands.push(p); } }
   function walk(dir, depth){
     if(depth>6) return; if(SKIP_DIRS[lc(baseName(dir))]) return;
+    if(visited.n>DISCOVER_MAX){ visited.capped=true; return; }
+    visited.n++;
     var fo; try{ fo=fso.GetFolder(dir); }catch(e){ return; }
     if(looksLikeRoot(dir)){ push(dir); return; }              // extracted tree root = one bundle
     try{ var e=new Enumerator(fo.Files); for(; !e.atEnd(); e.moveNext()){ var f=e.item(); var fn=f.Name+"";
@@ -5863,9 +5870,14 @@ function discoverBundles(root){
       var noExt=fn.replace(/\.(tgz|tar)$/i,"");                 // skip an outer wrapper whose extracted sibling folder exists
       if(fso.FolderExists(dir+"\\"+noExt)) continue;
       push(f.Path+""); } }catch(e1){}
-    try{ var s=new Enumerator(fo.SubFolders); for(; !s.atEnd(); s.moveNext()) walk(s.item().Path+"", depth+1); }catch(e2){}
+    try{ var s=new Enumerator(fo.SubFolders); for(; !s.atEnd(); s.moveNext()){ var sub=s.item();
+      if(isReparsePoint(sub)) continue;                         // never follow junctions/symlinks (loop / access-fault guard)
+      if(visited.n>DISCOVER_MAX){ visited.capped=true; break; }
+      walk(sub.Path+"", depth+1); } }catch(e2){}
   }
-  walk(root,0); return cands;
+  walk(root,0);
+  if(visited.capped) appendLog("Fleet discovery hit the "+nf(DISCOVER_MAX)+"-folder scan cap - point the Bundle field at the folder that directly contains the bundles rather than a broad parent, or the scan may miss some.");
+  return cands;
 }
 function resolveBundleDesc(path){
   if(folderExists(path)){ var r=findTreeRoot(path); if(r) return {path:path,mode:"tree",root:r,host:guessHost(r)||baseName(r)};
@@ -6011,7 +6023,10 @@ function triageFleet(){
   try{ FLEET_REUSE = !!$("fleetReuse").checked; }catch(e){ FLEET_REUSE=true; }
   try{ DEEPROT = !!$("deepRot").checked; }catch(eDR){ DEEPROT=false; }
   appendLog("=== FLEET discovery under "+root+" ==="+(FLEET_REUSE?" (reuse cached analysis where source unchanged)":" (forced fresh re-analysis)"));
-  FLEET_CANDS=discoverBundles(root); FLEET=[]; FLEET_HOSTS={}; FLEET_I=0;
+  setStatus("Fleet: scanning "+root+" for bundles…","muted");
+  FLEET=[]; FLEET_HOSTS={}; FLEET_I=0;
+  try{ FLEET_CANDS=discoverBundles(root); }
+  catch(eDisc){ FLEET_CANDS=[]; setStatus("Fleet discovery failed while scanning "+root+": "+(eDisc&&eDisc.message?eDisc.message:eDisc)+" - try pointing at the folder that directly holds the bundles.","err"); appendLog("Fleet discovery error: "+(eDisc&&eDisc.message?eDisc.message:eDisc)); return; }
   if(!FLEET_CANDS.length){ setStatus("No bundle archives or extracted bundle folders found under that folder.","err"); return; }
   appendLog("Discovered "+FLEET_CANDS.length+" candidate path(s); processing…");
   ensureDir(fleetBase());
@@ -7100,6 +7115,15 @@ function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output direct
 
 /* ---------- wiring ---------- */
 function init(){
+  /* Global error trap (v1.17.2): an uncaught script error in an HTA can silently close the window.
+     Surfacing it to the status line + log turns a "the app just vanished" report into a diagnosable
+     message, and returning true stops the default handler from tearing the app down. */
+  try{ window.onerror=function(msg,url,line){
+    try{ BUSY=false; $("fleetBtn").disabled=false; $("procBtn").disabled=false; }catch(eB){}
+    try{ appendLog("SCRIPT ERROR: "+msg+(line?(" (line "+line+")"):"")); }catch(eL){}
+    try{ setStatus("Script error - see Show log: "+msg,"err"); }catch(eS){}
+    return true;
+  }; }catch(eOE){}
   try{ window.resizeTo(1360,920); }catch(e){}
   $("appver").innerHTML="v"+APP_VERSION; $("apppill").className="pill ok"; $("apppill").title="Tool version (checking GitHub for updates…)";
   try{ document.title="vSphere Support Bundle Analyzer v"+APP_VERSION; }catch(e){}
